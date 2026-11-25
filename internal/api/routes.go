@@ -1,0 +1,112 @@
+package api
+
+// buildRoutes registers the documented v10 routes. Order does not matter: the
+// matcher prefers static segments over parameters.
+func (s *Server) buildRoutes() []route {
+	r := func(method, pattern string, auth bool, h handlerFunc) {
+		s.route(method, pattern, auth, h)
+	}
+
+	// Gateway.
+	r("GET", "/gateway", false, s.handleGateway)
+	r("GET", "/gateway/bot", true, s.handleGatewayBot)
+	r("GET", "/voice/regions", false, s.handleVoiceRegions)
+
+	// Auth.
+	r("POST", "/auth/register", false, s.handleRegister)
+	r("POST", "/auth/login", false, s.handleLogin)
+	r("POST", "/auth/logout", true, s.handleLogout)
+	r("GET", "/auth/sessions", true, s.handleListSessions)
+	r("POST", "/auth/sessions/logout", true, s.handleLogoutSessions)
+
+	// Users.
+	r("GET", "/users/@me", true, s.handleGetSelf)
+	r("PATCH", "/users/@me", true, s.handleUpdateSelf)
+	r("GET", "/users/@me/guilds", true, s.handleMyGuilds)
+	r("GET", "/users/@me/channels", true, s.handleMyChannels)
+	r("DELETE", "/users/@me/guilds/{guildID}", true, s.handleLeaveGuild)
+	r("POST", "/users/@me/channels", true, s.handleCreateDM)
+	r("GET", "/users/@me/relationships", true, s.handleListRelationships)
+	r("PUT", "/users/@me/relationships/{userID}", true, s.handlePutRelationship)
+	r("DELETE", "/users/@me/relationships/{userID}", true, s.handleDeleteRelationship)
+	r("GET", "/users/{userID}", true, s.handleGetUser)
+	r("GET", "/users/{userID}/profile", true, s.handleGetUserProfile)
+
+	// Guilds.
+	r("POST", "/guilds", true, s.handleCreateGuild)
+	r("GET", "/guilds/{guildID}", true, s.handleGetGuild)
+	r("PATCH", "/guilds/{guildID}", true, s.handleUpdateGuild)
+	r("DELETE", "/guilds/{guildID}", true, s.handleDeleteGuild)
+	r("GET", "/guilds/{guildID}/preview", true, s.handleGuildPreview)
+	r("GET", "/guilds/{guildID}/channels", true, s.handleGuildChannels)
+	r("POST", "/guilds/{guildID}/channels", true, s.handleCreateGuildChannel)
+	r("PATCH", "/guilds/{guildID}/channels", true, s.handleModifyChannelPositions)
+	r("GET", "/guilds/{guildID}/threads/active", true, s.handleActiveThreads)
+	r("GET", "/guilds/{guildID}/members", true, s.handleListMembers)
+	r("GET", "/guilds/{guildID}/members/{userID}", true, s.handleGetMember)
+	r("PATCH", "/guilds/{guildID}/members/{userID}", true, s.handleUpdateMember)
+	r("DELETE", "/guilds/{guildID}/members/{userID}", true, s.handleKickMember)
+	r("PUT", "/guilds/{guildID}/members/{userID}/roles/{roleID}", true, s.handleAddMemberRole)
+	r("DELETE", "/guilds/{guildID}/members/{userID}/roles/{roleID}", true, s.handleRemoveMemberRole)
+	r("GET", "/guilds/{guildID}/roles", true, s.handleListRoles)
+	r("POST", "/guilds/{guildID}/roles", true, s.handleCreateRole)
+	r("PATCH", "/guilds/{guildID}/roles/{roleID}", true, s.handleUpdateRole)
+	r("DELETE", "/guilds/{guildID}/roles/{roleID}", true, s.handleDeleteRole)
+	r("GET", "/guilds/{guildID}/bans", true, s.handleListBans)
+	r("GET", "/guilds/{guildID}/bans/{userID}", true, s.handleGetBan)
+	r("PUT", "/guilds/{guildID}/bans/{userID}", true, s.handleCreateBan)
+	r("DELETE", "/guilds/{guildID}/bans/{userID}", true, s.handleDeleteBan)
+	r("GET", "/guilds/{guildID}/invites", true, s.handleGuildInvites)
+	r("GET", "/guilds/{guildID}/emojis", true, s.handleGuildEmojis)
+	r("GET", "/guilds/{guildID}/vanity-url", true, s.handleVanityURL)
+	r("GET", "/guilds/{guildID}/regions", false, s.handleVoiceRegions)
+
+	// Channels.
+	r("GET", "/channels/{channelID}", true, s.handleGetChannel)
+	r("PATCH", "/channels/{channelID}", true, s.handleUpdateChannel)
+	r("DELETE", "/channels/{channelID}", true, s.handleDeleteChannel)
+	r("PUT", "/channels/{channelID}/permissions/{overwriteID}", true, s.handlePutOverwrite)
+	r("DELETE", "/channels/{channelID}/permissions/{overwriteID}", true, s.handleDeleteOverwrite)
+	r("POST", "/channels/{channelID}/typing", true, s.handleTyping)
+	r("GET", "/channels/{channelID}/invites", true, s.handleChannelInvites)
+	r("POST", "/channels/{channelID}/invites", true, s.handleCreateInvite)
+	r("PUT", "/channels/{channelID}/recipients/{userID}", true, s.handleAddRecipient)
+	r("DELETE", "/channels/{channelID}/recipients/{userID}", true, s.handleRemoveRecipient)
+
+	// Messages.
+	r("GET", "/channels/{channelID}/messages", true, s.handleListMessages)
+	r("POST", "/channels/{channelID}/messages", true, s.handleCreateMessage)
+	r("POST", "/channels/{channelID}/messages/bulk-delete", true, s.handleBulkDelete)
+	r("GET", "/channels/{channelID}/messages/{messageID}", true, s.handleGetMessage)
+	r("PATCH", "/channels/{channelID}/messages/{messageID}", true, s.handleUpdateMessage)
+	r("DELETE", "/channels/{channelID}/messages/{messageID}", true, s.handleDeleteMessage)
+	r("POST", "/channels/{channelID}/messages/{messageID}/crosspost", true, s.handleCrosspost)
+	r("PUT", "/channels/{channelID}/messages/{messageID}/reactions/{emoji}/@me", true, s.handleAddReaction)
+	r("DELETE", "/channels/{channelID}/messages/{messageID}/reactions/{emoji}/@me", true, s.handleRemoveOwnReaction)
+	r("DELETE", "/channels/{channelID}/messages/{messageID}/reactions/{emoji}/{userID}", true, s.handleRemoveUserReaction)
+	r("GET", "/channels/{channelID}/messages/{messageID}/reactions/{emoji}", true, s.handleReactionUsers)
+	r("DELETE", "/channels/{channelID}/messages/{messageID}/reactions/{emoji}", true, s.handleDeleteEmojiReactions)
+	r("DELETE", "/channels/{channelID}/messages/{messageID}/reactions", true, s.handleDeleteAllReactions)
+	r("GET", "/channels/{channelID}/pins", true, s.handleListPins)
+	r("PUT", "/channels/{channelID}/pins/{messageID}", true, s.handlePin)
+	r("DELETE", "/channels/{channelID}/pins/{messageID}", true, s.handleUnpin)
+
+	// Threads.
+	r("POST", "/channels/{channelID}/threads", true, s.handleStartThread)
+	r("POST", "/channels/{channelID}/messages/{messageID}/threads", true, s.handleStartThreadFromMessage)
+	r("PUT", "/channels/{channelID}/thread-members/@me", true, s.handleJoinThread)
+	r("PUT", "/channels/{channelID}/thread-members/{userID}", true, s.handleAddThreadMember)
+	r("DELETE", "/channels/{channelID}/thread-members/@me", true, s.handleLeaveThread)
+	r("DELETE", "/channels/{channelID}/thread-members/{userID}", true, s.handleRemoveThreadMember)
+	r("GET", "/channels/{channelID}/thread-members/{userID}", true, s.handleGetThreadMember)
+	r("GET", "/channels/{channelID}/thread-members", true, s.handleListThreadMembers)
+	r("GET", "/channels/{channelID}/threads/archived/public", true, s.handleArchivedPublic)
+	r("GET", "/channels/{channelID}/threads/archived/private", true, s.handleArchivedPrivate)
+
+	// Invites.
+	r("GET", "/invites/{code}", false, s.handleGetInvite)
+	r("DELETE", "/invites/{code}", true, s.handleDeleteInvite)
+	r("POST", "/invites/{code}", true, s.handleAcceptInvite)
+
+	return s.routes
+}

@@ -238,6 +238,20 @@ CREATE TABLE IF NOT EXISTS emojis (
     available      INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS channel_recipients (
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (channel_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS thread_members (
+    channel_id     TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    join_timestamp INTEGER NOT NULL,
+    flags          INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (channel_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS pins (
     channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
