@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wavedevgit/waveycord/internal/api"
+	"github.com/wavedevgit/waveycord/internal/bus"
 	"github.com/wavedevgit/waveycord/internal/db"
 	"github.com/wavedevgit/waveycord/internal/gateway"
 	"github.com/wavedevgit/waveycord/internal/store"
@@ -22,10 +24,10 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	addr := env("WAVEYCORD_ADDR", "127.0.0.1:8080")
-	dbPath := env("WAVEYCORD_DB", "./waveycord.db")
+	dsn := env("WAVEYCORD_DB", "./waveycord.db")
 	gatewayURL := env("WAVEYCORD_GATEWAY_URL", "ws://"+addr+"/gateway")
 
-	handle, err := db.Open(dbPath)
+	handle, err := db.Open(dsn)
 	if err != nil {
 		log.Error("open database", "err", err)
 		os.Exit(1)
@@ -56,6 +58,21 @@ func main() {
 		log,
 	)
 
+	// Postgres deployments share gateway dispatch across instances. SQLite is a
+	// single-process store, so the in-process fanout is the whole bus.
+	var transport bus.Bus
+	if handle.Dialect.String() == "postgres" {
+		origin := fmt.Sprintf("%s-%d-%d", hostname(), os.Getpid(), time.Now().UnixNano())
+		pgBus, err := bus.NewPostgres(context.Background(), env("WAVEYCORD_PG_DSN", dsn), origin, hub.DeliverRemote, log)
+		if err != nil {
+			log.Error("start gateway bus", "err", err)
+			os.Exit(1)
+		}
+		hub.SetBus(pgBus)
+		transport = pgBus
+		defer transport.Close()
+	}
+
 	srv := api.New(st, hub, cfg)
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -65,7 +82,7 @@ func main() {
 	}
 
 	go func() {
-		log.Info("listening", "addr", addr, "db", dbPath)
+		log.Info("listening", "addr", addr, "db", handle.Dialect.String())
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("serve", "err", err)
 			os.Exit(1)
@@ -88,4 +105,12 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func hostname() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return "host"
+	}
+	return h
 }

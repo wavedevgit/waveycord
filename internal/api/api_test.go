@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/wavedevgit/waveycord/internal/api"
 	"github.com/wavedevgit/waveycord/internal/db"
 	"github.com/wavedevgit/waveycord/internal/gateway"
+	"github.com/wavedevgit/waveycord/internal/sqlx"
 	"github.com/wavedevgit/waveycord/internal/store"
 )
 
@@ -25,10 +27,18 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "test.db")
-	handle, err := db.Open(path)
+	var dsn string
+	if pg := os.Getenv("WAVEYCORD_TEST_DSN"); pg != "" {
+		dsn = pg
+	} else {
+		dsn = filepath.Join(t.TempDir(), "test.db")
+	}
+	handle, err := db.Open(dsn)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
+	}
+	if handle.Dialect.String() == "postgres" {
+		truncateAll(t, handle)
 	}
 	t.Cleanup(func() { handle.Close() })
 	st := store.New(handle)
@@ -46,6 +56,31 @@ func newHarness(t *testing.T) *harness {
 	srv := httptest.NewServer(api.New(st, hub, cfg).Handler())
 	t.Cleanup(srv.Close)
 	return &harness{t: t, server: srv, store: st}
+}
+
+// truncateAll clears every table so one Postgres database can serve sequential
+// tests. SQLite runs each test on a fresh file instead.
+func truncateAll(t *testing.T, handle *sqlx.DB) {
+	t.Helper()
+	rows, err := handle.Query(`SELECT tablename FROM pg_tables WHERE schemaname = 'public'`)
+	if err != nil {
+		t.Fatalf("list tables: %v", err)
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatalf("scan table: %v", err)
+		}
+		names = append(names, name)
+	}
+	rows.Close()
+	for _, name := range names {
+		if _, err := handle.Exec(`TRUNCATE TABLE "` + name + `" CASCADE`); err != nil {
+			t.Fatalf("truncate %s: %v", name, err)
+		}
+	}
 }
 
 func (h *harness) request(method, path, token string, body any) (int, []byte) {

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/wavedevgit/waveycord/internal/gateway"
 	"github.com/wavedevgit/waveycord/internal/model"
 	"github.com/wavedevgit/waveycord/internal/store"
@@ -44,11 +46,15 @@ func DefaultConfig() Config {
 
 // Server serves /api/v10 and the gateway upgrade.
 type Server struct {
-	Store   *store.Store
-	Hub     *gateway.Hub
-	cfg     Config
-	routes  []route
-	limit   *limiter
+	Store  *store.Store
+	Hub    *gateway.Hub
+	cfg    Config
+	routes []route
+	limit  *limiter
+	// reads coalesces identical concurrent reads, keyed by route and resource,
+	// the same protection the published message-storage design calls request
+	// coalescing.
+	reads   singleflight.Group
 	started time.Time
 }
 
@@ -80,6 +86,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/v10/", http.StripPrefix("/api/v10", s.apiHandler()))
 	mux.Handle("/gateway", s.gatewayHandler())
 	mux.Handle("/api/v10/gateway", s.gatewayHandler())
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "dialect": s.Store.DB.Dialect.String(),
+			"uptime_seconds": int(time.Since(s.started).Seconds()),
+		})
+	})
 	return mux
 }
 

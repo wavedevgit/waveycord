@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS channels (
     message_count           INTEGER NOT NULL DEFAULT 0,
     member_count            INTEGER NOT NULL DEFAULT 0,
     thread_metadata         TEXT,   -- JSON
+    archived                INTEGER NOT NULL DEFAULT 0,
     message_retention       TEXT,
     icon                    TEXT,
     flags                   INTEGER NOT NULL DEFAULT 0,
@@ -263,3 +264,12 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Cluster-wide gateway fanout. The row holds the payload; NOTIFY carries the id.
+CREATE TABLE IF NOT EXISTS gateway_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    origin     TEXT NOT NULL,
+    payload    TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS gateway_events_created ON gateway_events (created_at);

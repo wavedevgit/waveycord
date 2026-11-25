@@ -10,8 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/wavedevgit/waveycord/internal/db"
 	"github.com/wavedevgit/waveycord/internal/id"
+	"github.com/wavedevgit/waveycord/internal/sqlx"
 )
 
 // Sentinel errors mapped onto documented JSON error codes by the API layer.
@@ -22,12 +25,12 @@ var (
 
 // Store is the aggregate root for persistence.
 type Store struct {
-	DB  *sql.DB
+	DB  *sqlx.DB
 	Gen *id.Generator
 }
 
 // New wraps an open database handle.
-func New(handle *sql.DB) *Store { return &Store{DB: handle, Gen: id.New()} }
+func New(handle *sqlx.DB) *Store { return &Store{DB: handle, Gen: id.New()} }
 
 // NewID returns the next snowflake.
 func (s *Store) NewID() string { return s.Gen.MustNext() }
@@ -143,6 +146,17 @@ func mapErr(err error) error {
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23505": // unique_violation
+			return fmt.Errorf("%w: %v", ErrConflict, err)
+		case "23503": // foreign_key_violation
+			return fmt.Errorf("%w: %v", ErrNotFound, err)
+		case "23502": // not_null_violation
+			return fmt.Errorf("%w: %v", ErrConflict, err)
+		}
 	}
 	msg := err.Error()
 	if strings.Contains(msg, "UNIQUE constraint failed") || strings.Contains(msg, "constraint failed") {

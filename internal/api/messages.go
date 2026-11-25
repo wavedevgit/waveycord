@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/wavedevgit/waveycord/internal/model"
@@ -17,12 +18,19 @@ func (s *Server) handleListMessages(c *Ctx) {
 		return
 	}
 	q := c.R.URL.Query()
-	messages, err := s.Store.MessagesPage(ch.ID, q.Get("before"), q.Get("after"), q.Get("around"), atoiSafe(q.Get("limit")))
+	key := "messages|" + ch.ID + "|" + q.Get("before") + "|" + q.Get("after") + "|" + q.Get("around") + "|" + q.Get("limit")
+	v, err, _ := s.reads.Do(key, func() (any, error) {
+		messages, err := s.Store.MessagesPage(ch.ID, q.Get("before"), q.Get("after"), q.Get("around"), atoiSafe(q.Get("limit")))
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(messages)
+	})
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	c.JSON(messages)
+	c.JSONStatus(200, json.RawMessage(v.([]byte)))
 }
 
 type createMessageRequest struct {

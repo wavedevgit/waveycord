@@ -1,7 +1,6 @@
-// Package db opens the SQL database and applies the schema. SQLite in WAL mode
-// is the default; any database/sql driver with placeholders rewritten by
-// dialect could be substituted, which is why every query in internal/store uses
-// the `?` form.
+// Package db opens the SQL database and applies the schema. SQLite is the
+// zero-dependency default; PostgreSQL is selected when the DSN carries a
+// postgres:// or postgresql:// URL.
 package db
 
 import (
@@ -10,16 +9,45 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/mattn/go-sqlite3"
+
+	"github.com/wavedevgit/waveycord/internal/sqlx"
 )
 
 //go:embed schema.sql
-var schema string
+var sqliteSchema string
 
-// Open opens (creating if needed) the database at path and applies the schema.
-func Open(path string) (*sql.DB, error) {
+//go:embed schema_postgres.sql
+var postgresSchema string
+
+// Options tunes the connection pool.
+type Options struct {
+	// MaxOpenConns defaults to 1 for SQLite (single writer) and 16 for Postgres.
+	MaxOpenConns int
+}
+
+// Open opens the database named by dsn and applies the matching schema.
+func Open(dsn string) (*sqlx.DB, error) { return OpenWithOptions(dsn, Options{}) }
+
+// OpenWithOptions is Open with pool settings.
+func OpenWithOptions(dsn string, opts Options) (*sqlx.DB, error) {
+	if isPostgres(dsn) {
+		return openPostgres(dsn, opts)
+	}
+	return openSQLite(dsn, opts)
+}
+
+func isPostgres(dsn string) bool {
+	lower := strings.ToLower(dsn)
+	return strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://")
+}
+
+func openSQLite(path string, opts Options) (*sqlx.DB, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("db: create directory: %w", err)
@@ -30,20 +58,56 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: open: %w", err)
 	}
-	// ponytail: one writer keeps SQLite from returning SQLITE_BUSY under load;
-	// move to a pool-per-core plus retry loop if throughput matters.
-	handle.SetMaxOpenConns(1)
-	handle.SetMaxIdleConns(1)
+	maxConns := opts.MaxOpenConns
+	if maxConns <= 0 {
+		// ponytail: one writer keeps SQLite from returning SQLITE_BUSY under load;
+		// use Postgres when write concurrency matters.
+		maxConns = 1
+	}
+	handle.SetMaxOpenConns(maxConns)
+	handle.SetMaxIdleConns(maxConns)
 	handle.SetConnMaxLifetime(0)
 	if err := handle.Ping(); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}
-	if _, err := handle.Exec(schema); err != nil {
+	if _, err := handle.Exec(sqliteSchema); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("db: apply schema: %w", err)
 	}
-	return handle, nil
+	return &sqlx.DB{DB: handle, Dialect: sqlx.SQLite}, nil
+}
+
+func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
+	handle, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db: open postgres: %w", err)
+	}
+	maxConns := opts.MaxOpenConns
+	if maxConns <= 0 {
+		maxConns = envInt("WAVEYCORD_PG_MAX_CONNS", 16)
+	}
+	handle.SetMaxOpenConns(maxConns)
+	handle.SetMaxIdleConns(maxConns / 2)
+	handle.SetConnMaxIdleTime(5 * time.Minute)
+	if err := handle.Ping(); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("db: ping postgres: %w", err)
+	}
+	if _, err := handle.Exec(postgresSchema); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("db: apply postgres schema: %w", err)
+	}
+	return &sqlx.DB{DB: handle, Dialect: sqlx.Postgres}, nil
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
 }
 
 // NowMillis is the single clock used for row timestamps.

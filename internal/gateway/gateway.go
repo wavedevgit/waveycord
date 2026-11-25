@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/wavedevgit/waveycord/internal/bus"
 )
 
 // Opcodes from the gateway opcode table.
@@ -67,6 +69,7 @@ type Hub struct {
 
 	mu    sync.RWMutex
 	conns map[*conn]struct{}
+	bus   bus.Bus
 	// sessions keeps at most one live connection per gateway session id, which
 	// is what RESUME and session takeover depend on.
 	sessions map[string]*conn
@@ -230,11 +233,71 @@ func (h *Hub) serve(ctx context.Context, ws *websocket.Conn) {
 	}
 }
 
-// DispatchGuild sends a guild-scoped dispatch.
+// SetBus attaches the cluster transport. Events published by other instances
+// are delivered through DeliverRemote; local connections are fanned out first so
+// the publishing instance does not depend on the bus round trip.
+func (h *Hub) SetBus(b bus.Bus) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.bus = b
+	h.mu.Unlock()
+}
+
+// DeliverRemote fans an event received from another instance out locally. It
+// never republishes.
+func (h *Hub) DeliverRemote(ev bus.Event) {
+	if h == nil {
+		return
+	}
+	if ev.GuildID != "" {
+		h.localGuild(ev.GuildID, ev.Name, ev.Data)
+	}
+	for _, uid := range ev.UserIDs {
+		h.localUser(uid, ev.Name, ev.Data)
+	}
+}
+
+func (h *Hub) publish(ev bus.Event) {
+	h.mu.RLock()
+	b := h.bus
+	h.mu.RUnlock()
+	if b == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := b.Publish(ctx, ev); err != nil && h.Log != nil {
+		h.Log.Warn("gateway bus publish", "event", ev.Name, "err", err)
+	}
+}
+
+// DispatchGuild sends a guild-scoped dispatch to local connections and to every
+// other instance.
 func (h *Hub) DispatchGuild(guildID, event string, data any) {
 	if h == nil {
 		return
 	}
+	h.localGuild(guildID, event, data)
+	if raw, err := json.Marshal(data); err == nil {
+		h.publish(bus.Event{GuildID: guildID, Name: event, Data: raw})
+	}
+}
+
+// DispatchUser sends a dispatch to every connection of one account, locally and
+// cluster-wide.
+func (h *Hub) DispatchUser(userID, event string, data any) {
+	if h == nil {
+		return
+	}
+	h.localUser(userID, event, data)
+	if raw, err := json.Marshal(data); err == nil {
+		h.publish(bus.Event{UserIDs: []string{userID}, Name: event, Data: raw})
+	}
+}
+
+func (h *Hub) localGuild(guildID, event string, data any) {
 	h.mu.RLock()
 	targets := make([]*conn, 0, len(h.conns))
 	for c := range h.conns {
@@ -248,11 +311,7 @@ func (h *Hub) DispatchGuild(guildID, event string, data any) {
 	}
 }
 
-// DispatchUser sends a dispatch to every connection of one account.
-func (h *Hub) DispatchUser(userID, event string, data any) {
-	if h == nil {
-		return
-	}
+func (h *Hub) localUser(userID, event string, data any) {
 	h.mu.RLock()
 	targets := make([]*conn, 0, 4)
 	for c := range h.conns {

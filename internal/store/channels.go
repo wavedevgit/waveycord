@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wavedevgit/waveycord/internal/model"
+	"github.com/wavedevgit/waveycord/internal/sqlx"
 )
 
 // Channel types from the channel object table.
@@ -28,7 +29,7 @@ const (
 
 const channelColumns = `id, type, guild_id, position, name, topic, nsfw, last_message_id,
 	bitrate, user_limit, rate_limit_per_user, parent_id, owner_id, last_pin_timestamp,
-	rtc_region, video_quality_mode, message_count, member_count, thread_metadata, icon,
+	rtc_region, video_quality_mode, message_count, member_count, thread_metadata, archived, icon,
 	flags, available_tags, default_reaction_emoji, default_sort_order, default_forum_layout`
 
 func scanChannel(row rowScanner) (model.Channel, error) {
@@ -50,13 +51,14 @@ func scanChannel(row rowScanner) (model.Channel, error) {
 		defReact         sql.NullString
 		defSort          sql.NullString
 		nsfw, vqm        int
+		archived         int
 		pos, rl          int
 		mcount, memcount int
 		defLayout        int
 	)
 	err := row.Scan(&c.ID, &c.Type, &guild, &pos, &name, &topic, &nsfw, &lastMsg,
 		&bitrate, &userLimit, &rl, &parent, &owner, &lastPin, &rtc, &vqm, &mcount,
-		&memcount, &threadMeta, &icon, &c.Flags, &tags, &defReact, &defSort, &defLayout)
+		&memcount, &threadMeta, &archived, &icon, &c.Flags, &tags, &defReact, &defSort, &defLayout)
 	if err != nil {
 		return c, err
 	}
@@ -89,6 +91,7 @@ func scanChannel(row rowScanner) (model.Channel, error) {
 	if threadMeta.Valid && threadMeta.String != "" {
 		var tm model.ThreadMetadata
 		if err := json.Unmarshal([]byte(threadMeta.String), &tm); err == nil {
+			tm.Archived = archived != 0
 			c.ThreadMetadata = &tm
 		}
 	}
@@ -183,10 +186,10 @@ func (s *Store) CreateChannel(guildID string, p CreateChannelParams) (model.Chan
 	defer tx.Rollback()
 	if _, err := tx.Exec(`INSERT INTO channels
 		(id, type, guild_id, position, name, topic, nsfw, bitrate, user_limit,
-		 rate_limit_per_user, parent_id, owner_id, thread_metadata, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 rate_limit_per_user, parent_id, owner_id, thread_metadata, archived, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		idv, p.Type, guild, position, p.Name, p.Topic, nsfw, p.Bitrate, p.UserLimit,
-		rl, p.ParentID, p.OwnerID, threadMeta, now()); err != nil {
+		rl, p.ParentID, p.OwnerID, threadMeta, false, now()); err != nil {
 		return model.Channel{}, mapErr(err)
 	}
 	for _, ow := range p.PermissionOverwrites {
@@ -360,7 +363,7 @@ func (s *Store) UpdateChannel(idv string, p UpdateChannelParams) (model.Channel,
 			tm.Invitable = p.Invitable
 		}
 		raw, _ := json.Marshal(tm)
-		if _, err := s.DB.Exec(`UPDATE channels SET thread_metadata = ? WHERE id = ?`, string(raw), idv); err != nil {
+		if _, err := s.DB.Exec(`UPDATE channels SET thread_metadata = ?, archived = ? WHERE id = ?`, string(raw), tm.Archived, idv); err != nil {
 			return c, mapErr(err)
 		}
 	}
@@ -397,7 +400,7 @@ func (s *Store) Overwrites(channelID string) ([]model.Overwrite, error) {
 	return out, mapErr(rows.Err())
 }
 
-func upsertOverwrite(tx *sql.Tx, channelID string, ow model.Overwrite) error {
+func upsertOverwrite(tx *sqlx.Tx, channelID string, ow model.Overwrite) error {
 	_, err := tx.Exec(`INSERT INTO permission_overwrites (channel_id, target_id, type, allow, deny)
 		VALUES (?,?,?,?,?)
 		ON CONFLICT(channel_id, target_id) DO UPDATE SET type = excluded.type,
@@ -589,7 +592,7 @@ func (s *Store) LeaveThread(channelID, userID string) error {
 		return mapErr(err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		if _, err := tx.Exec(`UPDATE channels SET member_count = MAX(member_count - 1, 0) WHERE id = ?`, channelID); err != nil {
+		if _, err := tx.Exec(`UPDATE channels SET member_count = CASE WHEN member_count > 0 THEN member_count - 1 ELSE 0 END WHERE id = ?`, channelID); err != nil {
 			return mapErr(err)
 		}
 	}
@@ -599,8 +602,7 @@ func (s *Store) LeaveThread(channelID, userID string) error {
 // ActiveThreads lists non-archived threads in a guild.
 func (s *Store) ActiveThreads(guildID string) ([]model.Channel, error) {
 	rows, err := s.DB.Query(`SELECT `+channelColumns+` FROM channels
-		WHERE guild_id = ? AND type IN (?,?,?)
-		AND (thread_metadata IS NULL OR json_extract(thread_metadata, '$.archived') = 0)
+		WHERE guild_id = ? AND type IN (?,?,?) AND archived = 0
 		ORDER BY id DESC`, guildID, ChannelAnnouncementThread, ChannelPublicThread, ChannelPrivateThread)
 	if err != nil {
 		return nil, mapErr(err)
@@ -624,7 +626,7 @@ func (s *Store) ArchivedThreads(parentID string, private bool) ([]model.Channel,
 		kind = ChannelPrivateThread
 	}
 	rows, err := s.DB.Query(`SELECT `+channelColumns+` FROM channels
-		WHERE parent_id = ? AND type = ? AND json_extract(thread_metadata, '$.archived') = 1
+		WHERE parent_id = ? AND type = ? AND archived = 1
 		ORDER BY id DESC`, parentID, kind)
 	if err != nil {
 		return nil, mapErr(err)
