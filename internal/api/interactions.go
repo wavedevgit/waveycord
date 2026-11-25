@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
@@ -87,6 +88,10 @@ func (s *Server) handleInteraction(c *Ctx) {
 		return
 	}
 
+	if s.forwardInteraction(c, app, body) {
+		return
+	}
+
 	switch payload.Type {
 	case interactionPing:
 		c.JSON(map[string]any{"type": 1})
@@ -97,6 +102,51 @@ func (s *Server) handleInteraction(c *Ctx) {
 	default:
 		c.JSONStatus(400, map[string]any{"code": 50035, "message": "Unsupported interaction type"})
 	}
+}
+
+// forwardInteraction relays a verified interaction to the application's endpoint,
+// signed with the application's server key, and writes the endpoint response back.
+// It returns false when no endpoint is configured (local dispatch applies).
+func (s *Server) forwardInteraction(c *Ctx, app store.Application, raw []byte) bool {
+	if app.InteractionsEndpointURL == nil || *app.InteractionsEndpointURL == "" {
+		return false
+	}
+	seed, err := hex.DecodeString(app.SigningKey)
+	if err != nil || len(seed) != ed25519.SeedSize {
+		c.JSONStatus(500, map[string]any{"code": 0, "message": "Application signing key unavailable"})
+		return true
+	}
+	key := ed25519.NewKeyFromSeed(seed)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := hex.EncodeToString(ed25519.Sign(key, []byte(ts+string(raw))))
+	req, err := http.NewRequestWithContext(c.R.Context(), http.MethodPost,
+		*app.InteractionsEndpointURL, bytes.NewReader(raw))
+	if err != nil {
+		c.JSONStatus(502, map[string]any{"code": 0, "message": "Bad Gateway"})
+		return true
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "DiscordBot (waveycord, 1.0)")
+	req.Header.Set("X-Signature-Timestamp", ts)
+	req.Header.Set("X-Signature-Ed25519", sig)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		s.cfg.Logger.Warn("interaction forward", "app", app.ID, "err", err)
+		c.JSONStatus(502, map[string]any{"code": 0, "message": "Bad Gateway"})
+		return true
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 || !json.Valid(body) {
+		s.cfg.Logger.Warn("interaction endpoint rejected", "app", app.ID, "status", resp.StatusCode)
+		c.JSONStatus(502, map[string]any{"code": 0, "message": "Bad Gateway"})
+		return true
+	}
+	c.W.Header().Set("Content-Type", "application/json")
+	c.W.WriteHeader(resp.StatusCode)
+	_, _ = c.W.Write(body)
+	return true
 }
 
 func (s *Server) dispatchInteraction(c *Ctx, app store.Application, payload interactionPayload) {

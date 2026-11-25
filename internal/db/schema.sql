@@ -325,6 +325,9 @@ CREATE TABLE IF NOT EXISTS applications (
     verify_key             TEXT NOT NULL DEFAULT '',
     client_secret_hash     TEXT NOT NULL DEFAULT '',
     redirect_uris          TEXT NOT NULL DEFAULT '[]',
+    signing_key            TEXT NOT NULL DEFAULT '',
+    signing_public_key     TEXT NOT NULL DEFAULT '',
+    interactions_endpoint_url TEXT,
     created_at             INTEGER NOT NULL
 );
 

@@ -410,6 +410,9 @@ CREATE INDEX IF NOT EXISTS oauth2_tokens_user ON oauth2_tokens (user_id);
 
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS client_secret_hash TEXT NOT NULL DEFAULT '';
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS redirect_uris TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS signing_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS signing_public_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS interactions_endpoint_url TEXT;
 
 CREATE TABLE IF NOT EXISTS application_commands (
     id                        TEXT PRIMARY KEY,

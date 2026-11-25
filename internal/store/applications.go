@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -13,23 +14,27 @@ import (
 
 // Application is the application object as documented.
 type Application struct {
-	ID                  string      `json:"id"`
-	Name                string      `json:"name"`
-	Description         string      `json:"description"`
-	Icon                *string     `json:"icon"`
-	OwnerID             string      `json:"owner_id,omitempty"`
-	BotPublic           bool        `json:"bot_public"`
-	BotRequireCodeGrant bool        `json:"bot_require_code_grant"`
-	VerifyKey           string      `json:"verify_key,omitempty"`
-	Bot                 *model.User `json:"bot,omitempty"`
-	Token               string      `json:"token,omitempty"`
-	ClientSecret        string      `json:"client_secret,omitempty"`
-	RedirectURIs        []string    `json:"redirect_uris"`
-	CreatedAt           string      `json:"-"`
+	ID                      string      `json:"id"`
+	Name                    string      `json:"name"`
+	Description             string      `json:"description"`
+	Icon                    *string     `json:"icon"`
+	OwnerID                 string      `json:"owner_id,omitempty"`
+	BotPublic               bool        `json:"bot_public"`
+	BotRequireCodeGrant     bool        `json:"bot_require_code_grant"`
+	VerifyKey               string      `json:"verify_key,omitempty"`
+	Bot                     *model.User `json:"bot,omitempty"`
+	Token                   string      `json:"token,omitempty"`
+	ClientSecret            string      `json:"client_secret,omitempty"`
+	RedirectURIs            []string    `json:"redirect_uris"`
+	InteractionsEndpointURL *string     `json:"interactions_endpoint_url"`
+	SigningPublicKey        string      `json:"signing_public_key,omitempty"`
+	SigningKey              string      `json:"-"`
+	CreatedAt               string      `json:"-"`
 }
 
 const applicationColumns = `id, name, description, icon, owner_id, bot_user_id, bot_public,
-	bot_require_code_grant, verify_key, redirect_uris`
+	bot_require_code_grant, verify_key, redirect_uris, signing_key, signing_public_key,
+	interactions_endpoint_url`
 
 func (s *Store) scanApplication(row rowScanner) (Application, string, error) {
 	var (
@@ -37,14 +42,17 @@ func (s *Store) scanApplication(row rowScanner) (Application, string, error) {
 		icon      sql.NullString
 		botUID    string
 		redirects string
+		endpoint  sql.NullString
 	)
 	err := row.Scan(&a.ID, &a.Name, &a.Description, &icon, &a.OwnerID, &botUID,
-		&a.BotPublic, &a.BotRequireCodeGrant, &a.VerifyKey, &redirects)
+		&a.BotPublic, &a.BotRequireCodeGrant, &a.VerifyKey, &redirects,
+		&a.SigningKey, &a.SigningPublicKey, &endpoint)
 	a.Icon = ns(icon)
 	a.RedirectURIs = parseJSONStrings(redirects)
 	if a.RedirectURIs == nil {
 		a.RedirectURIs = []string{}
 	}
+	a.InteractionsEndpointURL = ns(endpoint)
 	return a, botUID, err
 }
 
@@ -65,6 +73,10 @@ func (s *Store) CreateApplication(ownerID, name, description string) (Applicatio
 	if err != nil {
 		return Application{}, err
 	}
+	signPub, signPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return Application{}, err
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return Application{}, mapErr(err)
@@ -76,9 +88,10 @@ func (s *Store) CreateApplication(ownerID, name, description string) (Applicatio
 	}
 	if _, err := tx.Exec(`INSERT INTO applications
 		(id, name, description, owner_id, bot_user_id, bot_public, bot_require_code_grant, verify_key,
-		 client_secret_hash, redirect_uris, created_at)
-		VALUES (?,?,?,?,?,1,0,?,?,'[]',?)`,
-		appID, name, description, ownerID, botID, hex.EncodeToString(key), TokenHashOf(secret), now()); err != nil {
+		 client_secret_hash, redirect_uris, signing_key, signing_public_key, created_at)
+		VALUES (?,?,?,?,?,1,0,?,?,'[]',?,?,?)`,
+		appID, name, description, ownerID, botID, hex.EncodeToString(key), TokenHashOf(secret),
+		hex.EncodeToString(signPriv.Seed()), hex.EncodeToString(signPub), now()); err != nil {
 		return Application{}, mapErr(err)
 	}
 	if _, err := tx.Exec(`INSERT INTO bot_tokens (token_hash, application_id, user_id, created_at)
@@ -98,7 +111,7 @@ func (s *Store) CreateApplication(ownerID, name, description string) (Applicatio
 }
 
 // UpdateApplication patches the fields an owner controls.
-func (s *Store) UpdateApplication(appID, ownerID string, name, description *string, redirectURIs *[]string, verifyKey *string) (Application, error) {
+func (s *Store) UpdateApplication(appID, ownerID string, name, description *string, redirectURIs *[]string, verifyKey *string, endpointURL *string) (Application, error) {
 	app, err := s.Application(appID)
 	if err != nil {
 		return app, err
@@ -123,6 +136,10 @@ func (s *Store) UpdateApplication(appID, ownerID string, name, description *stri
 	if verifyKey != nil {
 		set = append(set, "verify_key = ?")
 		args = append(args, *verifyKey)
+	}
+	if endpointURL != nil {
+		set = append(set, "interactions_endpoint_url = ?")
+		args = append(args, nullIfEmpty(*endpointURL))
 	}
 	if len(set) == 0 {
 		return app, nil

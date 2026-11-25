@@ -84,8 +84,13 @@ the exact raw body, so the body is read before decoding and any re-serialisation
 would invalidate the signature. Application public keys live on the application
 row (`verify_key`), registered by the owner. Commands are rows scoped by
 `(application_id, guild_id)`, with guild rows shadowing global ones at dispatch.
-Dispatch is in-process: the documented envelope (`type: 4`, `data.content`) is
-returned by a handler registry rather than forwarded to an external bot URL.
+Dispatch has two paths. With `interactions_endpoint_url` configured, the raw
+verified body is forwarded to the bot with an app-specific Ed25519 signature
+(`signing_public_key` is exposed for verification) and the endpoint's JSON
+callback is relayed; failures surface as `502`. Without an endpoint, the
+documented envelope (`type: 4`, `data.content`) comes from an in-process handler
+registry. Per-application signing seeds are stored in the application row; a
+production deployment would hold them in a KMS instead.
 
 ## Auto moderation
 

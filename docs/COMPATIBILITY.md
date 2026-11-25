@@ -149,17 +149,24 @@ rejected.
 | `GET/PATCH/DELETE /applications/{id}/commands/{command.id}` | implemented + tested |
 | Guild command variants at `/applications/{id}/guilds/{guild.id}/commands` | implemented + tested |
 | `verify_key` registration through `PATCH /applications/{id}` | implemented + tested |
+| External interactions endpoint forwarding + outbound Ed25519 signature | implemented + tested |
+| Endpoint callback relay, 502 on failure, URL validation | implemented + tested |
 
 Signature verification covers `X-Signature-Timestamp + raw body` with the
 application's 32-byte Ed25519 public key; timestamps outside five minutes are
 rejected, as are missing, malformed and non-matching signatures. Guild commands
 shadow global commands on invocation.
 
+External endpoints: when `interactions_endpoint_url` is set the verified request is
+forwarded unchanged, signed over `timestamp + body` with a per-application Ed25519
+server key whose public half is returned as `signing_public_key`. A 2xx JSON
+callback is relayed to the caller; transport errors, non-2xx responses and invalid
+JSON become `502`. Without an endpoint, dispatch stays in-process. URLs must be
+`https` (plain `http` is accepted for localhost).
+
 Deliberate adaptations: the interactions endpoint is global, so the payload must
-carry `application_id` (Discord routes by per-application URL); dispatch is
-in-process (echo handlers plus a default acknowledgement) because a self-hosted
-deployment has no external bot endpoint to call; message components, modals and
-role connections remain TBD.
+carry `application_id` (Discord routes by per-application URL); message components,
+modals and role connections remain TBD.
 
 Deliberate adaptation: Discord's consent screen is a browser UI. This server
 returns the same fields as JSON when `Accept: application/json` is sent, and a

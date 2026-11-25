@@ -337,10 +337,11 @@ func (s *Server) handleOAuth2Me(c *Ctx) {
 
 func (s *Server) handleUpdateApplication(c *Ctx) {
 	var req struct {
-		Name         *string   `json:"name"`
-		Description  *string   `json:"description"`
-		RedirectURIs *[]string `json:"redirect_uris"`
-		VerifyKey    *string   `json:"verify_key"`
+		Name                    *string   `json:"name"`
+		Description             *string   `json:"description"`
+		RedirectURIs            *[]string `json:"redirect_uris"`
+		VerifyKey               *string   `json:"verify_key"`
+		InteractionsEndpointURL *string   `json:"interactions_endpoint_url"`
 	}
 	if err := c.Bind(&req); err != nil {
 		fail(c, ErrInvalidForm)
@@ -368,7 +369,14 @@ func (s *Server) handleUpdateApplication(c *Ctx) {
 		trimmed := strings.ToLower(strings.TrimSpace(*req.VerifyKey))
 		req.VerifyKey = &trimmed
 	}
-	app, err := s.Store.UpdateApplication(c.Param("applicationID"), c.User.ID, req.Name, req.Description, req.RedirectURIs, req.VerifyKey)
+	if req.InteractionsEndpointURL != nil && *req.InteractionsEndpointURL != "" {
+		parsed, err := url.Parse(*req.InteractionsEndpointURL)
+		if err != nil || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1"))) || parsed.Host == "" {
+			c.FailForm("interactions_endpoint_url", "Must be an https URL (http is allowed for localhost)")
+			return
+		}
+	}
+	app, err := s.Store.UpdateApplication(c.Param("applicationID"), c.User.ID, req.Name, req.Description, req.RedirectURIs, req.VerifyKey, req.InteractionsEndpointURL)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			c.JSONStatus(404, map[string]any{"code": 10002, "message": "Unknown Application"})
