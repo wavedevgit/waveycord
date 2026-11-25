@@ -73,5 +73,14 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(&b, "# TYPE waveycord_gateway_connections gauge\nwaveycord_gateway_connections %d\n", s.Hub.ConnectionCount())
 	fmt.Fprintf(&b, "# HELP waveycord_gateway_dispatches_total Gateway events fanned out.\n")
 	fmt.Fprintf(&b, "# TYPE waveycord_gateway_dispatches_total counter\nwaveycord_gateway_dispatches_total %d\n", s.Hub.DispatchCount())
+	if s.voice != nil {
+		sessions, rtp, speaking := s.voice.Stats()
+		fmt.Fprintf(&b, "# HELP waveycord_voice_sessions Authenticated voice gateway connections.\n")
+		fmt.Fprintf(&b, "# TYPE waveycord_voice_sessions gauge\nwaveycord_voice_sessions %d\n", sessions)
+		fmt.Fprintf(&b, "# HELP waveycord_voice_rtp_packets_total RTP packets observed on the UDP socket.\n")
+		fmt.Fprintf(&b, "# TYPE waveycord_voice_rtp_packets_total counter\nwaveycord_voice_rtp_packets_total %d\n", rtp)
+		fmt.Fprintf(&b, "# HELP waveycord_voice_speaking_total Speaking events received.\n")
+		fmt.Fprintf(&b, "# TYPE waveycord_voice_speaking_total counter\nwaveycord_voice_speaking_total %d\n", speaking)
+	}
 	_, _ = w.Write([]byte(b.String()))
 }

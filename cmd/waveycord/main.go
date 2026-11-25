@@ -29,7 +29,7 @@ func main() {
 	addr := env("WAVEYCORD_ADDR", "127.0.0.1:8080")
 	dsn := env("WAVEYCORD_DB", "./waveycord.db")
 	gatewayURL := env("WAVEYCORD_GATEWAY_URL", "ws://"+addr+"/gateway")
-	voiceEndpoint := env("WAVEYCORD_VOICE_ENDPOINT", "wss://voice.local")
+	voiceEndpoint := env("WAVEYCORD_VOICE_ENDPOINT", "ws://"+addr+"/voice")
 	cdnBase := env("WAVEYCORD_CDN_BASE", "http://"+addr)
 
 	handle, err := db.Open(dsn)
@@ -117,6 +117,12 @@ func main() {
 	)
 
 	hub.SetStore(st, voiceEndpoint)
+	voice, err := gateway.NewVoiceServer(st, gateway.VoiceOptions{IP: env("WAVEYCORD_VOICE_IP", "127.0.0.1"), Log: log})
+	if err != nil {
+		log.Error("start voice gateway", "err", err)
+		os.Exit(1)
+	}
+	defer voice.Close()
 
 	// Postgres deployments share gateway dispatch across instances. SQLite is a
 	// single-process store, so the in-process fanout is the whole bus.
@@ -138,6 +144,7 @@ func main() {
 	go maintainPartitions(context.Background(), handle, log)
 
 	srv := api.New(st, hub, cfg)
+	srv.SetVoice(voice)
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),

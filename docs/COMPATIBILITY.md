@@ -85,7 +85,11 @@ route is not registered yet.
 | `GET/PATCH /channels/{channel.id}/voice-status` | implemented + tested |
 | Gateway OP 4 voice state update, persisted voice states | implemented + tested |
 | `VOICE_STATE_UPDATE` + `VOICE_SERVER_UPDATE` dispatches | implemented + tested |
-| RTP/media transport, SFU, DAVE encryption, voice gateway WS protocol | TBD |
+| Voice gateway WebSocket (`/voice`): HELLO, IDENTIFY, READY, SELECT_PROTOCOL, SESSION_DESCRIPTION, heartbeats | implemented + tested |
+| UDP IP discovery (74-byte request/response) | implemented + tested |
+| RTP packet reception + counters (no decode) | implemented + tested |
+| Speaking events broadcast within a channel | implemented + tested |
+| Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
 
 ## Messages
 

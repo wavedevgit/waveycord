@@ -72,9 +72,16 @@ func newHarness(t *testing.T) *harness {
 		nil,
 	)
 	hub.SetStore(st, "wss://voice.test")
-	srv := httptest.NewServer(api.New(st, hub, cfg).Handler())
+	voiceServer, verr := gateway.NewVoiceServer(st, gateway.VoiceOptions{IP: "127.0.0.1"})
+	if verr != nil {
+		t.Fatalf("voice server: %v", verr)
+	}
+	apiServer := api.New(st, hub, cfg)
+	apiServer.SetVoice(voiceServer)
+	srv := httptest.NewServer(apiServer.Handler())
 	t.Cleanup(func() {
 		hub.Close()
+		voiceServer.Close()
 		srv.Close()
 	})
 	return &harness{t: t, server: srv, store: st, hub: hub}

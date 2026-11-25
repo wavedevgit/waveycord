@@ -63,6 +63,7 @@ type Server struct {
 	limit  *limiter
 	rates  *messageRate
 	raids  *raidTracker
+	voice  *gateway.VoiceServer
 	// reads coalesces identical concurrent reads, keyed by route and resource,
 	// the same protection the published message-storage design calls request
 	// coalescing.
@@ -103,12 +104,18 @@ func New(st *store.Store, hub *gateway.Hub, cfg Config) *Server {
 // SessionStore exposes configuration for tests.
 func (s *Server) Config() Config { return s.cfg }
 
+// SetVoice mounts the voice gateway on /voice.
+func (s *Server) SetVoice(v *gateway.VoiceServer) { s.voice = v }
+
 // Handler returns the root handler (API + gateway).
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/v10/", http.StripPrefix("/api/v10", s.apiHandler()))
 	mux.Handle("/gateway", s.gatewayHandler())
 	mux.Handle("/api/v10/gateway", s.gatewayHandler())
+	if s.voice != nil {
+		mux.Handle("/voice", s.voice.Handler())
+	}
 	mux.Handle("/cdn/", http.StripPrefix("/cdn", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		segs := splitPath(r.URL.Path)
 		if len(segs) < 3 {

@@ -176,3 +176,13 @@ func (s *Store) RemoveChannelVoiceStates(channelID string) error {
 	_, err := s.DB.Exec(`DELETE FROM voice_states WHERE channel_id = ?`, channelID)
 	return mapErr(err)
 }
+
+// VoiceStateByToken resolves the state minted by OP 4, used by the voice gateway
+// during IDENTIFY.
+func (s *Store) VoiceStateByToken(token string) (VoiceState, error) {
+	if token == "" {
+		return VoiceState{}, ErrNotFound
+	}
+	v, err := scanVoiceState(s.DB.QueryRow(`SELECT `+voiceColumns+` FROM voice_states WHERE voice_token = ?`, token))
+	return v, mapErr(err)
+}
