@@ -14,6 +14,12 @@ const (
 	spamWindow  = 5 * time.Second
 	spamLimit   = 5
 	spamMaxKeys = 100_000
+
+	// Mention-raid aggregation is guild-scoped: mentions from every channel and
+	// every user count toward the same window.
+	raidWindow  = 10 * time.Second
+	raidLimit   = 10
+	raidMaxKeys = 10_000
 )
 
 type messageRate struct {
@@ -45,6 +51,46 @@ func (r *messageRate) hit(key string) int {
 	kept = append(kept, now)
 	r.hits[key] = kept
 	return len(kept)
+}
+
+// raidTracker aggregates mentions per guild across channels and users.
+type raidTracker struct {
+	mu      sync.Mutex
+	windows map[string][]raidEntry
+}
+
+type raidEntry struct {
+	ts       int64
+	mentions int
+}
+
+func newRaidTracker() *raidTracker { return &raidTracker{windows: map[string][]raidEntry{}} }
+
+// hit records a message's mention count and returns the guild total inside the
+// window, including this message.
+func (r *raidTracker) hit(guildID string, mentions int) int {
+	now := time.Now().UnixMilli()
+	cutoff := now - raidWindow.Milliseconds()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	// ponytail: whole-map reset bounds memory; use an LRU if tens of thousands of
+	// guilds stay active inside one window.
+	if len(r.windows) > raidMaxKeys {
+		r.windows = map[string][]raidEntry{}
+	}
+	list := r.windows[guildID]
+	kept := list[:0]
+	total := 0
+	for _, e := range list {
+		if e.ts >= cutoff {
+			kept = append(kept, e)
+			total += e.mentions
+		}
+	}
+	kept = append(kept, raidEntry{ts: now, mentions: mentions})
+	total += mentions
+	r.windows[guildID] = kept
+	return total
 }
 
 // enforceProfileAutoMod scans a member's username, display name and nickname

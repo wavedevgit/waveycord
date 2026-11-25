@@ -108,9 +108,12 @@ are skipped, then block, alert and timeout actions run. Blocking is a response
 decision (`400`, code `200000`) and the row is never written. Alerts create a
 message authored by a system account; timeouts update the member row. Spam is evaluated with a per-`(guild, channel, user)` sliding window held in the
 API process; member-profile rules run the keyword/regex/preset matcher over
-username, display name and nickname at join and on member update. Mention-raid
-detection is still stored-only: it needs cross-channel aggregation that this
-process does not keep.
+username, display name and nickname at join and on member update. Mention-raid detection uses a guild-scoped window: every message's user/role
+mention count (plus `@everyone`/`@here`) is added to one per-guild bucket, pruned
+to ten seconds, and compared against the threshold before the rule actions run.
+The bucket is per API process, so a multi-instance deployment aggregates
+per-instance rather than cluster-wide; that limitation is deliberate and
+documented.
 
 ## Message search
 

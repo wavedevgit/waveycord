@@ -213,7 +213,7 @@ role connections and the developer portal UI remain TBD.
 | Actions: block message, send alert, timeout | executed + tested |
 | Exempt roles / exempt channels | executed + tested |
 | Keyword allow lists | executed |
-| Mention raid trigger | stored, not evaluated |
+| Mention raid trigger (guild-wide mention window) | executed + tested |
 
 Blocked messages return `400` with code `200000` and are not persisted. Alerts are
 posted by a system account into the configured channel; timeouts set
@@ -223,10 +223,12 @@ SPAM is stateful: a sliding five-second window counts a user's messages per
 channel, and the sixth message trips the rule. MEMBER_PROFILE rules scan the
 username, display name and nickname both at join time (invite accept, invite on
 registration) and on member updates, applying the configured timeout and alert
-actions. Mention-raid detection still needs cross-channel aggregation and is
-exposed only as a stored rule; Discord's production spam thresholds are
-unpublished, so the window and limit here are fixed and documented rather than
-tuned.
+actions. MENTION_RAID aggregates mentions per guild across every channel and user in a
+ten-second window; more than ten mentions trips the rule and runs the configured
+block/alert/timeout actions. `@everyone` and `@here` count as one mention each.
+Normal volume and other guilds' windows do not trip it. Discord's production raid
+thresholds are unpublished, so the window and limit here are fixed and documented
+rather than tuned.
 
 ## Message search
 

@@ -62,6 +62,7 @@ type Server struct {
 	routes []route
 	limit  *limiter
 	rates  *messageRate
+	raids  *raidTracker
 	// reads coalesces identical concurrent reads, keyed by route and resource,
 	// the same protection the published message-storage design calls request
 	// coalescing.
@@ -94,7 +95,7 @@ func New(st *store.Store, hub *gateway.Hub, cfg Config) *Server {
 		cfg.Logger = slog.Default()
 	}
 	s := &Server{Store: st, Hub: hub, cfg: cfg, limit: newLimiter(cfg.RateLimit, cfg.RateWindow),
-		rates: newMessageRate(), metrics: newMetrics(), started: time.Now()}
+		rates: newMessageRate(), raids: newRaidTracker(), metrics: newMetrics(), started: time.Now()}
 	s.routes = s.buildRoutes()
 	return s
 }

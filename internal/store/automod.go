@@ -233,6 +233,20 @@ var autoModPresets = map[string][]string{
 
 var mentionRe = regexp.MustCompile(`<@!?[0-9]{17,20}>`)
 
+// raidMentionRe counts user and role mentions for the MENTION_RAID trigger.
+var raidMentionRe = regexp.MustCompile(`<@!?[0-9]{17,20}>|<@&[0-9]{17,20}>`)
+
+// CountMentions returns the number of user/role mentions in a message, plus one
+// for @everyone/@here.
+func CountMentions(content string) int {
+	n := len(raidMentionRe.FindAllString(content, -1))
+	lower := strings.ToLower(content)
+	if strings.Contains(lower, "@everyone") || strings.Contains(lower, "@here") {
+		n++
+	}
+	return n
+}
+
 // AutoModViolation describes why a message was flagged.
 type AutoModViolation struct {
 	Rule   AutoModRule
@@ -254,7 +268,11 @@ type EvalInput struct {
 	MemberRoles    []string
 	RecentMessages int // messages from this user in this channel inside the window
 	SpamThreshold  int // messages above this count trip the SPAM trigger
-	Profile        *ProfileFields
+	// RecentRaidMentions is the guild-wide mention count inside the raid window;
+	// RaidThreshold is the count above which MENTION_RAID trips.
+	RecentRaidMentions int
+	RaidThreshold      int
+	Profile            *ProfileFields
 }
 
 // AutoModMatches returns every enabled message-send rule that matches, with the
@@ -275,6 +293,10 @@ func AutoModEvaluate(rules []AutoModRule, in EvalInput) []AutoModViolation {
 	if threshold <= 0 {
 		threshold = 5
 	}
+	raidThreshold := in.RaidThreshold
+	if raidThreshold <= 0 {
+		raidThreshold = 10
+	}
 	out := []AutoModViolation{}
 	for _, rule := range rules {
 		if !rule.Enabled || rule.EventType != AutoModEventMessageSend {
@@ -289,6 +311,9 @@ func AutoModEvaluate(rules []AutoModRule, in EvalInput) []AutoModViolation {
 		case AutoModTriggerSpam:
 			matched = in.RecentMessages > threshold
 			reason = "spam"
+		case AutoModTriggerMentionRaid:
+			matched = in.RecentRaidMentions > raidThreshold
+			reason = "mention_raid"
 		case AutoModTriggerMemberProfile:
 			if in.Profile == nil {
 				continue

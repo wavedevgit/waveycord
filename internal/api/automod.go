@@ -210,9 +210,11 @@ func (s *Server) enforceAutoMod(c *Ctx, ch model.Channel, content string) bool {
 		roles = member.Roles
 	}
 	recent := s.rates.hit(*ch.GuildID + "|" + ch.ID + "|" + c.User.ID)
+	raidMentions := s.raids.hit(*ch.GuildID, store.CountMentions(content))
 	matches := store.AutoModEvaluate(rules, store.EvalInput{
 		Content: content, ChannelID: ch.ID, MemberRoles: roles,
 		RecentMessages: recent, SpamThreshold: spamLimit,
+		RecentRaidMentions: raidMentions, RaidThreshold: raidLimit,
 	})
 	if len(matches) == 0 {
 		return false
