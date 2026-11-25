@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/crypto/curve25519"
 
 	"github.com/wavedevgit/waveycord/internal/store"
 )
@@ -204,6 +206,55 @@ func (v *VoiceServer) forwardRTP(ssrc uint32, packet []byte, from *net.UDPAddr) 
 	_ = from
 }
 
+func (v *VoiceServer) findBySSRC(ssrc uint32) *voiceConn {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for c := range v.conns {
+		c.mu.Lock()
+		match := c.ready && c.ssrc == ssrc
+		c.mu.Unlock()
+		if match {
+			return c
+		}
+	}
+	return nil
+}
+
+// forwardEncrypted re-wraps decrypted media for every other connection in the
+// channel that has completed a key exchange.
+func (v *VoiceServer) forwardEncrypted(ssrc uint32, plaintext []byte) {
+	sender := v.findBySSRC(ssrc)
+	if sender == nil {
+		return
+	}
+	channel := sender.channel()
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c != sender && c.channel() == channel {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.mu.Lock()
+		gcm, keyID := c.gcm, c.keyID
+		if gcm != nil {
+			c.outCounter++
+			counter := c.outCounter
+			c.mu.Unlock()
+			addr := c.udp()
+			if addr != nil {
+				frame := encodeEnvelope(gcm, keyID, counter, ssrc, plaintext)
+				_, _ = v.udp.WriteToUDP(frame, addr)
+				v.forwarded.Add(1)
+			}
+			continue
+		}
+		c.mu.Unlock()
+	}
+}
+
 func (v *VoiceServer) readUDP() {
 	buf := make([]byte, 1500)
 	for {
@@ -225,6 +276,31 @@ func (v *VoiceServer) readUDP() {
 			copy(resp[8:72], v.ip)
 			binary.BigEndian.PutUint16(resp[72:74], uint16(v.port))
 			_, _ = v.udp.WriteToUDP(resp, from)
+			continue
+		}
+		// Encrypted media envelope ("WCDF").
+		if n > 20 && string(buf[0:4]) == daveMagic {
+			packet := append([]byte(nil), buf[:n]...)
+			v.rtp.Add(1)
+			ssrc := binary.BigEndian.Uint32(packet[16:20])
+			if sender := v.findBySSRC(ssrc); sender != nil {
+				sender.mu.Lock()
+				gcm, keyID, last := sender.gcm, sender.keyID, sender.lastCounter
+				sender.mu.Unlock()
+				if gcm != nil {
+					counter, _, plaintext, err := openEnvelope(gcm, keyID, last, packet)
+					if err == nil {
+						sender.mu.Lock()
+						if counter > sender.lastCounter {
+							sender.lastCounter = counter
+						}
+						sender.mu.Unlock()
+						if plaintext != nil {
+							v.forwardEncrypted(ssrc, plaintext)
+						}
+					}
+				}
+			}
 			continue
 		}
 		// RTP v2 packet: count, then fan out to the same channel (SFU-style).
@@ -261,15 +337,20 @@ type voiceConn struct {
 	server  *VoiceServer
 	token   string
 
-	mu        sync.Mutex
-	writeMu   sync.Mutex
-	userID    string
-	guildID   string
-	channelID string
-	ssrc      uint32
-	ready     bool
-	closed    bool
-	done      chan struct{}
+	mu          sync.Mutex
+	writeMu     sync.Mutex
+	userID      string
+	guildID     string
+	channelID   string
+	ssrc        uint32
+	ready       bool
+	gcm         cipher.AEAD
+	keyID       uint32
+	lastCounter uint64
+	outCounter  uint64
+	peerPub     [32]byte
+	closed      bool
+	done        chan struct{}
 }
 
 func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token string) {
@@ -375,6 +456,103 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				"mode":                  "opus",
 				"secret_key":            keyInts,
 				"dave_protocol_version": 0,
+			}})
+		case 30: // CLIENT_KEY_EXCHANGE
+			var ex struct {
+				PublicKey string `json:"public_key"`
+			}
+			if err := json.Unmarshal(frame.D, &ex); err != nil {
+				c.close(voiceCloseUnknownOpcode, "Invalid key exchange")
+				return
+			}
+			peer, err := decodeKey(ex.PublicKey)
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Invalid public key")
+				return
+			}
+			priv, pub, err := newEphemeralKey()
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Key generation failed")
+				return
+			}
+			shared, err := curve25519.X25519(priv[:], peer[:])
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Key agreement failed")
+				return
+			}
+			key, err := deriveMediaKey(shared)
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Key derivation failed")
+				return
+			}
+			gcm, err := newGCM(key)
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Cipher init failed")
+				return
+			}
+			c.mu.Lock()
+			keyID := randomUint32()
+			if keyID == 0 {
+				keyID = 1
+			}
+			c.gcm = gcm
+			c.keyID = keyID
+			c.lastCounter = 0
+			c.peerPub = peer
+			c.mu.Unlock()
+			c.send(map[string]any{"op": 31, "d": map[string]any{
+				"public_key": encodeKey(pub), "key_id": keyID, "rotation_seconds": 3600,
+			}})
+		case 33: // CLIENT_KEY_ROTATE
+			c.mu.Lock()
+			hasKey := c.gcm != nil
+			c.mu.Unlock()
+			if !hasKey {
+				c.close(voiceCloseNotAuth, "Key exchange first")
+				return
+			}
+			// Rotation re-runs the exchange; the client supplies a fresh key.
+			var ex struct {
+				PublicKey string `json:"public_key"`
+			}
+			_ = json.Unmarshal(frame.D, &ex)
+			if ex.PublicKey != "" {
+				// handled by the client sending op 30 again after rotation request
+			}
+			priv, pub, err := newEphemeralKey()
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Key generation failed")
+				return
+			}
+			c.mu.Lock()
+			peerPub := c.peerPub
+			c.mu.Unlock()
+			shared, err := curve25519.X25519(priv[:], peerPub[:])
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Key agreement failed")
+				return
+			}
+			key, err := deriveMediaKey(shared)
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Key derivation failed")
+				return
+			}
+			gcm, err := newGCM(key)
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Cipher init failed")
+				return
+			}
+			c.mu.Lock()
+			keyID := randomUint32()
+			if keyID == 0 {
+				keyID = 1
+			}
+			c.gcm = gcm
+			c.keyID = keyID
+			c.lastCounter = 0
+			c.mu.Unlock()
+			c.send(map[string]any{"op": 31, "d": map[string]any{
+				"public_key": encodeKey(pub), "key_id": keyID, "rotation_seconds": 3600,
 			}})
 		case voiceOpHeartbeat:
 			c.send(map[string]any{"op": voiceOpHeartbeatAck, "d": map[string]any{"t": time.Now().UnixMilli()}})

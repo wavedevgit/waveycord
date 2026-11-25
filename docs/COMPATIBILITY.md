@@ -89,6 +89,7 @@ route is not registered yet.
 | UDP IP discovery (74-byte request/response) | implemented + tested |
 | RTP packet reception + counters (no decode) | implemented + tested |
 | SFU-style RTP fanout to same-channel connections (local + cross-instance via bus) | implemented + tested |
+| Media crypto boundary: X25519 key exchange, AES-256-GCM envelope, replay protection, key rotation | implemented + tested (server-terminated, not MLS E2EE) |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
 
