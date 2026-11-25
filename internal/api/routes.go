@@ -11,6 +11,10 @@ func (s *Server) buildRoutes() []route {
 	r("GET", "/gateway", false, s.handleGateway)
 	r("GET", "/gateway/bot", true, s.handleGatewayBot)
 	r("GET", "/voice/regions", false, s.handleVoiceRegions)
+	r("POST", "/applications", true, s.handleCreateApplication)
+	r("GET", "/applications", true, s.handleListApplications)
+	r("GET", "/applications/@me", true, s.handleGetMyApplication)
+	r("POST", "/applications/{applicationID}/bot/reset", true, s.handleResetBotToken)
 
 	// Auth.
 	r("POST", "/auth/register", false, s.handleRegister)
@@ -44,6 +48,7 @@ func (s *Server) buildRoutes() []route {
 	r("POST", "/guilds/{guildID}/channels", true, s.handleCreateGuildChannel)
 	r("PATCH", "/guilds/{guildID}/channels", true, s.handleModifyChannelPositions)
 	r("GET", "/guilds/{guildID}/threads/active", true, s.handleActiveThreads)
+	r("GET", "/guilds/{guildID}/messages/search", true, s.handleGuildMessageSearch)
 	r("GET", "/guilds/{guildID}/members", true, s.handleListMembers)
 	r("GET", "/guilds/{guildID}/members/{userID}", true, s.handleGetMember)
 	r("PATCH", "/guilds/{guildID}/members/{userID}", true, s.handleUpdateMember)

@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: waveycord
+      POSTGRES_PASSWORD: waveycord
+      POSTGRES_DB: waveycord
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waveycord -d waveycord"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    ports:
+      - "5432:5432"
+
+  waveycord-a:
+    build: .
+    environment:
+      WAVEYCORD_ADDR: 0.0.0.0:8080
+      WAVEYCORD_DB: postgres://waveycord:waveycord@postgres:5432/waveycord?sslmode=disable
+      WAVEYCORD_GATEWAY_URL: ws://127.0.0.1:8081/gateway
+      WAVEYCORD_CDN_BASE: http://127.0.0.1:8081
+      WAVEYCORD_UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  waveycord-b:
+    build: .
+    environment:
+      WAVEYCORD_ADDR: 0.0.0.0:8080
+      WAVEYCORD_DB: postgres://waveycord:waveycord@postgres:5432/waveycord?sslmode=disable
+      WAVEYCORD_GATEWAY_URL: ws://127.0.0.1:8081/gateway
+      WAVEYCORD_CDN_BASE: http://127.0.0.1:8081
+      WAVEYCORD_UPLOAD_DIR: /data/uploads
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  lb:
+    build: .
+    entrypoint: ["/usr/local/bin/waveycord-lb"]
+    command:
+      - "-addr=0.0.0.0:8081"
+      - "-backend=http://waveycord-a:8080"
+      - "-backend=http://waveycord-b:8080"
+    ports:
+      - "8081:8081"
+    depends_on:
+      - waveycord-a
+      - waveycord-b
+
+volumes:
+  pgdata:
+  uploads:

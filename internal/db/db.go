@@ -15,7 +15,6 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/wavedevgit/waveycord/internal/sqlx"
 )
@@ -49,6 +48,9 @@ func isPostgres(dsn string) bool {
 }
 
 func openSQLite(path string, opts Options) (*sqlx.DB, error) {
+	if !hasDriver("sqlite3") {
+		return nil, fmt.Errorf("db: sqlite driver not built (rebuild without -tags nosqlite, or use a postgres DSN)")
+	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
 			return nil, fmt.Errorf("db: create directory: %w", err)
@@ -116,6 +118,15 @@ func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
 		return nil, fmt.Errorf("db: apply postgres schema: %w", schemaErr)
 	}
 	return &sqlx.DB{DB: handle, Dialect: sqlx.Postgres}, nil
+}
+
+func hasDriver(name string) bool {
+	for _, d := range sql.Drivers() {
+		if d == name {
+			return true
+		}
+	}
+	return false
 }
 
 func envInt(key string, fallback int) int {

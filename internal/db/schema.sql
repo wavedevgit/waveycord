@@ -311,3 +311,23 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_guild ON audit_logs (guild_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS applications (
+    id                     TEXT PRIMARY KEY,
+    name                   TEXT NOT NULL,
+    description            TEXT NOT NULL DEFAULT '',
+    icon                   TEXT,
+    owner_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bot_user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    bot_public             SMALLINT NOT NULL DEFAULT 1,
+    bot_require_code_grant SMALLINT NOT NULL DEFAULT 0,
+    verify_key             TEXT NOT NULL DEFAULT '',
+    created_at             INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bot_tokens (
+    token_hash     TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at     INTEGER NOT NULL
+);

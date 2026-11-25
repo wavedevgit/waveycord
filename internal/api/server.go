@@ -418,15 +418,25 @@ func (s *Server) authenticate(r *http.Request) (string, model.User, string, erro
 	if raw == "" {
 		return "", model.User{}, "", ErrUnauthorized
 	}
-	for _, prefix := range []string{"Bot ", "Bearer "} {
-		if strings.HasPrefix(raw, prefix) {
-			raw = strings.TrimSpace(strings.TrimPrefix(raw, prefix))
-			break
-		}
+	isBot := false
+	switch {
+	case strings.HasPrefix(raw, "Bot "):
+		isBot = true
+		raw = strings.TrimSpace(strings.TrimPrefix(raw, "Bot "))
+	case strings.HasPrefix(raw, "Bearer "):
+		raw = strings.TrimSpace(strings.TrimPrefix(raw, "Bearer "))
+	case strings.HasPrefix(raw, "User "):
+		raw = strings.TrimSpace(strings.TrimPrefix(raw, "User "))
 	}
-	raw = strings.TrimPrefix(raw, "User ")
 	if raw == "" {
 		return "", model.User{}, "", ErrUnauthorized
+	}
+	if isBot {
+		user, app, err := s.Store.BotSession(TokenHash(raw))
+		if err != nil {
+			return "", model.User{}, "", ErrUnauthorized
+		}
+		return raw, user, "bot:" + app.ID, nil
 	}
 	sess, user, err := s.Store.SessionByToken(TokenHash(raw))
 	if err != nil {
