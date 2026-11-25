@@ -387,3 +387,19 @@ CREATE TABLE IF NOT EXISTS application_commands (
     created_at                BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS application_commands_app ON application_commands (application_id, guild_id);
+
+CREATE TABLE IF NOT EXISTS auto_moderation_rules (
+    id               TEXT PRIMARY KEY,
+    guild_id         TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    creator_id       TEXT,
+    name             TEXT NOT NULL,
+    event_type       INTEGER NOT NULL DEFAULT 1,
+    trigger_type     INTEGER NOT NULL,
+    trigger_metadata TEXT NOT NULL DEFAULT '{}',
+    actions          TEXT NOT NULL DEFAULT '[]',
+    enabled          SMALLINT NOT NULL DEFAULT 1,
+    exempt_roles     TEXT NOT NULL DEFAULT '[]',
+    exempt_channels  TEXT NOT NULL DEFAULT '[]',
+    created_at       BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS automod_guild ON auto_moderation_rules (guild_id);

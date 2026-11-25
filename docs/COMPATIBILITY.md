@@ -166,6 +166,45 @@ returns the same fields as JSON when `Accept: application/json` is sent, and a
 302 with `code`/`state` in the query for browser-style form posts. Interactions,
 role connections and the developer portal UI remain TBD.
 
+## Auto moderation
+
+| Route | Status |
+| --- | --- |
+| `GET /guilds/{guild.id}/auto-moderation/rules` | implemented + tested |
+| `POST /guilds/{guild.id}/auto-moderation/rules` | implemented + tested |
+| `GET/PATCH/DELETE /guilds/{guild.id}/auto-moderation/rules/{rule.id}` | implemented + tested |
+| MESSAGE_SEND keyword trigger (`keyword_filter`) | executed + tested |
+| MESSAGE_SEND regex trigger (`regex_patterns`) | executed + tested |
+| Keyword preset trigger (`presets`) | executed (built-in term lists) |
+| Mention spam trigger (`mention_total_limit`) | executed + tested |
+| Actions: block message, send alert, timeout | executed + tested |
+| Exempt roles / exempt channels | executed + tested |
+| Keyword allow lists | executed |
+| Spam, member profile, mention raid triggers | stored, not evaluated |
+
+Blocked messages return `400` with code `200000` and are not persisted. Alerts are
+posted by a system account into the configured channel; timeouts set
+`communication_disabled_until` on the member. Spam heuristics, profile scans and
+mention-raid detection require cross-message state that this deployment does not
+keep, and are exposed only as stored rules.
+
+## Message search
+
+Search is `ILIKE`-style SQL over the partitioned message table, filtered by the
+caller's readable channels. It is **not** the published sharded-index
+architecture: there is no Elasticsearch/Lucene cell, no PubSub-backed indexing
+queue, no per-guild index sizing and no BFG cell. Consequences:
+
+- Result quality is substring matching, not tokenised relevance.
+- Latency grows with guild history rather than staying index-bound.
+- Large guilds cannot exceed a single table scan budget.
+
+Closing this gap means deploying an external index (Elasticsearch/OpenSearch) with
+guild-sharded indices and an indexing worker fed from message writes. The code
+boundary is `Store.SearchMessages`; a real implementation would replace that call
+with an index client and keep the same permission filtering. This is recorded as a
+known, deliberate gap rather than claimed parity.
+
 ## Deliberately different from Discord
 
 - CDN is served by the same process (`/cdn/...`); Discord uses a separate host.

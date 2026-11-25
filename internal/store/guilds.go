@@ -564,6 +564,33 @@ func (s *Store) UpdateMember(guildID, userID string, p UpdateMemberParams) (mode
 	return s.Member(guildID, userID)
 }
 
+// SetMemberTimeout applies a communication timeout in milliseconds.
+func (s *Store) SetMemberTimeout(guildID, userID string, untilMs int64) error {
+	res, err := s.DB.Exec(`UPDATE guild_members SET communication_disabled_until = ?
+		WHERE guild_id = ? AND user_id = ?`, untilMs, guildID, userID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// EnsureSystemUser returns a system account for automated messages, creating it
+// once per process lifetime.
+func (s *Store) EnsureSystemUser() (model.User, error) {
+	var id string
+	err := s.DB.QueryRow(`SELECT id FROM users WHERE system = 1 AND username = 'AutoMod' LIMIT 1`).Scan(&id)
+	if err == nil {
+		return s.UserByID(id)
+	}
+	created, err := s.CreateUser(CreateUserParams{
+		Username: "AutoMod", PasswordHash: "", System: true, Verified: true,
+	})
+	return created, err
+}
+
 // RemoveMember deletes a membership.
 func (s *Store) RemoveMember(guildID, userID string) error {
 	res, err := s.DB.Exec(`DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?`, guildID, userID)

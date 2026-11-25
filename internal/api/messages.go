@@ -98,6 +98,9 @@ func (s *Server) handleCreateMessage(c *Ctx) {
 			}
 		}
 	}
+	if s.enforceAutoMod(c, ch, req.Content) {
+		return
+	}
 	var guildID string
 	if ch.GuildID != nil {
 		guildID = *ch.GuildID

@@ -87,6 +87,17 @@ row (`verify_key`), registered by the owner. Commands are rows scoped by
 Dispatch is in-process: the documented envelope (`type: 4`, `data.content`) is
 returned by a handler registry rather than forwarded to an external bot URL.
 
+## Auto moderation
+
+Rules are rows scoped by guild with JSON trigger metadata and actions. Message
+creation calls `enforceAutoMod` before persistence: enabled `MESSAGE_SEND` rules
+are matched by keyword/regex/preset or mention count, exempt roles and channels
+are skipped, then block, alert and timeout actions run. Blocking is a response
+decision (`400`, code `200000`) and the row is never written. Alerts create a
+message authored by a system account; timeouts update the member row. Spam,
+member-profile and mention-raid triggers are stored but not evaluated; they need
+cross-message state this deployment does not keep.
+
 ## Permissions
 
 `internal/perm` implements the documented resolution order: base role bits
