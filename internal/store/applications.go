@@ -23,21 +23,28 @@ type Application struct {
 	VerifyKey           string      `json:"verify_key,omitempty"`
 	Bot                 *model.User `json:"bot,omitempty"`
 	Token               string      `json:"token,omitempty"`
+	ClientSecret        string      `json:"client_secret,omitempty"`
+	RedirectURIs        []string    `json:"redirect_uris"`
 	CreatedAt           string      `json:"-"`
 }
 
 const applicationColumns = `id, name, description, icon, owner_id, bot_user_id, bot_public,
-	bot_require_code_grant, verify_key`
+	bot_require_code_grant, verify_key, redirect_uris`
 
 func (s *Store) scanApplication(row rowScanner) (Application, string, error) {
 	var (
-		a      Application
-		icon   sql.NullString
-		botUID string
+		a         Application
+		icon      sql.NullString
+		botUID    string
+		redirects string
 	)
 	err := row.Scan(&a.ID, &a.Name, &a.Description, &icon, &a.OwnerID, &botUID,
-		&a.BotPublic, &a.BotRequireCodeGrant, &a.VerifyKey)
+		&a.BotPublic, &a.BotRequireCodeGrant, &a.VerifyKey, &redirects)
 	a.Icon = ns(icon)
+	a.RedirectURIs = parseJSONStrings(redirects)
+	if a.RedirectURIs == nil {
+		a.RedirectURIs = []string{}
+	}
 	return a, botUID, err
 }
 
@@ -54,6 +61,10 @@ func (s *Store) CreateApplication(ownerID, name, description string) (Applicatio
 	if err != nil {
 		return Application{}, err
 	}
+	secret, err := NewOpaqueToken()
+	if err != nil {
+		return Application{}, err
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return Application{}, mapErr(err)
@@ -64,9 +75,10 @@ func (s *Store) CreateApplication(ownerID, name, description string) (Applicatio
 		return Application{}, mapErr(err)
 	}
 	if _, err := tx.Exec(`INSERT INTO applications
-		(id, name, description, owner_id, bot_user_id, bot_public, bot_require_code_grant, verify_key, created_at)
-		VALUES (?,?,?,?,?,1,0,?,?)`,
-		appID, name, description, ownerID, botID, hex.EncodeToString(key), now()); err != nil {
+		(id, name, description, owner_id, bot_user_id, bot_public, bot_require_code_grant, verify_key,
+		 client_secret_hash, redirect_uris, created_at)
+		VALUES (?,?,?,?,?,1,0,?,?,'[]',?)`,
+		appID, name, description, ownerID, botID, hex.EncodeToString(key), TokenHashOf(secret), now()); err != nil {
 		return Application{}, mapErr(err)
 	}
 	if _, err := tx.Exec(`INSERT INTO bot_tokens (token_hash, application_id, user_id, created_at)
@@ -81,7 +93,41 @@ func (s *Store) CreateApplication(ownerID, name, description string) (Applicatio
 		return app, err
 	}
 	app.Token = token
+	app.ClientSecret = secret
 	return app, nil
+}
+
+// UpdateApplication patches the fields an owner controls.
+func (s *Store) UpdateApplication(appID, ownerID string, name, description *string, redirectURIs *[]string) (Application, error) {
+	app, err := s.Application(appID)
+	if err != nil {
+		return app, err
+	}
+	if app.OwnerID != ownerID {
+		return app, ErrNotFound
+	}
+	set := []string{}
+	args := []any{}
+	if name != nil {
+		set = append(set, "name = ?")
+		args = append(args, *name)
+	}
+	if description != nil {
+		set = append(set, "description = ?")
+		args = append(args, *description)
+	}
+	if redirectURIs != nil {
+		set = append(set, "redirect_uris = ?")
+		args = append(args, jsonStrings(*redirectURIs))
+	}
+	if len(set) == 0 {
+		return app, nil
+	}
+	args = append(args, appID)
+	if _, err := s.DB.Exec(`UPDATE applications SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...); err != nil {
+		return Application{}, mapErr(err)
+	}
+	return s.Application(appID)
 }
 
 // Application loads an application by id.

@@ -119,7 +119,28 @@ route is not registered yet.
 | `POST /applications/{application.id}/bot/reset` | implemented |
 | `Authorization: Bot <token>` | implemented + tested |
 
-OAuth2 authorization code flow and interaction endpoints are TBD.
+### OAuth2
+
+| Route | Status |
+| --- | --- |
+| `GET /oauth2/authorize` (consent view; JSON or HTML) | implemented + tested |
+| `POST /oauth2/authorize` (consent, form or JSON) | implemented + tested |
+| `POST /oauth2/token` `grant_type=authorization_code` | implemented + tested |
+| `POST /oauth2/token` `grant_type=refresh_token` | implemented + tested |
+| `GET /oauth2/@me` | implemented + tested |
+| `PATCH /applications/{application.id}` (redirect URIs) | implemented + tested |
+| Bot install via `scope=bot` + `guild_id` | implemented + tested (requires MANAGE_GUILD) |
+
+Codes are single-use, expire after ten minutes and are bound to the registered
+redirect URI and client. Secrets and tokens are stored as SHA-256 hashes; the
+client secret is shown only in the create response. Unknown scopes, unregistered
+redirect URIs, reused codes, revoked refresh tokens and unknown grant types are
+rejected.
+
+Deliberate adaptation: Discord's consent screen is a browser UI. This server
+returns the same fields as JSON when `Accept: application/json` is sent, and a
+302 with `code`/`state` in the query for browser-style form posts. Interactions,
+role connections and the developer portal UI remain TBD.
 
 ## Deliberately different from Discord
 

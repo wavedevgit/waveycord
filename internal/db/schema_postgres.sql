@@ -381,3 +381,32 @@ BEGIN
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS bucket BIGINT NOT NULL DEFAULT 0;
     END IF;
 END $$;
+
+CREATE TABLE IF NOT EXISTS oauth2_authorization_codes (
+    code           TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    redirect_uri   TEXT NOT NULL,
+    scopes         TEXT NOT NULL DEFAULT '[]',
+    guild_id       TEXT,
+    permissions    TEXT,
+    created_at     BIGINT NOT NULL,
+    expires_at     BIGINT NOT NULL,
+    consumed       SMALLINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS oauth2_tokens (
+    id             TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash     TEXT NOT NULL UNIQUE,
+    refresh_hash   TEXT NOT NULL UNIQUE,
+    scopes         TEXT NOT NULL DEFAULT '[]',
+    created_at     BIGINT NOT NULL,
+    expires_at     BIGINT NOT NULL,
+    revoked        SMALLINT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS oauth2_tokens_user ON oauth2_tokens (user_id);
+
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS client_secret_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS redirect_uris TEXT NOT NULL DEFAULT '[]';

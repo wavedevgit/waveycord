@@ -68,6 +68,15 @@ partition key, the per-channel index, the separate message index, and the
 coalesced read path match the published design; compaction, SSTables, quorum
 reads and token-ring ownership do not exist here and are not claimed.
 
+## OAuth2
+
+Authorization is database-backed: `oauth2_authorization_codes` holds single-use
+codes bound to application, user, redirect URI and scopes; `oauth2_tokens` holds
+access/refresh pairs as SHA-256 hashes. Consent with `scope=bot` installs the
+application's bot user into the requested guild after a `MANAGE_GUILD` check, the
+same point the real flow installs the bot. Access tokens authenticate as the
+authorizing user for `GET /users/@me` and `/oauth2/@me`.
+
 ## Permissions
 
 `internal/perm` implements the documented resolution order: base role bits

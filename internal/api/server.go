@@ -437,12 +437,13 @@ func (s *Server) authenticate(r *http.Request) (string, model.User, string, erro
 	if raw == "" {
 		return "", model.User{}, "", ErrUnauthorized
 	}
-	isBot := false
+	isBot, isBearer := false, false
 	switch {
 	case strings.HasPrefix(raw, "Bot "):
 		isBot = true
 		raw = strings.TrimSpace(strings.TrimPrefix(raw, "Bot "))
 	case strings.HasPrefix(raw, "Bearer "):
+		isBearer = true
 		raw = strings.TrimSpace(strings.TrimPrefix(raw, "Bearer "))
 	case strings.HasPrefix(raw, "User "):
 		raw = strings.TrimSpace(strings.TrimPrefix(raw, "User "))
@@ -458,11 +459,19 @@ func (s *Server) authenticate(r *http.Request) (string, model.User, string, erro
 		return raw, user, "bot:" + app.ID, nil
 	}
 	sess, user, err := s.Store.SessionByToken(TokenHash(raw))
-	if err != nil {
-		return "", model.User{}, "", ErrUnauthorized
+	if err == nil {
+		s.Store.TouchSession(sess.ID)
+		return raw, user, sess.ID, nil
 	}
-	s.Store.TouchSession(sess.ID)
-	return raw, user, sess.ID, nil
+	// OAuth2 access tokens are bearer tokens too; the docs treat them as user
+	// authentication with the granted scopes.
+	if isBearer {
+		token, oauthUser, oauthErr := s.Store.TokenByAccessHash(TokenHash(raw))
+		if oauthErr == nil {
+			return raw, oauthUser, "oauth:" + token.ID, nil
+		}
+	}
+	return "", model.User{}, "", ErrUnauthorized
 }
 
 // TokenHash is how tokens are stored: SHA-256 hex, never plaintext.

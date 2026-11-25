@@ -14,6 +14,11 @@ func (s *Server) buildRoutes() []route {
 	r("POST", "/applications", true, s.handleCreateApplication)
 	r("GET", "/applications", true, s.handleListApplications)
 	r("GET", "/applications/@me", true, s.handleGetMyApplication)
+	r("PATCH", "/applications/{applicationID}", true, s.handleUpdateApplication)
+	r("GET", "/oauth2/authorize", true, s.handleAuthorizeGet)
+	r("POST", "/oauth2/authorize", true, s.handleAuthorizePost)
+	r("POST", "/oauth2/token", false, s.handleOAuth2Token)
+	r("GET", "/oauth2/@me", true, s.handleOAuth2Me)
 	r("POST", "/applications/{applicationID}/bot/reset", true, s.handleResetBotToken)
 
 	// Auth.
