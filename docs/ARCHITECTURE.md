@@ -27,23 +27,46 @@ client ──► waveycord-lb ──► waveycord instance A ──► PostgreSQ
 
 ## Message storage
 
-The schema keeps the published access pattern:
+The published message-storage design partitions messages by channel and by a
+static time window. Postgres cannot be ScyllaDB, but declarative partitioning
+expresses the same logical layout:
 
-- `messages` is keyed `(channel_id, id DESC)` — partition by channel, sort by
-  snowflake — so a channel page is one ordered range scan and `before/after/
-  around` are index scans.
-- Snowflakes are generated from Discord's epoch (2015-01-01), 42-bit ms
-  timestamp, 5-bit worker, 12-bit sequence, so ids sort chronologically.
-- Reads are coalesced with `singleflight` keyed by channel and page parameters
-  (`internal/api/messages.go`). The load balancer keeps a channel's reads on one
-  instance, which is what makes coalescing effective — the same two-part design
-  the published message-storage post describes for data services.
-- `after` pages are fetched ascending then reversed so every page response is
-  newest-first.
+```
+messages                                  PARTITION BY HASH (channel_id)      -- 8 children
+  messages_h0 ... messages_h7             PARTITION BY RANGE (bucket)
+    messages_hN_yYYYYMM                   one child per calendar month
+    messages_hN_default                   fallback for out-of-window rows
+```
 
-Postgres is the multi-instance backend; SQLite (WAL) is the single-process
-default. One statement set serves both: `internal/sqlx` rewrites `?` to `$n` and
-maps Go bools onto the `SMALLINT` flag columns.
+- `bucket` is the UTC day index (`timestamp / 86_400_000`), written on insert.
+- A channel read names one channel, so hash partitioning prunes to one of eight
+  children; the snowflake-derived bucket bounds prune to one month child.
+  `EXPLAIN` on a page query shows a single child index scan.
+- `message_index (id → channel_id, bucket)` is the analogue of Discord's separate
+  message index: an id-only request (reaction, edit, delete) resolves its channel
+  once and reads one partition instead of scanning all of them.
+- Indexes `(channel_id, id DESC)` and `(guild_id, id DESC)` are declared on the
+  parent and Postgres creates them on every new child automatically.
+- Monthly children are created for `now-1 month .. now+12 months` at boot and
+  once a day (`db.EnsureMessagePartitions`). Out-of-range writes land in the
+  per-hash DEFAULT child rather than failing.
+- Existing deployments are migrated in place: the old table is renamed, the
+  partitioned parent is created, rows are copied with their bucket, the
+  `message_index` is filled, and the legacy table is dropped. The whole migration
+  runs under the schema advisory lock. `TestLegacyMessagesMigration` builds a
+  pre-partitioning schema and asserts the migrated row lands in the correct
+  monthly child.
+- Reactions and pins reference `channel_id` for cascade (a message id is no longer
+  globally unique across partitions); message deletion clears both explicitly.
+
+SQLite keeps a single `messages` table with the same columns and index table; the
+partitioning is a Postgres deployment concern, documented rather than emulated.
+
+Engine difference, stated plainly: Discord runs ScyllaDB (wide-column, shard per
+core, no GC). This implementation uses Postgres declarative partitioning. The
+partition key, the per-channel index, the separate message index, and the
+coalesced read path match the published design; compaction, SSTables, quorum
+reads and token-ring ownership do not exist here and are not claimed.
 
 ## Permissions
 

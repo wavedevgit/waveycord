@@ -17,6 +17,7 @@ import (
 	"github.com/wavedevgit/waveycord/internal/bus"
 	"github.com/wavedevgit/waveycord/internal/db"
 	"github.com/wavedevgit/waveycord/internal/gateway"
+	"github.com/wavedevgit/waveycord/internal/sqlx"
 	"github.com/wavedevgit/waveycord/internal/store"
 )
 
@@ -86,6 +87,10 @@ func main() {
 		defer transport.Close()
 	}
 
+	// Monthly message partitions are created ahead of time; the check runs once a
+	// day and on boot. SQLite is a no-op.
+	go maintainPartitions(context.Background(), handle, log)
+
 	srv := api.New(st, hub, cfg)
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -110,6 +115,20 @@ func main() {
 	defer cancel()
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Error("shutdown", "err", err)
+	}
+}
+
+func maintainPartitions(ctx context.Context, handle *sqlx.DB, log *slog.Logger) {
+	for {
+		now := time.Now()
+		if err := db.EnsureMessagePartitions(ctx, handle, now.AddDate(0, -1, 0), now.AddDate(0, 12, 0)); err != nil {
+			log.Warn("ensure message partitions", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(24 * time.Hour):
+		}
 	}
 }
 

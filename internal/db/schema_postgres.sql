@@ -143,11 +143,12 @@ CREATE TABLE IF NOT EXISTS permission_overwrites (
     PRIMARY KEY (channel_id, target_id)
 );
 
--- Messages are indexed by (channel_id, id) which is the partition key plus
--- sort key from the published message storage design: a channel read is one
--- ordered range scan, and the snowflake id orders chronologically.
+-- Messages follow the published storage design: partition by channel, then by a
+-- time bucket. HASH(channel_id) gives one partition per channel group; each hash
+-- partition is RANGE(bucket) with one child per month, so a channel page reads a
+-- single partition pair and old months can be dropped without a rewrite.
 CREATE TABLE IF NOT EXISTS messages (
-    id                    TEXT PRIMARY KEY,
+    id                    TEXT NOT NULL,
     channel_id            TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     guild_id              TEXT,
     author_id             TEXT NOT NULL REFERENCES users(id),
@@ -169,14 +170,45 @@ CREATE TABLE IF NOT EXISTS messages (
     attachments           TEXT NOT NULL DEFAULT '[]',
     embeds                TEXT NOT NULL DEFAULT '[]',
     sticker_items         TEXT NOT NULL DEFAULT '[]',
-    nonce                 TEXT
-);
+    nonce                 TEXT,
+    bucket                BIGINT NOT NULL,
+    PRIMARY KEY (channel_id, bucket, id)
+) PARTITION BY HASH (channel_id);
+
+-- Declarative hash children. Month children are created by db.EnsureMessagePartitions.
+CREATE TABLE IF NOT EXISTS messages_h0 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 0) PARTITION BY RANGE (bucket);
+CREATE TABLE IF NOT EXISTS messages_h1 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 1) PARTITION BY RANGE (bucket);
+CREATE TABLE IF NOT EXISTS messages_h2 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 2) PARTITION BY RANGE (bucket);
+CREATE TABLE IF NOT EXISTS messages_h3 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 3) PARTITION BY RANGE (bucket);
+CREATE TABLE IF NOT EXISTS messages_h4 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 4) PARTITION BY RANGE (bucket);
+CREATE TABLE IF NOT EXISTS messages_h5 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 5) PARTITION BY RANGE (bucket);
+CREATE TABLE IF NOT EXISTS messages_h6 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 6) PARTITION BY RANGE (bucket);
+CREATE TABLE IF NOT EXISTS messages_h7 PARTITION OF messages FOR VALUES WITH (MODULUS 8, REMAINDER 7) PARTITION BY RANGE (bucket);
+
+CREATE TABLE IF NOT EXISTS messages_h0_default PARTITION OF messages_h0 DEFAULT;
+CREATE TABLE IF NOT EXISTS messages_h1_default PARTITION OF messages_h1 DEFAULT;
+CREATE TABLE IF NOT EXISTS messages_h2_default PARTITION OF messages_h2 DEFAULT;
+CREATE TABLE IF NOT EXISTS messages_h3_default PARTITION OF messages_h3 DEFAULT;
+CREATE TABLE IF NOT EXISTS messages_h4_default PARTITION OF messages_h4 DEFAULT;
+CREATE TABLE IF NOT EXISTS messages_h5_default PARTITION OF messages_h5 DEFAULT;
+CREATE TABLE IF NOT EXISTS messages_h6_default PARTITION OF messages_h6 DEFAULT;
+CREATE TABLE IF NOT EXISTS messages_h7_default PARTITION OF messages_h7 DEFAULT;
+
 CREATE INDEX IF NOT EXISTS messages_channel ON messages (channel_id, id DESC);
 CREATE INDEX IF NOT EXISTS messages_guild ON messages (guild_id, id DESC);
 
+-- Direct id -> channel lookup, the analogue of Discord's separate message index.
+CREATE TABLE IF NOT EXISTS message_index (
+    id         TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    bucket     BIGINT NOT NULL,
+    created_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS message_index_channel ON message_index (channel_id);
+
 CREATE TABLE IF NOT EXISTS message_reactions (
-    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    channel_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     emoji_key  TEXT NOT NULL,
     emoji_name TEXT NOT NULL,
@@ -256,7 +288,7 @@ CREATE TABLE IF NOT EXISTS thread_members (
 
 CREATE TABLE IF NOT EXISTS pins (
     channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL,
     pinned_at  BIGINT NOT NULL,
     PRIMARY KEY (channel_id, message_id)
 );
@@ -332,3 +364,20 @@ CREATE TABLE IF NOT EXISTS bot_tokens (
     user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at     BIGINT NOT NULL
 );
+
+-- Additive migrations for deployments created by earlier revisions. CREATE TABLE
+-- IF NOT EXISTS does not add columns to an existing table.
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS archived SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS template TEXT;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS message_retention TEXT;
+-- Only meaningful while a legacy monolithic messages table is still present; the
+-- partitioned table already has this column.
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relname = 'messages' AND n.nspname = current_schema() AND c.relkind = 'r'
+    ) THEN
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS bucket BIGINT NOT NULL DEFAULT 0;
+    END IF;
+END $$;

@@ -110,9 +110,38 @@ func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
 		handle.Close()
 		return nil, fmt.Errorf("db: schema lock: %w", err)
 	}
-	_, schemaErr := conn.ExecContext(ctx, postgresSchema)
+	// A pre-partitioning deployment gets its table renamed first, then the
+	// partitioned parent is created by the schema, filled, and the old table
+	// dropped, all inside the advisory lock.
+	migrating, legacyMin, legacyMax, prepErr := prepareMessages(ctx, conn)
+	var schemaErr error
+	if prepErr == nil {
+		_, schemaErr = conn.ExecContext(ctx, postgresSchema)
+	}
+	if schemaErr == nil {
+		from := time.Now().AddDate(0, -1, 0)
+		to := time.Now().AddDate(0, 2, 0)
+		if migrating && legacyMin > 0 {
+			legacyStart := time.UnixMilli(legacyMin)
+			legacyEnd := time.UnixMilli(legacyMax)
+			if legacyStart.Before(from) {
+				from = legacyStart
+			}
+			if legacyEnd.After(to) {
+				to = legacyEnd
+			}
+		}
+		schemaErr = ensurePartitions(ctx, conn, from, to)
+	}
+	if schemaErr == nil && migrating {
+		schemaErr = copyLegacyMessages(ctx, conn)
+	}
 	_, _ = conn.ExecContext(ctx, `SELECT pg_advisory_unlock(hashtext('waveycord_schema'))`)
 	conn.Close()
+	if prepErr != nil {
+		handle.Close()
+		return nil, preperrwrap(prepErr)
+	}
 	if schemaErr != nil {
 		handle.Close()
 		return nil, fmt.Errorf("db: apply postgres schema: %w", schemaErr)
@@ -157,6 +186,8 @@ func OpenReplica(dsn string) (*sqlx.DB, error) {
 	}
 	return &sqlx.DB{DB: handle, Dialect: sqlx.Postgres}, nil
 }
+
+func preperrwrap(err error) error { return fmt.Errorf("db: prepare partitioned messages: %w", err) }
 
 // NowMillis is the single clock used for row timestamps.
 func NowMillis() int64 { return time.Now().UnixMilli() }

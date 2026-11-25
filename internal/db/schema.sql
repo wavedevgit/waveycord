@@ -168,7 +168,8 @@ CREATE TABLE IF NOT EXISTS messages (
     attachments           TEXT NOT NULL DEFAULT '[]',
     embeds                TEXT NOT NULL DEFAULT '[]',
     sticker_items         TEXT NOT NULL DEFAULT '[]',
-    nonce                 TEXT
+    nonce                 TEXT,
+    bucket                INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS messages_channel ON messages (channel_id, id DESC);
 CREATE INDEX IF NOT EXISTS messages_guild ON messages (guild_id, id DESC);
@@ -331,3 +332,14 @@ CREATE TABLE IF NOT EXISTS bot_tokens (
     user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at     INTEGER NOT NULL
 );
+
+-- Direct id -> channel lookup, the analogue of Discord's separate message index:
+-- it lets an id-only request go straight to the owning channel partition instead
+-- of scanning every partition.
+CREATE TABLE IF NOT EXISTS message_index (
+    id         TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL,
+    bucket     INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS message_index_channel ON message_index (channel_id);

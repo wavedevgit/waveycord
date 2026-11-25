@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"sort"
 	"strings"
@@ -176,6 +177,8 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 		comps = []byte("[]")
 	}
 	mid := s.NewID()
+	ts := now()
+	bucket := ts / bucketMillisPerDay
 	var guild any
 	if p.GuildID != "" {
 		guild = p.GuildID
@@ -188,11 +191,15 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 	if _, err := tx.Exec(`INSERT INTO messages
 		(id, channel_id, guild_id, author_id, content, timestamp, tts, mention_everyone,
 		 mentions, mention_roles, pinned, type, flags, referenced_message_id, components,
-		 attachments, embeds, sticker_items, nonce)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		mid, p.ChannelID, guild, p.AuthorID, p.Content, now(), p.TTS, mentionEveryone,
+		 attachments, embeds, sticker_items, nonce, bucket)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		mid, p.ChannelID, guild, p.AuthorID, p.Content, ts, p.TTS, mentionEveryone,
 		jsonStrings(mentionIDs), jsonStrings(mentionRoles), p.Pinned, p.Type, p.Flags,
-		p.ReferencedMessageID, string(comps), string(atts), string(embeds), "[]", p.Nonce); err != nil {
+		p.ReferencedMessageID, string(comps), string(atts), string(embeds), "[]", p.Nonce, bucket); err != nil {
+		return model.Message{}, mapErr(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO message_index (id, channel_id, bucket, created_at)
+		VALUES (?,?,?,?)`, mid, p.ChannelID, bucket, ts); err != nil {
 		return model.Message{}, mapErr(err)
 	}
 	if _, err := tx.Exec(`UPDATE channels SET last_message_id = ?, message_count = message_count + 1 WHERE id = ?`, mid, p.ChannelID); err != nil {
@@ -211,7 +218,22 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 
 // Message loads one message with reactions attached.
 func (s *Store) Message(idv string) (model.Message, error) {
-	raw, err := scanRawMessage(s.read().QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, idv))
+	var raw rawMessage
+	var err error
+	// The index makes an id-only read a single-partition lookup. Rows written
+	// before the index existed fall back to the partitioned scan.
+	var channelID string
+	if idxErr := s.DB.QueryRow(`SELECT channel_id FROM message_index WHERE id = ?`, idv).Scan(&channelID); idxErr == nil {
+		raw, err = scanRawMessage(s.read().QueryRow(
+			`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id = ?`, channelID, idv))
+		if errors.Is(err, sql.ErrNoRows) && s.ReadDB != nil {
+			// Replica lag: the row exists on the primary.
+			raw, err = scanRawMessage(s.DB.QueryRow(
+				`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id = ?`, channelID, idv))
+		}
+	} else {
+		raw, err = scanRawMessage(s.read().QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, idv))
+	}
 	if err != nil {
 		return model.Message{}, mapErr(err)
 	}
@@ -261,11 +283,20 @@ func (s *Store) MessagesPage(channelID, before, after, around string, limit int)
 
 	if around != "" {
 		half := limit / 2
-		newer, err := query(base+` AND id >= ? ORDER BY id ASC LIMIT ?`, channelID, around, half+1)
+		lo, hi, haveBucket := bucketWindow(around)
+		bucketClause := ""
+		var bucketArgs []any
+		if haveBucket {
+			bucketClause = ` AND bucket BETWEEN ? AND ?`
+			bucketArgs = []any{lo, hi}
+		}
+		newer, err := query(base+bucketClause+` AND id >= ? ORDER BY id ASC LIMIT ?`,
+			append(append([]any{channelID}, bucketArgs...), around, half+1)...)
 		if err != nil {
 			return nil, err
 		}
-		older, err := query(base+` AND id < ? ORDER BY id DESC LIMIT ?`, channelID, around, half)
+		older, err := query(base+bucketClause+` AND id < ? ORDER BY id DESC LIMIT ?`,
+			append(append([]any{channelID}, bucketArgs...), around, half)...)
 		if err != nil {
 			return nil, err
 		}
@@ -278,7 +309,14 @@ func (s *Store) MessagesPage(channelID, before, after, around string, limit int)
 	}
 
 	if after != "" {
-		raws, err := query(base+` AND id > ? ORDER BY id ASC LIMIT ?`, channelID, after, limit)
+		lo, _, haveBucket := bucketWindow(after)
+		q := base + ` AND id > ? ORDER BY id ASC LIMIT ?`
+		args := []any{channelID, after, limit}
+		if haveBucket {
+			q = base + ` AND bucket >= ? AND id > ? ORDER BY id ASC LIMIT ?`
+			args = []any{channelID, lo, after, limit}
+		}
+		raws, err := query(q, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -291,6 +329,11 @@ func (s *Store) MessagesPage(channelID, before, after, around string, limit int)
 	q := base
 	args := []any{channelID}
 	if before != "" {
+		_, hi, haveBucket := bucketWindow(before)
+		if haveBucket {
+			q += ` AND bucket <= ?`
+			args = append(args, hi)
+		}
 		q += ` AND id < ?`
 		args = append(args, before)
 	}
@@ -339,10 +382,35 @@ func (s *Store) UpdateMessage(idv string, content *string, embeds *[]model.Embed
 // DeleteMessage removes one message and rewinds last_message_id if needed.
 func (s *Store) DeleteMessage(idv string) (string, error) {
 	var channelID string
-	if err := s.DB.QueryRow(`SELECT channel_id FROM messages WHERE id = ?`, idv).Scan(&channelID); err != nil {
+	if err := s.DB.QueryRow(`SELECT channel_id FROM message_index WHERE id = ?`, idv).Scan(&channelID); err != nil {
+		if err := s.DB.QueryRow(`SELECT channel_id FROM messages WHERE id = ?`, idv).Scan(&channelID); err != nil {
+			return "", mapErr(err)
+		}
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
 		return "", mapErr(err)
 	}
-	if _, err := s.DB.Exec(`DELETE FROM messages WHERE id = ?`, idv); err != nil {
+	defer tx.Rollback()
+	// Reactions and pins reference the message by id, which is not unique across
+	// partitions, so the cascade is explicit.
+	for _, q := range []string{
+		`DELETE FROM message_reactions WHERE channel_id = ? AND message_id = ?`,
+		`DELETE FROM pins WHERE channel_id = ? AND message_id = ?`,
+		`DELETE FROM message_index WHERE id = ?`,
+		`DELETE FROM messages WHERE channel_id = ? AND id = ?`,
+	} {
+		var err error
+		if q == `DELETE FROM message_index WHERE id = ?` {
+			_, err = tx.Exec(q, idv)
+		} else {
+			_, err = tx.Exec(q, channelID, idv)
+		}
+		if err != nil {
+			return "", mapErr(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return "", mapErr(err)
 	}
 	s.refreshLastMessage(channelID)
@@ -360,7 +428,22 @@ func (s *Store) DeleteMessages(channelID string, ids []string) error {
 	for _, v := range ids {
 		args = append(args, v)
 	}
-	if _, err := s.DB.Exec(`DELETE FROM messages WHERE channel_id = ? AND id IN (`+placeholders+`)`, args...); err != nil {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return mapErr(err)
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM message_reactions WHERE channel_id = ? AND message_id IN (` + placeholders + `)`,
+		`DELETE FROM pins WHERE channel_id = ? AND message_id IN (` + placeholders + `)`,
+		`DELETE FROM message_index WHERE channel_id = ? AND id IN (` + placeholders + `)`,
+		`DELETE FROM messages WHERE channel_id = ? AND id IN (` + placeholders + `)`,
+	} {
+		if _, err := tx.Exec(q, args...); err != nil {
+			return mapErr(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return mapErr(err)
 	}
 	s.refreshLastMessage(channelID)
@@ -499,4 +582,19 @@ func (s *Store) GuildMessageCount(guildID string) (int, error) {
 	var n int
 	err := s.DB.QueryRow(`SELECT COUNT(*) FROM messages WHERE guild_id = ?`, guildID).Scan(&n)
 	return n, mapErr(err)
+}
+
+// bucketMillisPerDay is the message partition window. Kept in sync with
+// db.DayBucket; a mismatch only costs pruning, not correctness.
+const bucketMillisPerDay = 86400000
+
+// bucketWindow returns the day-bucket bounds an id can fall inside. The window is
+// widened by one day on each side so clock skew at a boundary never hides a row.
+func bucketWindow(snowflake string) (int64, int64, bool) {
+	ts, err := id.Timestamp(snowflake)
+	if err != nil {
+		return 0, 0, false
+	}
+	b := ts.UnixMilli() / bucketMillisPerDay
+	return b - 1, b + 1, true
 }

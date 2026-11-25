@@ -127,6 +127,16 @@ OAuth2 authorization code flow and interaction endpoints are TBD.
 - Voice gateway and media transport are not implemented.
 - Emoji images are accepted but not decoded; the object shape is returned.
 
+## Storage layout (Postgres)
+
+| Concern | Implementation |
+| --- | --- |
+| Partition key | `HASH(channel_id)` then `RANGE(bucket)` (UTC day, monthly children) |
+| Id-only reads | `message_index` resolves channel, then one partition |
+| Migration | legacy table renamed, copied with bucket, dropped; tested |
+| Future buckets | monthly children created at boot + daily; DEFAULT child per hash |
+| SQLite | single table, same columns and index table |
+
 ## Scale notes
 
 - Postgres is required for more than one instance.
