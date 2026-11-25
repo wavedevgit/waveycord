@@ -69,10 +69,18 @@ Mirrored:
 - `TestGatewayZstdStream` decodes those frames with a streaming reader and
   asserts HELLO, READY and MESSAGE_CREATE arrive intact.
 
-Not implemented: zstd dictionaries (Discord tested and rejected them for
-complexity), zlib-stream (falls back to JSON), and passive-session deltas
-(`PASSIVE_UPDATE_V2`), which depend on a passive-session concept this gateway does
-not model.
+Mirrored (passive-session deltas): every guild starts passive at IDENTIFY. A
+bounded journal per guild records channel/member/voice entity changes and each
+connection keeps a sequence cursor; on a ticker (`PassiveInterval`, default 10 s)
+the gateway sends one `PASSIVE_UPDATE_V2` per changed guild containing only the
+entities changed since that cursor — no full snapshot. OP 14 (Guild Subscriptions)
+promotes a guild to live dispatch, after which entity events arrive as normal
+dispatches instead of deltas. If a connection falls behind the bounded journal or
+an entity is removed, that update is marked `full` and carries the current entity
+set, since this protocol has no removal entry.
+
+Not implemented: zstd dictionaries (Discord tested and rejected them), zlib-stream
+(falls back to JSON), and presence/voice persistence.
 
 ## How We Moved Discord Voice to the Edge / DAVE / WebRTC posts
 

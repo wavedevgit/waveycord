@@ -83,6 +83,13 @@ Channel lists filter out channels without `VIEW_CHANNEL`.
 `RESUME` with a 200-event replay buffer, `INVALID_SESSION`, and dispatch frames
 carrying `s`. Close codes use the documented `4000`–`4014` range.
 
+Passive sessions follow the same post: guilds begin passive, a bounded journal
+records channel/member/voice changes with sequence numbers, and a ticker emits one
+`PASSIVE_UPDATE_V2` per changed guild containing only entities past that
+connection's cursor. OP 14 promotes a guild to the live firehose. A cursor older
+than the journal (or an entity removal) produces a `full` update with the current
+entity set, because the delta shape has no deletion entry.
+
 Transport compression follows the realtime post: a client that connects with
 `?compress=zstd-stream` gets one streaming zstd encoder for the life of the
 connection, so the compression window spans payloads instead of restarting on each

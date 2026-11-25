@@ -23,6 +23,7 @@ type harness struct {
 	t      *testing.T
 	server *httptest.Server
 	store  *store.Store
+	hub    *gateway.Hub
 }
 
 func newHarness(t *testing.T) *harness {
@@ -63,8 +64,11 @@ func newHarness(t *testing.T) *harness {
 		nil,
 	)
 	srv := httptest.NewServer(api.New(st, hub, cfg).Handler())
-	t.Cleanup(srv.Close)
-	return &harness{t: t, server: srv, store: st}
+	t.Cleanup(func() {
+		hub.Close()
+		srv.Close()
+	})
+	return &harness{t: t, server: srv, store: st, hub: hub}
 }
 
 // truncateAll clears every table so one Postgres database can serve sequential

@@ -72,10 +72,15 @@ type Hub struct {
 	Guilds GuildsFunc
 	Log    *slog.Logger
 
-	mu         sync.RWMutex
-	conns      map[*conn]struct{}
-	bus        bus.Bus
-	dispatched atomic.Int64
+	mu           sync.RWMutex
+	conns        map[*conn]struct{}
+	bus          bus.Bus
+	dispatched   atomic.Int64
+	journal      *deltaJournal
+	passiveNanos atomic.Int64
+	wake         chan struct{}
+	stopOnce     sync.Once
+	stop         chan struct{}
 	// sessions keeps at most one live connection per gateway session id, which
 	// is what RESUME and session takeover depend on.
 	sessions map[string]*conn
@@ -86,8 +91,112 @@ func NewHub(auth AuthFunc, ready ReadyFunc, guilds GuildsFunc, log *slog.Logger)
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Hub{Auth: auth, Ready: ready, Guilds: guilds, Log: log,
-		conns: map[*conn]struct{}{}, sessions: map[string]*conn{}}
+	h := &Hub{Auth: auth, Ready: ready, Guilds: guilds, Log: log,
+		conns: map[*conn]struct{}{}, sessions: map[string]*conn{},
+		journal: newDeltaJournal(2048), wake: make(chan struct{}, 1), stop: make(chan struct{})}
+	h.passiveNanos.Store(int64(10 * time.Second))
+	go h.passiveLoop()
+	return h
+}
+
+// SetPassiveInterval controls how often passive sessions receive a delta. The
+// loop is woken immediately so a test can shorten it before connecting.
+func (h *Hub) SetPassiveInterval(d time.Duration) {
+	if h == nil || d <= 0 {
+		return
+	}
+	h.passiveNanos.Store(int64(d))
+	select {
+	case h.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Close stops the passive update loop.
+func (h *Hub) Close() {
+	if h == nil {
+		return
+	}
+	h.stopOnce.Do(func() { close(h.stop) })
+}
+
+func (h *Hub) passiveLoop() {
+	for {
+		every := time.Duration(h.passiveNanos.Load())
+		if every < 10*time.Millisecond {
+			every = 10 * time.Millisecond
+		}
+		timer := time.NewTimer(every)
+		select {
+		case <-h.stop:
+			timer.Stop()
+			return
+		case <-h.wake:
+			timer.Stop()
+			continue
+		case <-timer.C:
+			h.flushPassive()
+		}
+	}
+}
+
+// flushPassive emits one PASSIVE_UPDATE_V2 per passive guild that changed since
+// that connection's cursor. Unchanged guilds produce no dispatch.
+func (h *Hub) flushPassive() {
+	h.mu.RLock()
+	conns := make([]*conn, 0, len(h.conns))
+	for c := range h.conns {
+		conns = append(conns, c)
+	}
+	h.mu.RUnlock()
+	for _, c := range conns {
+		c.stateMu.Lock()
+		guilds := make([]string, 0, len(c.passive))
+		for gid := range c.passive {
+			guilds = append(guilds, gid)
+		}
+		cursors := make(map[string]uint64, len(guilds))
+		for _, gid := range guilds {
+			cursors[gid] = c.cursors[gid]
+		}
+		c.stateMu.Unlock()
+
+		for _, gid := range guilds {
+			channels, members, voice, full, head := h.journal.since(gid, cursors[gid])
+			if head == cursors[gid] && !full {
+				continue
+			}
+			if len(channels) == 0 && len(members) == 0 && len(voice) == 0 && !full {
+				c.setCursor(gid, head)
+				continue
+			}
+			payload := map[string]any{
+				"guild_id":     gid,
+				"channels":     channels,
+				"members":      members,
+				"voice_states": voice,
+			}
+			if full {
+				payload["full"] = true
+			}
+			c.dispatch("PASSIVE_UPDATE_V2", payload)
+			c.setCursor(gid, head)
+		}
+	}
+}
+
+func (c *conn) setCursor(guildID string, seq uint64) {
+	c.stateMu.Lock()
+	c.cursors[guildID] = seq
+	c.stateMu.Unlock()
+}
+
+// activateGuild moves a guild out of the passive set (OP 14 Guild Subscriptions).
+func (c *conn) activateGuild(guildID string) {
+	c.stateMu.Lock()
+	delete(c.passive, guildID)
+	c.cursors[guildID] = c.hub.journal.head(guildID)
+	c.stateMu.Unlock()
 }
 
 // Handler upgrades an HTTP request to a gateway connection.
@@ -205,6 +314,16 @@ func (h *Hub) serve(ctx context.Context, ws *websocket.Conn, compress string) {
 				c.subscriptions[g] = true
 			}
 			h.mu.Unlock()
+			c.stateMu.Lock()
+			c.passive = map[string]bool{}
+			c.cursors = map[string]uint64{}
+			for _, g := range guildIDs {
+				// Every guild starts passive; OP 14 promotes one to a live
+				// subscription, which is how large guilds avoid the firehose.
+				c.passive[g] = true
+				c.cursors[g] = h.journal.head(g)
+			}
+			c.stateMu.Unlock()
 
 			var payload any
 			if h.Ready != nil {
@@ -255,6 +374,13 @@ func (h *Hub) serve(ctx context.Context, ws *websocket.Conn, compress string) {
 			// GUILD_MEMBERS_CHUNK is the documented answer to a member request.
 			c.send(map[string]any{"op": OpDispatch, "t": "GUILD_MEMBERS_CHUNK",
 				"s": c.nextSeq(), "d": map[string]any{"guild_id": "", "members": []any{}, "chunk_index": 0, "chunk_count": 1}})
+		case 14: // Guild Subscriptions
+			var sub struct {
+				GuildID string `json:"guild_id"`
+			}
+			if err := json.Unmarshal(frame.D, &sub); err == nil && sub.GuildID != "" {
+				c.activateGuild(sub.GuildID)
+			}
 		case OpPresenceUpdate, OpVoiceStateUpdate:
 			// Accepted and acknowledged by sequence; presence/voice state carry no
 			// server-side persistence in this implementation.
@@ -350,17 +476,44 @@ func (h *Hub) DispatchUser(userID, event string, data any) {
 
 func (h *Hub) localGuild(guildID, event string, data any) {
 	h.dispatched.Add(1)
+	if kind, id, ok := passiveEvent(event, data); ok {
+		if raw, err := json.Marshal(data); err == nil {
+			h.journal.record(guildID, kind, id, raw)
+		}
+	} else if kind, id, ok := passiveRemoval(event, data); ok {
+		h.journal.remove(guildID, kind, id)
+	}
 	h.mu.RLock()
 	targets := make([]*conn, 0, len(h.conns))
 	for c := range h.conns {
-		if c.sessionID != "" && c.subscriptions[guildID] {
-			targets = append(targets, c)
+		if c.sessionID == "" || !c.subscriptions[guildID] {
+			continue
 		}
+		// Passive guilds get entity changes through PASSIVE_UPDATE_V2 only.
+		if isPassiveEvent(event) {
+			c.stateMu.Lock()
+			passive := c.passive[guildID]
+			c.stateMu.Unlock()
+			if passive {
+				continue
+			}
+		}
+		targets = append(targets, c)
 	}
 	h.mu.RUnlock()
 	for _, c := range targets {
 		c.dispatch(event, data)
 	}
+}
+
+func isPassiveEvent(event string) bool {
+	switch event {
+	case "CHANNEL_CREATE", "CHANNEL_UPDATE", "CHANNEL_DELETE",
+		"GUILD_MEMBER_ADD", "GUILD_MEMBER_UPDATE", "GUILD_MEMBER_REMOVE",
+		"VOICE_STATE_UPDATE":
+		return true
+	}
+	return false
 }
 
 func (h *Hub) localUser(userID, event string, data any) {
@@ -391,6 +544,8 @@ type conn struct {
 	userID        string
 	sessionID     string
 	encoder       *zstd.Encoder
+	passive       map[string]bool
+	cursors       map[string]uint64
 	subscriptions map[string]bool
 	done          chan struct{}
 	closed        bool
