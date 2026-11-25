@@ -137,6 +137,30 @@ client secret is shown only in the create response. Unknown scopes, unregistered
 redirect URIs, reused codes, revoked refresh tokens and unknown grant types are
 rejected.
 
+### Interactions
+
+| Route | Status |
+| --- | --- |
+| `POST /interactions` (Ed25519 signature, timestamp replay window) | implemented + tested |
+| Interaction type 1 (PING) → PONG | implemented + tested |
+| Interaction type 2 (application command) dispatch | implemented + tested |
+| Autocomplete (type 4) → empty choices | implemented |
+| `GET/PUT/POST /applications/{id}/commands` | implemented + tested |
+| `GET/PATCH/DELETE /applications/{id}/commands/{command.id}` | implemented + tested |
+| Guild command variants at `/applications/{id}/guilds/{guild.id}/commands` | implemented + tested |
+| `verify_key` registration through `PATCH /applications/{id}` | implemented + tested |
+
+Signature verification covers `X-Signature-Timestamp + raw body` with the
+application's 32-byte Ed25519 public key; timestamps outside five minutes are
+rejected, as are missing, malformed and non-matching signatures. Guild commands
+shadow global commands on invocation.
+
+Deliberate adaptations: the interactions endpoint is global, so the payload must
+carry `application_id` (Discord routes by per-application URL); dispatch is
+in-process (echo handlers plus a default acknowledgement) because a self-hosted
+deployment has no external bot endpoint to call; message components, modals and
+role connections remain TBD.
+
 Deliberate adaptation: Discord's consent screen is a browser UI. This server
 returns the same fields as JSON when `Accept: application/json` is sent, and a
 302 with `code`/`state` in the query for browser-style form posts. Interactions,

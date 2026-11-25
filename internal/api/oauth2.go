@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"errors"
 	"mime"
 	"net/http"
@@ -338,6 +340,7 @@ func (s *Server) handleUpdateApplication(c *Ctx) {
 		Name         *string   `json:"name"`
 		Description  *string   `json:"description"`
 		RedirectURIs *[]string `json:"redirect_uris"`
+		VerifyKey    *string   `json:"verify_key"`
 	}
 	if err := c.Bind(&req); err != nil {
 		fail(c, ErrInvalidForm)
@@ -356,7 +359,16 @@ func (s *Server) handleUpdateApplication(c *Ctx) {
 			}
 		}
 	}
-	app, err := s.Store.UpdateApplication(c.Param("applicationID"), c.User.ID, req.Name, req.Description, req.RedirectURIs)
+	if req.VerifyKey != nil {
+		key, err := hex.DecodeString(strings.TrimSpace(*req.VerifyKey))
+		if err != nil || len(key) != ed25519.PublicKeySize {
+			c.FailForm("verify_key", "Must be a 32-byte Ed25519 public key in hex")
+			return
+		}
+		trimmed := strings.ToLower(strings.TrimSpace(*req.VerifyKey))
+		req.VerifyKey = &trimmed
+	}
+	app, err := s.Store.UpdateApplication(c.Param("applicationID"), c.User.ID, req.Name, req.Description, req.RedirectURIs, req.VerifyKey)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			c.JSONStatus(404, map[string]any{"code": 10002, "message": "Unknown Application"})

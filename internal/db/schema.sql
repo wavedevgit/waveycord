@@ -371,3 +371,19 @@ CREATE TABLE IF NOT EXISTS oauth2_tokens (
     revoked        SMALLINT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS oauth2_tokens_user ON oauth2_tokens (user_id);
+
+CREATE TABLE IF NOT EXISTS application_commands (
+    id                        TEXT PRIMARY KEY,
+    application_id            TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    guild_id                  TEXT,
+    name                      TEXT NOT NULL,
+    description               TEXT NOT NULL DEFAULT '',
+    type                      INTEGER NOT NULL DEFAULT 1,
+    options                   TEXT NOT NULL DEFAULT '[]',
+    default_member_permissions TEXT,
+    dm_permission             SMALLINT NOT NULL DEFAULT 1,
+    nsfw                      SMALLINT NOT NULL DEFAULT 0,
+    version                   TEXT NOT NULL,
+    created_at                BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS application_commands_app ON application_commands (application_id, guild_id);

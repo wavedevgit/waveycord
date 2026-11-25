@@ -77,6 +77,16 @@ application's bot user into the requested guild after a `MANAGE_GUILD` check, th
 same point the real flow installs the bot. Access tokens authenticate as the
 authorizing user for `GET /users/@me` and `/oauth2/@me`.
 
+## Interactions
+
+`POST /interactions` verifies Ed25519 over the timestamp string concatenated with
+the exact raw body, so the body is read before decoding and any re-serialisation
+would invalidate the signature. Application public keys live on the application
+row (`verify_key`), registered by the owner. Commands are rows scoped by
+`(application_id, guild_id)`, with guild rows shadowing global ones at dispatch.
+Dispatch is in-process: the documented envelope (`type: 4`, `data.content`) is
+returned by a handler registry rather than forwarded to an external bot URL.
+
 ## Permissions
 
 `internal/perm` implements the documented resolution order: base role bits

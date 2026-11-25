@@ -98,7 +98,7 @@ func (s *Store) CreateApplication(ownerID, name, description string) (Applicatio
 }
 
 // UpdateApplication patches the fields an owner controls.
-func (s *Store) UpdateApplication(appID, ownerID string, name, description *string, redirectURIs *[]string) (Application, error) {
+func (s *Store) UpdateApplication(appID, ownerID string, name, description *string, redirectURIs *[]string, verifyKey *string) (Application, error) {
 	app, err := s.Application(appID)
 	if err != nil {
 		return app, err
@@ -119,6 +119,10 @@ func (s *Store) UpdateApplication(appID, ownerID string, name, description *stri
 	if redirectURIs != nil {
 		set = append(set, "redirect_uris = ?")
 		args = append(args, jsonStrings(*redirectURIs))
+	}
+	if verifyKey != nil {
+		set = append(set, "verify_key = ?")
+		args = append(args, *verifyKey)
 	}
 	if len(set) == 0 {
 		return app, nil
