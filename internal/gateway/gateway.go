@@ -30,20 +30,20 @@ const (
 
 // Close codes from the gateway close event codes table.
 const (
-	CloseUnknownError      = 4000
-	CloseUnknownOpcode     = 4001
-	CloseDecodeError       = 4002
-	CloseNotAuthenticated  = 4003
+	CloseUnknownError         = 4000
+	CloseUnknownOpcode        = 4001
+	CloseDecodeError          = 4002
+	CloseNotAuthenticated     = 4003
 	CloseAuthenticationFailed = 4004
 	CloseAlreadyAuthenticated = 4005
-	CloseInvalidSeq        = 4007
-	CloseRateLimited       = 4008
-	CloseSessionTimeout    = 4009
-	CloseInvalidShard      = 4010
-	CloseShardingRequired  = 4011
-	CloseInvalidAPIVersion = 4012
-	CloseInvalidIntents    = 4013
-	CloseDisallowedIntents = 4014
+	CloseInvalidSeq           = 4007
+	CloseRateLimited          = 4008
+	CloseSessionTimeout       = 4009
+	CloseInvalidShard         = 4010
+	CloseShardingRequired     = 4011
+	CloseInvalidAPIVersion    = 4012
+	CloseInvalidIntents       = 4013
+	CloseDisallowedIntents    = 4014
 )
 
 // HeartbeatInterval is what HELLO advertises, in milliseconds.
@@ -60,12 +60,12 @@ type GuildsFunc func(userID string) []string
 
 // Hub fans dispatches out to every gateway connection.
 type Hub struct {
-	Auth  AuthFunc
-	Ready ReadyFunc
+	Auth   AuthFunc
+	Ready  ReadyFunc
 	Guilds GuildsFunc
-	Log   *slog.Logger
+	Log    *slog.Logger
 
-	mu   sync.RWMutex
+	mu    sync.RWMutex
 	conns map[*conn]struct{}
 	// sessions keeps at most one live connection per gateway session id, which
 	// is what RESUME and session takeover depend on.
@@ -272,15 +272,15 @@ type conn struct {
 	hub *Hub
 	out chan []byte
 
-	writeMu  sync.Mutex
-	stateMu  sync.Mutex
-	seq      int
-	buffer   []buffered
-	userID   string
-	sessionID string
+	writeMu       sync.Mutex
+	stateMu       sync.Mutex
+	seq           int
+	buffer        []buffered
+	userID        string
+	sessionID     string
 	subscriptions map[string]bool
-	done     chan struct{}
-	closed   bool
+	done          chan struct{}
+	closed        bool
 }
 
 type buffered struct {

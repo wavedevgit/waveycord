@@ -45,13 +45,13 @@ func ReadyBuilder(st *store.Store, gatewayURL string) gateway.ReadyFunc {
 		}
 		type readyGuild struct {
 			model.Guild
-			Unavailable bool                             `json:"unavailable"`
-			Channels    []model.Channel                  `json:"channels"`
-			Members     []model.Member                   `json:"members"`
-			Threads     []model.Channel                  `json:"threads"`
-			VoiceStates []any                            `json:"voice_states"`
-			Presences   []any                            `json:"presences"`
-			MemberCount int                              `json:"member_count"`
+			Unavailable bool            `json:"unavailable"`
+			Channels    []model.Channel `json:"channels"`
+			Members     []model.Member  `json:"members"`
+			Threads     []model.Channel `json:"threads"`
+			VoiceStates []any           `json:"voice_states"`
+			Presences   []any           `json:"presences"`
+			MemberCount int             `json:"member_count"`
 		}
 		out := make([]readyGuild, 0, len(guilds))
 		for _, g := range guilds {
@@ -65,17 +65,17 @@ func ReadyBuilder(st *store.Store, gatewayURL string) gateway.ReadyFunc {
 		}
 		dms, _ := st.DMChannels(userID)
 		return map[string]any{
-			"v":                    10,
-			"user":                 user,
-			"guilds":               out,
-			"private_channels":     dms,
-			"session_id":           sessionID,
-			"resume_gateway_url":   gatewayURL,
-			"session_type":         "normal",
-			"application":          map[string]any{"id": "", "flags": 0},
-			"relationships":        []any{},
-			"presences":            []any{},
-			"user_settings":        map[string]any{},
+			"v":                       10,
+			"user":                    user,
+			"guilds":                  out,
+			"private_channels":        dms,
+			"session_id":              sessionID,
+			"resume_gateway_url":      gatewayURL,
+			"session_type":            "normal",
+			"application":             map[string]any{"id": "", "flags": 0},
+			"relationships":           []any{},
+			"presences":               []any{},
+			"user_settings":           map[string]any{},
 			"geo_ordered_rtc_regions": []string{"us-east"},
 		}, nil
 	}

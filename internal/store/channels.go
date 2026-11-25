@@ -11,19 +11,19 @@ import (
 
 // Channel types from the channel object table.
 const (
-	ChannelText          = 0
-	ChannelDM            = 1
-	ChannelVoice         = 2
-	ChannelGroupDM       = 3
-	ChannelCategory      = 4
-	ChannelAnnouncement  = 5
+	ChannelText               = 0
+	ChannelDM                 = 1
+	ChannelVoice              = 2
+	ChannelGroupDM            = 3
+	ChannelCategory           = 4
+	ChannelAnnouncement       = 5
 	ChannelAnnouncementThread = 10
-	ChannelPublicThread  = 11
-	ChannelPrivateThread = 12
-	ChannelStage         = 13
-	ChannelDirectory     = 14
-	ChannelForum         = 15
-	ChannelMedia         = 16
+	ChannelPublicThread       = 11
+	ChannelPrivateThread      = 12
+	ChannelStage              = 13
+	ChannelDirectory          = 14
+	ChannelForum              = 15
+	ChannelMedia              = 16
 )
 
 const channelColumns = `id, type, guild_id, position, name, topic, nsfw, last_message_id,
@@ -33,26 +33,26 @@ const channelColumns = `id, type, guild_id, position, name, topic, nsfw, last_me
 
 func scanChannel(row rowScanner) (model.Channel, error) {
 	var (
-		c          model.Channel
-		guild      sql.NullString
-		name       sql.NullString
-		topic      sql.NullString
-		lastMsg    sql.NullString
-		bitrate    sql.NullInt64
-		userLimit  sql.NullInt64
-		parent     sql.NullString
-		owner      sql.NullString
-		lastPin    sql.NullInt64
-		rtc        sql.NullString
-		threadMeta sql.NullString
-		icon       sql.NullString
-		tags       sql.NullString
-		defReact   sql.NullString
-		defSort    sql.NullString
-		nsfw, vqm  int
-		pos, rl    int
+		c                model.Channel
+		guild            sql.NullString
+		name             sql.NullString
+		topic            sql.NullString
+		lastMsg          sql.NullString
+		bitrate          sql.NullInt64
+		userLimit        sql.NullInt64
+		parent           sql.NullString
+		owner            sql.NullString
+		lastPin          sql.NullInt64
+		rtc              sql.NullString
+		threadMeta       sql.NullString
+		icon             sql.NullString
+		tags             sql.NullString
+		defReact         sql.NullString
+		defSort          sql.NullString
+		nsfw, vqm        int
+		pos, rl          int
 		mcount, memcount int
-		defLayout  int
+		defLayout        int
 	)
 	err := row.Scan(&c.ID, &c.Type, &guild, &pos, &name, &topic, &nsfw, &lastMsg,
 		&bitrate, &userLimit, &rl, &parent, &owner, &lastPin, &rtc, &vqm, &mcount,
@@ -127,9 +127,9 @@ type CreateChannelParams struct {
 	Recipients           []string
 	OwnerID              *string
 	// thread fields
-	AutoArchiveDuration  *int
-	MessageID            *string
-	Invitable            *bool
+	AutoArchiveDuration *int
+	MessageID           *string
+	Invitable           *bool
 }
 
 // CreateChannel inserts a channel. Guild channels get their position appended.
@@ -262,24 +262,24 @@ func (s *Store) GuildChannels(guildID string) ([]model.Channel, error) {
 
 // UpdateChannelParams holds nullable channel patches.
 type UpdateChannelParams struct {
-	Name             *string
-	Topic            *string
-	NSFW             *bool
-	Bitrate          *int
-	UserLimit        *int
-	RateLimitPerUser *int
-	Position         *int
-	ParentID         *string
-	RTCRegion        *string
-	VideoQualityMode *int
-	Archived         *bool
-	AutoArchiveDuration *int
-	Locked           *bool
-	Invitable        *bool
-	AppliedTags      *[]string
-	Flags            *int
+	Name                       *string
+	Topic                      *string
+	NSFW                       *bool
+	Bitrate                    *int
+	UserLimit                  *int
+	RateLimitPerUser           *int
+	Position                   *int
+	ParentID                   *string
+	RTCRegion                  *string
+	VideoQualityMode           *int
+	Archived                   *bool
+	AutoArchiveDuration        *int
+	Locked                     *bool
+	Invitable                  *bool
+	AppliedTags                *[]string
+	Flags                      *int
 	DefaultAutoArchiveDuration *int
-	Icon             *string
+	Icon                       *string
 }
 
 // UpdateChannel applies a patch.

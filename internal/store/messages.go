@@ -122,7 +122,7 @@ func (s *Store) hydrate(r rawMessage, depth int) model.Message {
 		if m.ReferencedMessage == nil {
 			m.ReferencedMessage = &model.Message{
 				ID: r.Ref.String, ChannelID: r.ChannelID, Timestamp: m.Timestamp,
-				Author: model.User{ID: "0", Username: "Deleted User", Discriminator: "0"},
+				Author:      model.User{ID: "0", Username: "Deleted User", Discriminator: "0"},
 				Attachments: []model.Attachment{}, Embeds: []model.Embed{},
 				Components: []any{}, Mentions: []model.User{},
 			}

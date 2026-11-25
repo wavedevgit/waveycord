@@ -174,10 +174,10 @@ func TestGuildChannelMessageFlow(t *testing.T) {
 	alice := h.register("gina")
 
 	var guild struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Owner  bool   `json:"owner"`
-		Roles  []struct {
+		ID    string `json:"id"`
+		Name  string `json:"name"`
+		Owner bool   `json:"owner"`
+		Roles []struct {
 			ID          string `json:"id"`
 			Name        string `json:"name"`
 			Permissions string `json:"permissions"`
@@ -324,7 +324,10 @@ func TestInviteJoinAndPermissions(t *testing.T) {
 	if status := h.decode("POST", "/channels/"+channel.ID+"/invites", alice.Token, map[string]any{"max_age": 3600}, &invite); status != 201 || invite.Code == "" {
 		t.Fatalf("create invite status %d", status)
 	}
-	var public struct{ Code string; Guild *struct{ ID string } }
+	var public struct {
+		Code  string
+		Guild *struct{ ID string }
+	}
 	if status := h.decode("GET", "/invites/"+invite.Code, "", nil, &public); status != 200 || public.Guild == nil || public.Guild.ID != guild.ID {
 		t.Fatalf("public invite status %d %+v", status, public)
 	}
@@ -332,7 +335,10 @@ func TestInviteJoinAndPermissions(t *testing.T) {
 		t.Fatalf("accept invite status %d", status)
 	}
 
-	var member struct{ User struct{ ID string }; Roles []string }
+	var member struct {
+		User  struct{ ID string }
+		Roles []string
+	}
 	if status := h.decode("GET", "/guilds/"+guild.ID+"/members/"+bob.ID, alice.Token, nil, &member); status != 200 || member.User.ID != bob.ID {
 		t.Fatalf("member status %d %+v", status, member)
 	}
@@ -468,9 +474,9 @@ func TestThreads(t *testing.T) {
 	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "talk"}, &channel)
 
 	var thread struct {
-		ID       string `json:"id"`
-		Type     int    `json:"type"`
-		ParentID *string `json:"parent_id"`
+		ID             string  `json:"id"`
+		Type           int     `json:"type"`
+		ParentID       *string `json:"parent_id"`
 		ThreadMetadata *struct {
 			Archived            bool `json:"archived"`
 			AutoArchiveDuration int  `json:"auto_archive_duration"`
@@ -481,7 +487,9 @@ func TestThreads(t *testing.T) {
 	}, &thread); status != 201 || thread.Type != 11 || thread.ParentID == nil || *thread.ParentID != channel.ID {
 		t.Fatalf("thread status %d %+v", status, thread)
 	}
-	var members []struct{ UserID string `json:"user_id"` }
+	var members []struct {
+		UserID string `json:"user_id"`
+	}
 	if status := h.decode("GET", "/channels/"+thread.ID+"/thread-members", alice.Token, nil, &members); status != 200 || len(members) != 1 {
 		t.Fatalf("thread members status %d %+v", status, members)
 	}

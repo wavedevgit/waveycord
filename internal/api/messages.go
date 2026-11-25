@@ -26,22 +26,22 @@ func (s *Server) handleListMessages(c *Ctx) {
 }
 
 type createMessageRequest struct {
-	Content          string             `json:"content"`
-	Nonce            *string            `json:"nonce"`
-	TTS              bool               `json:"tts"`
-	Embeds           []model.Embed      `json:"embeds"`
-	AllowedMentions  map[string]any     `json:"allowed_mentions"`
+	Content          string         `json:"content"`
+	Nonce            *string        `json:"nonce"`
+	TTS              bool           `json:"tts"`
+	Embeds           []model.Embed  `json:"embeds"`
+	AllowedMentions  map[string]any `json:"allowed_mentions"`
 	MessageReference *struct {
-		MessageID *string `json:"message_id"`
-		ChannelID *string `json:"channel_id"`
-		GuildID   *string `json:"guild_id"`
-		FailIfNotExists *bool `json:"fail_if_not_exists"`
+		MessageID       *string `json:"message_id"`
+		ChannelID       *string `json:"channel_id"`
+		GuildID         *string `json:"guild_id"`
+		FailIfNotExists *bool   `json:"fail_if_not_exists"`
 	} `json:"message_reference"`
-	Components []any              `json:"components"`
-	StickerIDs []string           `json:"sticker_ids"`
+	Components  []any              `json:"components"`
+	StickerIDs  []string           `json:"sticker_ids"`
 	Attachments []model.Attachment `json:"attachments"`
-	Flags      int                `json:"flags"`
-	Pinned     bool               `json:"pinned"`
+	Flags       int                `json:"flags"`
+	Pinned      bool               `json:"pinned"`
 }
 
 func (s *Server) handleCreateMessage(c *Ctx) {
@@ -139,10 +139,10 @@ func (s *Server) handleGetMessage(c *Ctx) {
 }
 
 type updateMessageRequest struct {
-	Content    *string       `json:"content"`
+	Content    *string        `json:"content"`
 	Embeds     *[]model.Embed `json:"embeds"`
-	Flags      *int          `json:"flags"`
-	Components *[]any        `json:"components"`
+	Flags      *int           `json:"flags"`
+	Components *[]any         `json:"components"`
 }
 
 func (s *Server) handleUpdateMessage(c *Ctx) {
@@ -364,7 +364,7 @@ func (s *Server) handleAddReaction(c *Ctx) {
 func ReactionKeyOf(e model.Emoji) string { return store.ReactionKey(e) }
 
 func (s *Server) handleRemoveOwnReaction(c *Ctx) {
-	_ , msg, err := s.messageForReaction(c)
+	_, msg, err := s.messageForReaction(c)
 	if err != nil {
 		fail(c, err)
 		return

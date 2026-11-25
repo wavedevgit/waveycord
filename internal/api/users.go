@@ -83,15 +83,15 @@ func (s *Server) handleUpdateSelf(c *Ctx) {
 
 // partialGuild is the GET /users/@me/guilds projection.
 type partialGuild struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Icon        *string  `json:"icon"`
-	Banner      *string  `json:"banner"`
-	Owner       bool     `json:"owner"`
-	OwnerID     string   `json:"owner_id"`
-	Permissions string   `json:"permissions"`
-	Features    []string `json:"features"`
-	ApproximateMemberCount *int `json:"approximate_member_count,omitempty"`
+	ID                     string   `json:"id"`
+	Name                   string   `json:"name"`
+	Icon                   *string  `json:"icon"`
+	Banner                 *string  `json:"banner"`
+	Owner                  bool     `json:"owner"`
+	OwnerID                string   `json:"owner_id"`
+	Permissions            string   `json:"permissions"`
+	Features               []string `json:"features"`
+	ApproximateMemberCount *int     `json:"approximate_member_count,omitempty"`
 }
 
 func (s *Server) handleMyGuilds(c *Ctx) {
@@ -128,11 +128,11 @@ func (s *Server) handleGetUserProfile(c *Ctx) {
 		return
 	}
 	payload := map[string]any{
-		"user":              user,
-		"connected_accounts": []any{},
-		"premium_since":     nil,
+		"user":                user,
+		"connected_accounts":  []any{},
+		"premium_since":       nil,
 		"premium_guild_since": nil,
-		"mutual_guilds":     []any{},
+		"mutual_guilds":       []any{},
 	}
 	if gid := c.R.URL.Query().Get("guild_id"); gid != "" {
 		if member, err := s.Store.Member(gid, user.ID); err == nil {
@@ -152,9 +152,9 @@ func (s *Server) handleMyChannels(c *Ctx) {
 }
 
 type createDMRequest struct {
-	RecipientID string `json:"recipient_id"`
-	AccessTokens []string `json:"access_tokens"`
-	Nicks map[string]string `json:"nicks"`
+	RecipientID  string            `json:"recipient_id"`
+	AccessTokens []string          `json:"access_tokens"`
+	Nicks        map[string]string `json:"nicks"`
 }
 
 func (s *Server) handleCreateDM(c *Ctx) {

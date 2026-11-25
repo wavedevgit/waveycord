@@ -27,24 +27,24 @@ func (s *Server) handleGetChannel(c *Ctx) {
 }
 
 type updateChannelRequest struct {
-	Name                 *string `json:"name"`
-	Type                 *int    `json:"type"`
-	Topic                *string `json:"topic"`
-	NSFW                 *bool   `json:"nsfw"`
-	Bitrate              *int    `json:"bitrate"`
-	UserLimit            *int    `json:"user_limit"`
-	RateLimitPerUser     *int    `json:"rate_limit_per_user"`
-	Position             *int    `json:"position"`
-	ParentID             *string `json:"parent_id"`
-	RTCRegion            *string `json:"rtc_region"`
-	VideoQualityMode     *int    `json:"video_quality_mode"`
-	Archived             *bool   `json:"archived"`
-	AutoArchiveDuration  *int    `json:"auto_archive_duration"`
-	Locked               *bool   `json:"locked"`
-	Invitable            *bool   `json:"invitable"`
-	Flags                *int    `json:"flags"`
-	Icon                 *string `json:"icon"`
-	DefaultAutoArchiveDuration *int `json:"default_auto_archive_duration"`
+	Name                       *string `json:"name"`
+	Type                       *int    `json:"type"`
+	Topic                      *string `json:"topic"`
+	NSFW                       *bool   `json:"nsfw"`
+	Bitrate                    *int    `json:"bitrate"`
+	UserLimit                  *int    `json:"user_limit"`
+	RateLimitPerUser           *int    `json:"rate_limit_per_user"`
+	Position                   *int    `json:"position"`
+	ParentID                   *string `json:"parent_id"`
+	RTCRegion                  *string `json:"rtc_region"`
+	VideoQualityMode           *int    `json:"video_quality_mode"`
+	Archived                   *bool   `json:"archived"`
+	AutoArchiveDuration        *int    `json:"auto_archive_duration"`
+	Locked                     *bool   `json:"locked"`
+	Invitable                  *bool   `json:"invitable"`
+	Flags                      *int    `json:"flags"`
+	Icon                       *string `json:"icon"`
+	DefaultAutoArchiveDuration *int    `json:"default_auto_archive_duration"`
 }
 
 func (s *Server) handleUpdateChannel(c *Ctx) {
@@ -164,7 +164,7 @@ func (s *Server) handlePutOverwrite(c *Ctx) {
 		return
 	}
 	var req struct {
-		Type  *int   `json:"type"`
+		Type  *int    `json:"type"`
 		Allow *string `json:"allow"`
 		Deny  *string `json:"deny"`
 	}
@@ -307,11 +307,11 @@ func (s *Server) handleRemoveRecipient(c *Ctx) {
 }
 
 type startThreadRequest struct {
-	Name                string  `json:"name"`
-	AutoArchiveDuration *int    `json:"auto_archive_duration"`
-	Type                *int    `json:"type"`
-	Invitable           *bool   `json:"invitable"`
-	RateLimitPerUser    *int    `json:"rate_limit_per_user"`
+	Name                string `json:"name"`
+	AutoArchiveDuration *int   `json:"auto_archive_duration"`
+	Type                *int   `json:"type"`
+	Invitable           *bool  `json:"invitable"`
+	RateLimitPerUser    *int   `json:"rate_limit_per_user"`
 }
 
 func (s *Server) handleStartThread(c *Ctx) {
@@ -383,7 +383,7 @@ func (s *Server) handleStartThreadFromMessage(c *Ctx) {
 	ch, err := s.Store.CreateChannel(*parent.GuildID, store.CreateChannelParams{
 		Type: store.ChannelPublicThread, Name: &name, ParentID: &parent.ID,
 		AutoArchiveDuration: req.AutoArchiveDuration,
-		RateLimitPerUser: req.RateLimitPerUser, OwnerID: &c.User.ID,
+		RateLimitPerUser:    req.RateLimitPerUser, OwnerID: &c.User.ID,
 	})
 	if err != nil {
 		fail(c, err)

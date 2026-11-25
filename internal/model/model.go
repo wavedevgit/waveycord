@@ -107,39 +107,39 @@ type DefaultReaction struct {
 
 // Channel is the channel object.
 type Channel struct {
-	ID               string             `json:"id"`
-	Type             int                `json:"type"`
-	GuildID          *string            `json:"guild_id,omitempty"`
-	Position         *int               `json:"position,omitempty"`
-	PermissionOverwrites []Overwrite    `json:"permission_overwrites,omitempty"`
-	Name             *string            `json:"name"`
-	Topic            *string            `json:"topic,omitempty"`
-	NSFW             *bool              `json:"nsfw,omitempty"`
-	LastMessageID    *string            `json:"last_message_id,omitempty"`
-	Bitrate          *int               `json:"bitrate,omitempty"`
-	UserLimit        *int               `json:"user_limit,omitempty"`
-	RateLimitPerUser *int               `json:"rate_limit_per_user,omitempty"`
-	Recipients       []*User            `json:"recipients,omitempty"`
-	OwnerID          *string            `json:"owner_id,omitempty"`
-	LastPinTimestamp *string            `json:"last_pin_timestamp,omitempty"`
-	RTCRegion        *string            `json:"rtc_region,omitempty"`
-	VideoQualityMode *int               `json:"video_quality_mode,omitempty"`
-	MessageCount     *int               `json:"message_count,omitempty"`
-	MemberCount      *int               `json:"member_count,omitempty"`
-	ThreadMetadata   *ThreadMetadata    `json:"thread_metadata,omitempty"`
-	Member           *ThreadMember      `json:"member,omitempty"`
-	DefaultAutoArchiveDuration *int     `json:"default_auto_archive_duration,omitempty"`
-	Permissions      *string            `json:"permissions,omitempty"`
-	Flags            *int               `json:"flags,omitempty"`
-	TotalMessageSent *int               `json:"total_message_sent,omitempty"`
-	AvailableTags    []Tag              `json:"available_tags,omitempty"`
-	AppliedTags      []string           `json:"applied_tags,omitempty"`
-	DefaultReactionEmoji *DefaultReaction `json:"default_reaction_emoji,omitempty"`
-	DefaultThreadRateLimitPerUser *int  `json:"default_thread_rate_limit_per_user,omitempty"`
-	DefaultSortOrder *int               `json:"default_sort_order,omitempty"`
-	DefaultForumLayout *int             `json:"default_forum_layout,omitempty"`
-	Icon             *string            `json:"icon,omitempty"`
-	ParentID         *string            `json:"parent_id,omitempty"`
+	ID                            string           `json:"id"`
+	Type                          int              `json:"type"`
+	GuildID                       *string          `json:"guild_id,omitempty"`
+	Position                      *int             `json:"position,omitempty"`
+	PermissionOverwrites          []Overwrite      `json:"permission_overwrites,omitempty"`
+	Name                          *string          `json:"name"`
+	Topic                         *string          `json:"topic,omitempty"`
+	NSFW                          *bool            `json:"nsfw,omitempty"`
+	LastMessageID                 *string          `json:"last_message_id,omitempty"`
+	Bitrate                       *int             `json:"bitrate,omitempty"`
+	UserLimit                     *int             `json:"user_limit,omitempty"`
+	RateLimitPerUser              *int             `json:"rate_limit_per_user,omitempty"`
+	Recipients                    []*User          `json:"recipients,omitempty"`
+	OwnerID                       *string          `json:"owner_id,omitempty"`
+	LastPinTimestamp              *string          `json:"last_pin_timestamp,omitempty"`
+	RTCRegion                     *string          `json:"rtc_region,omitempty"`
+	VideoQualityMode              *int             `json:"video_quality_mode,omitempty"`
+	MessageCount                  *int             `json:"message_count,omitempty"`
+	MemberCount                   *int             `json:"member_count,omitempty"`
+	ThreadMetadata                *ThreadMetadata  `json:"thread_metadata,omitempty"`
+	Member                        *ThreadMember    `json:"member,omitempty"`
+	DefaultAutoArchiveDuration    *int             `json:"default_auto_archive_duration,omitempty"`
+	Permissions                   *string          `json:"permissions,omitempty"`
+	Flags                         *int             `json:"flags,omitempty"`
+	TotalMessageSent              *int             `json:"total_message_sent,omitempty"`
+	AvailableTags                 []Tag            `json:"available_tags,omitempty"`
+	AppliedTags                   []string         `json:"applied_tags,omitempty"`
+	DefaultReactionEmoji          *DefaultReaction `json:"default_reaction_emoji,omitempty"`
+	DefaultThreadRateLimitPerUser *int             `json:"default_thread_rate_limit_per_user,omitempty"`
+	DefaultSortOrder              *int             `json:"default_sort_order,omitempty"`
+	DefaultForumLayout            *int             `json:"default_forum_layout,omitempty"`
+	Icon                          *string          `json:"icon,omitempty"`
+	ParentID                      *string          `json:"parent_id,omitempty"`
 }
 
 // ThreadMember is the thread member object.
@@ -153,46 +153,46 @@ type ThreadMember struct {
 
 // Guild is the guild object.
 type Guild struct {
-	ID                          string          `json:"id"`
-	Name                        string          `json:"name"`
-	Icon                        *string         `json:"icon"`
-	Splash                      *string         `json:"splash"`
-	DiscoverySplash             *string         `json:"discovery_splash"`
-	Owner                       *bool           `json:"owner,omitempty"`
-	OwnerID                     string          `json:"owner_id"`
-	Permissions                 *string         `json:"permissions,omitempty"`
-	AfkChannelID                *string         `json:"afk_channel_id"`
-	AfkTimeout                  int             `json:"afk_timeout"`
-	WidgetEnabled               *bool           `json:"widget_enabled,omitempty"`
-	WidgetChannelID             *string         `json:"widget_channel_id,omitempty"`
-	VerificationLevel           int             `json:"verification_level"`
-	DefaultMessageNotifications int             `json:"default_message_notifications"`
-	ExplicitContentFilter       int             `json:"explicit_content_filter"`
-	Roles                       []Role          `json:"roles"`
-	Emojis                      []Emoji         `json:"emojis"`
-	Features                    []string        `json:"features"`
-	MfaLevel                    int             `json:"mfa_level"`
-	ApplicationID               *string         `json:"application_id"`
-	SystemChannelID             *string         `json:"system_channel_id"`
-	SystemChannelFlags          int             `json:"system_channel_flags"`
-	RulesChannelID              *string         `json:"rules_channel_id"`
-	MaxPresences                *int            `json:"max_presences,omitempty"`
-	MaxMembers                  int             `json:"max_members,omitempty"`
-	VanityURLCode               *string         `json:"vanity_url_code"`
-	Description                 *string         `json:"description"`
-	Banner                      *string         `json:"banner"`
-	PremiumTier                 int             `json:"premium_tier"`
-	PremiumSubscriptionCount    int             `json:"premium_subscription_count,omitempty"`
-	PreferredLocale             string          `json:"preferred_locale"`
-	PublicUpdatesChannelID      *string         `json:"public_updates_channel_id"`
-	MaxVideoChannelUsers        *int            `json:"max_video_channel_users,omitempty"`
-	MaxStageVideoChannelUsers   *int            `json:"max_stage_video_channel_users,omitempty"`
-	ApproximateMemberCount      *int            `json:"approximate_member_count,omitempty"`
-	ApproximatePresenceCount    *int            `json:"approximate_presence_count,omitempty"`
-	NSFWLevel                   int             `json:"nsfw_level"`
-	Stickers                    []any           `json:"stickers,omitempty"`
-	PremiumProgressBarEnabled   bool            `json:"premium_progress_bar_enabled"`
-	SafetyAlertsChannelID       *string         `json:"safety_alerts_channel_id"`
+	ID                          string   `json:"id"`
+	Name                        string   `json:"name"`
+	Icon                        *string  `json:"icon"`
+	Splash                      *string  `json:"splash"`
+	DiscoverySplash             *string  `json:"discovery_splash"`
+	Owner                       *bool    `json:"owner,omitempty"`
+	OwnerID                     string   `json:"owner_id"`
+	Permissions                 *string  `json:"permissions,omitempty"`
+	AfkChannelID                *string  `json:"afk_channel_id"`
+	AfkTimeout                  int      `json:"afk_timeout"`
+	WidgetEnabled               *bool    `json:"widget_enabled,omitempty"`
+	WidgetChannelID             *string  `json:"widget_channel_id,omitempty"`
+	VerificationLevel           int      `json:"verification_level"`
+	DefaultMessageNotifications int      `json:"default_message_notifications"`
+	ExplicitContentFilter       int      `json:"explicit_content_filter"`
+	Roles                       []Role   `json:"roles"`
+	Emojis                      []Emoji  `json:"emojis"`
+	Features                    []string `json:"features"`
+	MfaLevel                    int      `json:"mfa_level"`
+	ApplicationID               *string  `json:"application_id"`
+	SystemChannelID             *string  `json:"system_channel_id"`
+	SystemChannelFlags          int      `json:"system_channel_flags"`
+	RulesChannelID              *string  `json:"rules_channel_id"`
+	MaxPresences                *int     `json:"max_presences,omitempty"`
+	MaxMembers                  int      `json:"max_members,omitempty"`
+	VanityURLCode               *string  `json:"vanity_url_code"`
+	Description                 *string  `json:"description"`
+	Banner                      *string  `json:"banner"`
+	PremiumTier                 int      `json:"premium_tier"`
+	PremiumSubscriptionCount    int      `json:"premium_subscription_count,omitempty"`
+	PreferredLocale             string   `json:"preferred_locale"`
+	PublicUpdatesChannelID      *string  `json:"public_updates_channel_id"`
+	MaxVideoChannelUsers        *int     `json:"max_video_channel_users,omitempty"`
+	MaxStageVideoChannelUsers   *int     `json:"max_stage_video_channel_users,omitempty"`
+	ApproximateMemberCount      *int     `json:"approximate_member_count,omitempty"`
+	ApproximatePresenceCount    *int     `json:"approximate_presence_count,omitempty"`
+	NSFWLevel                   int      `json:"nsfw_level"`
+	Stickers                    []any    `json:"stickers,omitempty"`
+	PremiumProgressBarEnabled   bool     `json:"premium_progress_bar_enabled"`
+	SafetyAlertsChannelID       *string  `json:"safety_alerts_channel_id"`
 }
 
 // Attachment is the attachment object.
@@ -276,14 +276,14 @@ type Embed struct {
 
 // Reaction is the reaction object.
 type Reaction struct {
-	Count        int     `json:"count"`
+	Count        int `json:"count"`
 	CountDetails struct {
 		Burst  int `json:"burst"`
 		Normal int `json:"normal"`
 	} `json:"count_details"`
-	Me         bool    `json:"me"`
-	MeBurst    bool    `json:"me_burst"`
-	Emoji      Emoji   `json:"emoji"`
+	Me          bool     `json:"me"`
+	MeBurst     bool     `json:"me_burst"`
+	Emoji       Emoji    `json:"emoji"`
 	BurstColors []string `json:"burst_colors"`
 }
 
@@ -296,60 +296,60 @@ type StickerItem struct {
 
 // Message is the message object.
 type Message struct {
-	ID                   string          `json:"id"`
-	ChannelID            string          `json:"channel_id"`
-	Author               User            `json:"author"`
-	Content              string          `json:"content"`
-	Timestamp            string          `json:"timestamp"`
-	EditedTimestamp      *string         `json:"edited_timestamp"`
-	TTS                  bool            `json:"tts"`
-	MentionEveryone      bool            `json:"mention_everyone"`
-	Mentions             []User          `json:"mentions"`
-	MentionRoles         []string        `json:"mention_roles"`
-	MentionChannels      []any           `json:"mention_channels,omitempty"`
-	Attachments          []Attachment    `json:"attachments"`
-	Embeds               []Embed         `json:"embeds"`
-	Reactions            []Reaction      `json:"reactions,omitempty"`
-	Nonce                *string         `json:"nonce,omitempty"`
-	Pinned               bool            `json:"pinned"`
-	Flags                int             `json:"flags"`
-	Components           []any           `json:"components"`
-	ReferencedMessage    *Message        `json:"referenced_message,omitempty"`
-	Thread               *Channel        `json:"thread,omitempty"`
-	StickerItems         []StickerItem   `json:"sticker_items,omitempty"`
-	Type                 int             `json:"type"`
-	WebhookID            *string         `json:"webhook_id,omitempty"`
-	ApplicationID        *string         `json:"application_id,omitempty"`
-	GuildID              *string         `json:"guild_id,omitempty"`
-	Member               *Member         `json:"member,omitempty"`
+	ID                string        `json:"id"`
+	ChannelID         string        `json:"channel_id"`
+	Author            User          `json:"author"`
+	Content           string        `json:"content"`
+	Timestamp         string        `json:"timestamp"`
+	EditedTimestamp   *string       `json:"edited_timestamp"`
+	TTS               bool          `json:"tts"`
+	MentionEveryone   bool          `json:"mention_everyone"`
+	Mentions          []User        `json:"mentions"`
+	MentionRoles      []string      `json:"mention_roles"`
+	MentionChannels   []any         `json:"mention_channels,omitempty"`
+	Attachments       []Attachment  `json:"attachments"`
+	Embeds            []Embed       `json:"embeds"`
+	Reactions         []Reaction    `json:"reactions,omitempty"`
+	Nonce             *string       `json:"nonce,omitempty"`
+	Pinned            bool          `json:"pinned"`
+	Flags             int           `json:"flags"`
+	Components        []any         `json:"components"`
+	ReferencedMessage *Message      `json:"referenced_message,omitempty"`
+	Thread            *Channel      `json:"thread,omitempty"`
+	StickerItems      []StickerItem `json:"sticker_items,omitempty"`
+	Type              int           `json:"type"`
+	WebhookID         *string       `json:"webhook_id,omitempty"`
+	ApplicationID     *string       `json:"application_id,omitempty"`
+	GuildID           *string       `json:"guild_id,omitempty"`
+	Member            *Member       `json:"member,omitempty"`
 }
 
 // Invite is the invite object.
 type Invite struct {
-	Type          int        `json:"type"`
-	Code          string     `json:"code"`
-	Guild         *Guild     `json:"guild,omitempty"`
-	Channel       *Channel   `json:"channel"`
-	Inviter       *User      `json:"inviter,omitempty"`
-	TargetType    *int       `json:"target_type,omitempty"`
-	TargetUser    *User      `json:"target_user,omitempty"`
-	TargetApplication *any   `json:"target_application,omitempty"`
-	ApproximatePresenceCount *int `json:"approximate_presence_count,omitempty"`
-	ApproximateMemberCount   *int `json:"approximate_member_count,omitempty"`
-	ExpiresAt     *string    `json:"expires_at"`
-	Uses          int        `json:"uses,omitempty"`
-	MaxUses       int        `json:"max_uses,omitempty"`
-	MaxAge        int        `json:"max_age,omitempty"`
-	Temporary     bool       `json:"temporary,omitempty"`
-	CreatedAt     string     `json:"created_at,omitempty"`
+	Type                     int      `json:"type"`
+	Code                     string   `json:"code"`
+	Guild                    *Guild   `json:"guild,omitempty"`
+	Channel                  *Channel `json:"channel"`
+	Inviter                  *User    `json:"inviter,omitempty"`
+	TargetType               *int     `json:"target_type,omitempty"`
+	TargetUser               *User    `json:"target_user,omitempty"`
+	TargetApplication        *any     `json:"target_application,omitempty"`
+	ApproximatePresenceCount *int     `json:"approximate_presence_count,omitempty"`
+	ApproximateMemberCount   *int     `json:"approximate_member_count,omitempty"`
+	ExpiresAt                *string  `json:"expires_at"`
+	Uses                     int      `json:"uses,omitempty"`
+	MaxUses                  int      `json:"max_uses,omitempty"`
+	MaxAge                   int      `json:"max_age,omitempty"`
+	Temporary                bool     `json:"temporary,omitempty"`
+	CreatedAt                string   `json:"created_at,omitempty"`
 }
 
 // ReadState is the read state object.
 type ReadState struct {
-	ID                string  `json:"id"`
-	MentionCount      int     `json:"mention_count"`
-	LastMessageID     *string `json:"last_message_id"`
-	LastPinTimestamp  *string `json:"last_pin_timestamp,omitempty"`
+	ID               string  `json:"id"`
+	MentionCount     int     `json:"mention_count"`
+	LastMessageID    *string `json:"last_message_id"`
+	LastPinTimestamp *string `json:"last_pin_timestamp,omitempty"`
 }
 
 // Relationship is the relationship object.

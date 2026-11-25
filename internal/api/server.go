@@ -44,11 +44,11 @@ func DefaultConfig() Config {
 
 // Server serves /api/v10 and the gateway upgrade.
 type Server struct {
-	Store *store.Store
-	Hub   *gateway.Hub
-	cfg   Config
-	routes []route
-	limit  *limiter
+	Store   *store.Store
+	Hub     *gateway.Hub
+	cfg     Config
+	routes  []route
+	limit   *limiter
 	started time.Time
 }
 

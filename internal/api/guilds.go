@@ -178,17 +178,17 @@ func (s *Server) handleGuildPreview(c *Ctx) {
 	members, _ := s.Store.MemberCount(g.ID)
 	zero := 0
 	c.JSON(map[string]any{
-		"id":                       g.ID,
-		"name":                     g.Name,
-		"icon":                     g.Icon,
-		"description":              g.Description,
-		"splash":                   g.Splash,
-		"discovery_splash":         g.DiscoverySplash,
-		"emojis":                   g.Emojis,
-		"features":                 g.Features,
-		"approximate_member_count": members,
+		"id":                         g.ID,
+		"name":                       g.Name,
+		"icon":                       g.Icon,
+		"description":                g.Description,
+		"splash":                     g.Splash,
+		"discovery_splash":           g.DiscoverySplash,
+		"emojis":                     g.Emojis,
+		"features":                   g.Features,
+		"approximate_member_count":   members,
 		"approximate_presence_count": zero,
-		"stickers":                 []any{},
+		"stickers":                   []any{},
 	})
 }
 
@@ -216,16 +216,16 @@ func (s *Server) handleGuildChannels(c *Ctx) {
 }
 
 type createChannelRequest struct {
-	Name                 string             `json:"name"`
-	Type                 *int               `json:"type"`
-	Topic                *string            `json:"topic"`
-	NSFW                 *bool              `json:"nsfw"`
-	Bitrate              *int               `json:"bitrate"`
-	UserLimit            *int               `json:"user_limit"`
-	RateLimitPerUser     *int               `json:"rate_limit_per_user"`
-	Position             *int               `json:"position"`
-	ParentID             *string            `json:"parent_id"`
-	PermissionOverwrites []model.Overwrite  `json:"permission_overwrites"`
+	Name                 string            `json:"name"`
+	Type                 *int              `json:"type"`
+	Topic                *string           `json:"topic"`
+	NSFW                 *bool             `json:"nsfw"`
+	Bitrate              *int              `json:"bitrate"`
+	UserLimit            *int              `json:"user_limit"`
+	RateLimitPerUser     *int              `json:"rate_limit_per_user"`
+	Position             *int              `json:"position"`
+	ParentID             *string           `json:"parent_id"`
+	PermissionOverwrites []model.Overwrite `json:"permission_overwrites"`
 }
 
 func (s *Server) handleCreateGuildChannel(c *Ctx) {

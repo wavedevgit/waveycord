@@ -57,13 +57,13 @@ func scanGuild(row rowScanner) (model.Guild, error) {
 
 // CreateGuildParams holds the fields the documented create route accepts.
 type CreateGuildParams struct {
-	Name         string
-	Icon         *string
-	Verification *int
-	Notifications *int
-	ContentFilter *int
-	AFKChannelID *string
-	AFKTimeout   *int
+	Name            string
+	Icon            *string
+	Verification    *int
+	Notifications   *int
+	ContentFilter   *int
+	AFKChannelID    *string
+	AFKTimeout      *int
 	SystemChannelID *string
 }
 
@@ -146,7 +146,7 @@ func (s *Store) GuildExists(idv string) (bool, error) {
 
 // GuildsForUser lists guilds the account belongs to, newest first.
 func (s *Store) GuildsForUser(userID string) ([]model.Guild, error) {
-	rows, err := s.DB.Query(`SELECT ` + guildColumns + ` FROM guilds
+	rows, err := s.DB.Query(`SELECT `+guildColumns+` FROM guilds
 		WHERE id IN (SELECT guild_id FROM guild_members WHERE user_id = ?)
 		ORDER BY id DESC`, userID)
 	if err != nil {
@@ -166,20 +166,20 @@ func (s *Store) GuildsForUser(userID string) ([]model.Guild, error) {
 
 // UpdateGuildParams holds nullable guild patches.
 type UpdateGuildParams struct {
-	Name         *string
-	Icon         *string
-	Banner       *string
-	Splash       *string
-	Description  *string
-	Verification *int
-	Notifications *int
-	ContentFilter *int
-	AFKChannelID *string
-	AFKTimeout   *int
+	Name            *string
+	Icon            *string
+	Banner          *string
+	Splash          *string
+	Description     *string
+	Verification    *int
+	Notifications   *int
+	ContentFilter   *int
+	AFKChannelID    *string
+	AFKTimeout      *int
 	SystemChannelID *string
 	RulesChannelID  *string
 	PreferredLocale *string
-	OwnerID      *string
+	OwnerID         *string
 }
 
 // UpdateGuild applies a patch and returns the guild.
@@ -523,10 +523,10 @@ func (s *Store) IsMember(guildID, userID string) (bool, error) {
 
 // UpdateMemberParams holds nullable member patches.
 type UpdateMemberParams struct {
-	Nick     *string
-	Deaf     *bool
-	Mute     *bool
-	Roles    *[]string
+	Nick      *string
+	Deaf      *bool
+	Mute      *bool
+	Roles     *[]string
 	ChannelID *string
 }
 

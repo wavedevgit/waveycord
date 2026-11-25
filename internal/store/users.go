@@ -15,14 +15,14 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanUser(row rowScanner) (model.User, error) {
 	var (
-		u        model.User
-		global   sql.NullString
-		avatar   sql.NullString
-		banner   sql.NullString
-		accent   sql.NullInt64
-		email    sql.NullString
-		phone    sql.NullString
-		deco     sql.NullString
+		u      model.User
+		global sql.NullString
+		avatar sql.NullString
+		banner sql.NullString
+		accent sql.NullInt64
+		email  sql.NullString
+		phone  sql.NullString
+		deco   sql.NullString
 	)
 	err := row.Scan(&u.ID, &u.Username, &u.Discriminator, &global, &avatar, &banner, &accent,
 		&email, &phone, &u.MFAEnabled, &u.Verified, &u.Bot, &u.System, &u.Flags,
@@ -52,15 +52,15 @@ func (s *Store) PrivateUser(id string) (model.User, error) {
 
 // CreateUserParams is the full insert payload.
 type CreateUserParams struct {
-	Username    string
-	GlobalName  *string
-	Email       *string
-	Phone       *string
-	PasswordHash string
-	Bot         bool
-	System      bool
-	Verified    bool
-	Locale      string
+	Username      string
+	GlobalName    *string
+	Email         *string
+	Phone         *string
+	PasswordHash  string
+	Bot           bool
+	System        bool
+	Verified      bool
+	Locale        string
 	Discriminator string
 }
 
@@ -115,13 +115,13 @@ func (s *Store) PasswordHash(idv string) (string, error) {
 
 // UpdateUserParams holds nullable patches.
 type UpdateUserParams struct {
-	Username    *string
-	GlobalName  *string
-	Avatar      *string
-	Banner      *string
-	AccentColor *int
-	Bio         *string
-	Locale      *string
+	Username     *string
+	GlobalName   *string
+	Avatar       *string
+	Banner       *string
+	AccentColor  *int
+	Bio          *string
+	Locale       *string
 	PasswordHash *string
 }
 

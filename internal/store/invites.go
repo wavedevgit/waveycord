@@ -1,8 +1,8 @@
 package store
 
 import (
-	"database/sql"
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"math/big"
 
@@ -59,15 +59,15 @@ func (s *Store) CreateInvite(p CreateInviteParams) (model.Invite, error) {
 // Invite loads an invite with channel, guild and inviter expanded.
 func (s *Store) Invite(code string) (model.Invite, error) {
 	var (
-		inv      model.Invite
-		guildID  sql.NullString
-		inviter  sql.NullString
-		created  int64
-		maxUses  int
-		maxAge   int
-		uses     int
-		temp     bool
-		channel  string
+		inv     model.Invite
+		guildID sql.NullString
+		inviter sql.NullString
+		created int64
+		maxUses int
+		maxAge  int
+		uses    int
+		temp    bool
+		channel string
 	)
 	err := s.DB.QueryRow(`SELECT code, guild_id, channel_id, inviter_id, uses, max_uses, max_age,
 		temporary, created_at FROM invites WHERE code = ?`, code).
