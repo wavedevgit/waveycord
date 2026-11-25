@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/wavedevgit/waveycord/internal/model"
+	"github.com/wavedevgit/waveycord/internal/search"
 )
 
 // Application is the application object as documented.
@@ -268,9 +270,30 @@ func TokenHashOf(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// SearchMessages implements guild message search over the messages table. The
-// channel list is already permission-filtered by the caller.
+// SearchMessages queries the configured search index, falling back to a table
+// scan when no index is installed. The channel list is already
+// permission-filtered by the caller.
 func (s *Store) SearchMessages(guildID, content, authorID string, channels []string, limit int) ([]model.Message, int, error) {
+	if s.Search != nil && len(channels) > 0 {
+		res, err := s.Search.Search(context.Background(), search.Query{
+			GuildID: guildID, Content: content, AuthorID: authorID,
+			Channels: channels, Limit: limit,
+		})
+		if err != nil {
+			return nil, 0, mapErr(err)
+		}
+		out := make([]model.Message, 0, len(res.MessageIDs))
+		for _, idv := range res.MessageIDs {
+			if m, err := s.Message(idv); err == nil {
+				out = append(out, m)
+			}
+		}
+		return out, res.Total, nil
+	}
+	return s.searchMessagesLike(guildID, content, authorID, channels, limit)
+}
+
+func (s *Store) searchMessagesLike(guildID, content, authorID string, channels []string, limit int) ([]model.Message, int, error) {
 	if len(channels) == 0 {
 		return []model.Message{}, 0, nil
 	}

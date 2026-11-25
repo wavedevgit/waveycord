@@ -105,6 +105,7 @@ route is not registered yet.
 | `GET /channels/{channel.id}/pins`, `PUT/DELETE .../pins/{message.id}` | implemented |
 | `POST /channels/{channel.id}/messages/{message.id}/ack` | implemented |
 | `GET /guilds/{guild.id}/messages/search` | implemented |
+| Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Polls, components v2 validation | TBD |
 
 ## Invites and webhooks
@@ -266,8 +267,14 @@ Remaining differences from Discord's published design:
 - Inline bounded bulk worker, not a PubSub-backed guaranteed-delivery indexing
   queue with destination-grouped batching.
 - No index-size automation or reindex-on-threshold workflow.
-- No ES backfill from existing rows; the Postgres index has `Backfiller`, the ES
-  adapter requires an external reindex. Documented, not claimed.
+- Reindex is now built in: `Store.ReindexSearch` scans message rows in id order,
+  optionally resets the index (`search.Resetter`), and re-upserts documents.
+  `WAVEYCORD_SEARCH_REINDEX=reset` runs it in the background at startup. Tested by
+  wiping the Postgres tsvector index and by resetting live OpenSearch indices and
+  rebuilding them; searches return the original results afterwards.
+- Still absent: multi-cluster cells, PubSub-backed guaranteed indexing, BFG
+  reindex-on-threshold, and index-size automation. The reindex is a single bounded
+  scan, not a distributed migration.
 
 ## Deliberately different from Discord
 

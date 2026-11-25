@@ -49,6 +49,18 @@ func (d *DB) ExecContext(ctx context.Context, query string, args ...any) (sql.Re
 	return d.DB.ExecContext(ctx, q, a...)
 }
 
+// QueryContext runs a query with a context.
+func (d *DB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	q, a := d.prepare(query, args)
+	return d.DB.QueryContext(ctx, q, a...)
+}
+
+// QueryRowContext runs a single-row query with a context.
+func (d *DB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	q, a := d.prepare(query, args)
+	return d.DB.QueryRowContext(ctx, q, a...)
+}
+
 // Query runs a query.
 func (d *DB) Query(query string, args ...any) (*sql.Rows, error) {
 	q, a := d.prepare(query, args)

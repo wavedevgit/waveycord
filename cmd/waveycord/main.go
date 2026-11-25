@@ -81,6 +81,19 @@ func main() {
 		}
 	}
 	st.SetSearchIndex(searchIndex)
+	if mode := os.Getenv("WAVEYCORD_SEARCH_REINDEX"); mode != "" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			reset := mode == "reset" || mode == "1"
+			n, err := st.ReindexSearch(ctx, reset, 500, 25*time.Minute)
+			if err != nil {
+				log.Warn("search reindex", "err", err)
+				return
+			}
+			log.Info("search reindex complete", "documents", n, "reset", reset)
+		}()
+	}
 	if replicaDSN := os.Getenv("WAVEYCORD_PG_REPLICA_DSN"); replicaDSN != "" {
 		replica, err := db.OpenReplica(replicaDSN)
 		if err != nil {

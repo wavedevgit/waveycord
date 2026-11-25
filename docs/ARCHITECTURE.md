@@ -126,9 +126,11 @@ author filters, so the permission-filtered channel list is enforced inside the
 query. `Store.SearchMessages` hydrates ranked ids back into API objects for every
 backend.
 
-The Postgres index backfills existing rows through `Backfiller`; the ES adapter
-requires an external reindex because it has no database handle. Message rows stay
-authoritative: indexing failures are logged/ignored and never fail the write.
+`Store.ReindexSearch` rebuilds any backend from message rows: it scans by id in
+bounded batches and optionally calls `search.Resetter` first (implemented by the ES
+adapter as a prefix wildcard delete). `WAVEYCORD_SEARCH_REINDEX=reset` runs it at
+startup. Message rows stay authoritative: indexing failures are logged/ignored and
+never fail the write.
 
 ## Permissions
 

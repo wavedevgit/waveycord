@@ -308,6 +308,11 @@ func (e *ES) Search(ctx context.Context, q Query) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if status == http.StatusNotFound && bytes.Contains(out, []byte("index_not_found_exception")) {
+		// A guild with no indexed messages has no index yet; that is an empty
+		// result, not a search failure.
+		return Result{MessageIDs: []string{}}, nil
+	}
 	if status >= 300 {
 		return Result{}, fmt.Errorf("search: query status %d: %s", status, truncate(out))
 	}
@@ -362,6 +367,21 @@ func (e *ES) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.err
+}
+
+// Reset deletes every guild index under the adapter prefix, so a subsequent
+// reindex rebuilds from the database.
+func (e *ES) Reset(ctx context.Context) error {
+	// The wildcard must stay literal; only the prefix is escaped.
+	status, out, err := e.do(ctx, http.MethodDelete, "/"+url.PathEscape(e.cfg.Prefix)+"-guild-*?ignore_unavailable=true", nil, "")
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("search: reset status %d: %s", status, truncate(out))
+	}
+	e.ensured = sync.Map{}
+	return nil
 }
 
 // Health pings the cluster.

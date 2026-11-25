@@ -54,6 +54,11 @@ type Backfiller interface {
 	Backfill(ctx context.Context, limit int) (int, error)
 }
 
+// Resetter clears the index so a full reindex can rebuild it.
+type Resetter interface {
+	Reset(ctx context.Context) error
+}
+
 // Open returns the index appropriate for the database dialect. Postgres creates
 // the tsvector table and GIN index if they are missing.
 func Open(ctx context.Context, db *sqlx.DB) (Index, error) {
