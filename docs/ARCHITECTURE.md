@@ -81,7 +81,14 @@ Channel lists filter out channels without `VIEW_CHANNEL`.
 `internal/gateway` implements the documented handshake: `HELLO` with
 `heartbeat_interval`, `IDENTIFY` → `READY`, `HEARTBEAT` → `HEARTBEAT_ACK`,
 `RESUME` with a 200-event replay buffer, `INVALID_SESSION`, and dispatch frames
-carrying `s`. Close codes use the documented `4000`–`4014` range. RESUME from a
+carrying `s`. Close codes use the documented `4000`–`4014` range.
+
+Transport compression follows the realtime post: a client that connects with
+`?compress=zstd-stream` gets one streaming zstd encoder for the life of the
+connection, so the compression window spans payloads instead of restarting on each
+frame. Flushed chunks are sent as binary frames; inbound client payloads remain
+uncompressed JSON. Payloads larger than one flush boundary are still one logical
+JSON object to a streaming decoder. RESUME from a
 sequence older than the buffer answers `INVALID_SESSION: true`, which is the
 documented recovery path.
 

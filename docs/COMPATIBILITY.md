@@ -11,6 +11,7 @@ route is not registered yet.
 | `GET /gateway` | implemented |
 | `GET /gateway/bot` | implemented |
 | WebSocket `/gateway` (HELLO, IDENTIFY, READY, HEARTBEAT/ACK, RESUME, INVALID_SESSION) | implemented + tested |
+| Transport compression `?compress=zstd-stream` | implemented + tested |
 | Cross-instance dispatch (Postgres LISTEN/NOTIFY) | implemented + tested |
 
 ## Auth

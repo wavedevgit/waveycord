@@ -59,11 +59,20 @@ scale. This is a capacity decision, not an API difference.
 Source design: streaming zstd replaces streaming zlib; per-payload dictionaries
 were tested and rejected; passive sessions send deltas instead of full snapshots.
 
-Status: not implemented. The gateway currently sends uncompressed JSON frames.
-Adding `compress=zstd-stream` requires a streaming compressor per connection and a
-length-prefixed frame format; the blog's numbers (MESSAGE_CREATE 270 → 166 bytes)
-would apply here too. This is the largest known gap between this server and the
-published realtime design, and it is tracked in `COMPATIBILITY.md`.
+Mirrored:
+
+- `?compress=zstd-stream` negotiates a per-connection streaming zstd encoder
+  (`internal/gateway/gateway.go`). The encoder window survives across payloads —
+  the streaming property the post says made zstd beat zlib — and each flushed
+  chunk goes out as one binary websocket frame. Client writes (IDENTIFY,
+  HEARTBEAT) stay uncompressed JSON, which is what the real client sends.
+- `TestGatewayZstdStream` decodes those frames with a streaming reader and
+  asserts HELLO, READY and MESSAGE_CREATE arrive intact.
+
+Not implemented: zstd dictionaries (Discord tested and rejected them for
+complexity), zlib-stream (falls back to JSON), and passive-session deltas
+(`PASSIVE_UPDATE_V2`), which depend on a passive-session concept this gateway does
+not model.
 
 ## How We Moved Discord Voice to the Edge / DAVE / WebRTC posts
 

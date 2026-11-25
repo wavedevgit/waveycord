@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/wavedevgit/waveycord/internal/bus"
 )
@@ -102,12 +104,36 @@ func (h *Hub) Handler() http.Handler {
 		if err != nil {
 			return
 		}
-		h.serve(r.Context(), ws)
+		h.serve(r.Context(), ws, compressionFromRequest(r))
 	})
 }
 
-func (h *Hub) serve(ctx context.Context, ws *websocket.Conn) {
+// compressionFromRequest reads the documented ?compress= transport setting.
+// "zstd-stream" is supported; anything else (including zlib-stream) falls back
+// to uncompressed JSON rather than failing the connection.
+func compressionFromRequest(r *http.Request) string {
+	if strings.EqualFold(r.URL.Query().Get("compress"), "zstd-stream") {
+		return "zstd-stream"
+	}
+	return ""
+}
+
+func (h *Hub) serve(ctx context.Context, ws *websocket.Conn, compress string) {
 	c := &conn{ws: ws, hub: h, out: make(chan []byte, 64), done: make(chan struct{})}
+	if compress == "zstd-stream" {
+		// One streaming encoder per connection: the window survives across
+		// payloads, which is the point of the blog's streaming-zstd change.
+		enc, err := zstd.NewWriter(frameSink{c: c},
+			zstd.WithEncoderLevel(zstd.SpeedDefault),
+			zstd.WithEncoderConcurrency(1),
+			zstd.WithWindowSize(1<<18),
+		)
+		if err != nil {
+			_ = ws.Close(websocket.StatusInternalError, "compression init failed")
+			return
+		}
+		c.encoder = enc
+	}
 	h.mu.Lock()
 	h.conns[c] = struct{}{}
 	h.mu.Unlock()
@@ -119,6 +145,9 @@ func (h *Hub) serve(ctx context.Context, ws *websocket.Conn) {
 		}
 		h.mu.Unlock()
 		close(c.done)
+		if c.encoder != nil {
+			_ = c.encoder.Close()
+		}
 		_ = ws.CloseNow()
 	}()
 
@@ -361,6 +390,7 @@ type conn struct {
 	buffer        []buffered
 	userID        string
 	sessionID     string
+	encoder       *zstd.Encoder
 	subscriptions map[string]bool
 	done          chan struct{}
 	closed        bool
@@ -434,11 +464,20 @@ func (c *conn) writeLoop() {
 	for {
 		select {
 		case raw := <-c.out:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			c.writeMu.Lock()
-			err := c.ws.Write(ctx, websocket.MessageText, raw)
+			var err error
+			if c.encoder != nil {
+				// Write + Flush emits only the newly compressed bytes; the frame
+				// sink sends them as one binary websocket message.
+				if _, err = c.encoder.Write(raw); err == nil {
+					err = c.encoder.Flush()
+				}
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				err = c.ws.Write(ctx, websocket.MessageText, raw)
+				cancel()
+			}
 			c.writeMu.Unlock()
-			cancel()
 			if err != nil {
 				return
 			}
@@ -446,6 +485,22 @@ func (c *conn) writeLoop() {
 			return
 		}
 	}
+}
+
+// frameSink writes compressed bytes straight to the websocket as binary frames.
+// It is only called from writeLoop while writeMu is held.
+type frameSink struct{ c *conn }
+
+func (f frameSink) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := f.c.ws.Write(ctx, websocket.MessageBinary, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 // replayFrom copies buffered events after seq into c; it reports whether the
