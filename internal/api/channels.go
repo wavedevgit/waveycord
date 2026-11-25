@@ -103,6 +103,9 @@ func (s *Server) handleUpdateChannel(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	if ch.GuildID != nil {
+		s.audit(c, *ch.GuildID, store.AuditChannelUpdate, ch.ID, nil)
+	}
 	if s.Hub != nil && ch.GuildID != nil {
 		s.Hub.DispatchGuild(*ch.GuildID, "CHANNEL_UPDATE", updated)
 	}
@@ -151,6 +154,7 @@ func (s *Server) handleDeleteChannel(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, *ch.GuildID, store.AuditChannelDelete, ch.ID, nil)
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(*ch.GuildID, "CHANNEL_DELETE", ch)
 	}

@@ -4,6 +4,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"fmt"
@@ -94,9 +95,25 @@ func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
 		handle.Close()
 		return nil, fmt.Errorf("db: ping postgres: %w", err)
 	}
-	if _, err := handle.Exec(postgresSchema); err != nil {
+	// Concurrent startups (several instances, or parallel tests) would otherwise
+	// collide on CREATE TABLE ... IF NOT EXISTS and can deadlock in the catalog.
+	ctx := context.Background()
+	conn, err := handle.Conn(ctx)
+	if err != nil {
 		handle.Close()
-		return nil, fmt.Errorf("db: apply postgres schema: %w", err)
+		return nil, fmt.Errorf("db: acquire schema connection: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext('waveycord_schema'))`); err != nil {
+		conn.Close()
+		handle.Close()
+		return nil, fmt.Errorf("db: schema lock: %w", err)
+	}
+	_, schemaErr := conn.ExecContext(ctx, postgresSchema)
+	_, _ = conn.ExecContext(ctx, `SELECT pg_advisory_unlock(hashtext('waveycord_schema'))`)
+	conn.Close()
+	if schemaErr != nil {
+		handle.Close()
+		return nil, fmt.Errorf("db: apply postgres schema: %w", schemaErr)
 	}
 	return &sqlx.DB{DB: handle, Dialect: sqlx.Postgres}, nil
 }

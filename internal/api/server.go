@@ -30,17 +30,26 @@ type Config struct {
 	RateWindow time.Duration
 	// MaxBodyBytes bounds JSON request bodies.
 	MaxBodyBytes int64
-	Logger       *slog.Logger
+	// MaxUploadBytes bounds one attachment upload.
+	MaxUploadBytes int64
+	// UploadDir is where attachment bytes are written.
+	UploadDir string
+	// CDNBase is the absolute base for attachment URLs.
+	CDNBase string
+	Logger  *slog.Logger
 }
 
 // DefaultConfig returns the documented defaults.
 func DefaultConfig() Config {
 	return Config{
-		GatewayURL:   "ws://127.0.0.1:8080/gateway",
-		RateLimit:    50,
-		RateWindow:   time.Second,
-		MaxBodyBytes: 8 << 20,
-		Logger:       slog.Default(),
+		GatewayURL:     "ws://127.0.0.1:8080/gateway",
+		RateLimit:      50,
+		RateWindow:     time.Second,
+		MaxBodyBytes:   8 << 20,
+		MaxUploadBytes: 25 << 20,
+		UploadDir:      "./uploads",
+		CDNBase:        "http://127.0.0.1:8080",
+		Logger:         slog.Default(),
 	}
 }
 
@@ -69,6 +78,15 @@ func New(st *store.Store, hub *gateway.Hub, cfg Config) *Server {
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = 8 << 20
 	}
+	if cfg.MaxUploadBytes <= 0 {
+		cfg.MaxUploadBytes = 25 << 20
+	}
+	if cfg.UploadDir == "" {
+		cfg.UploadDir = "./uploads"
+	}
+	if cfg.CDNBase == "" {
+		cfg.CDNBase = "http://127.0.0.1:8080"
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -86,6 +104,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/v10/", http.StripPrefix("/api/v10", s.apiHandler()))
 	mux.Handle("/gateway", s.gatewayHandler())
 	mux.Handle("/api/v10/gateway", s.gatewayHandler())
+	mux.Handle("/cdn/", http.StripPrefix("/cdn", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		segs := splitPath(r.URL.Path)
+		if len(segs) < 3 {
+			http.NotFound(w, r)
+			return
+		}
+		c := &Ctx{W: w, R: r, Srv: s, Params: map[string]string{"channelID": segs[1], "uploadID": segs[2]}}
+		s.handleCDN(c)
+	})))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -26,6 +26,7 @@ func main() {
 	addr := env("WAVEYCORD_ADDR", "127.0.0.1:8080")
 	dsn := env("WAVEYCORD_DB", "./waveycord.db")
 	gatewayURL := env("WAVEYCORD_GATEWAY_URL", "ws://"+addr+"/gateway")
+	cdnBase := env("WAVEYCORD_CDN_BASE", "http://"+addr)
 
 	handle, err := db.Open(dsn)
 	if err != nil {
@@ -37,6 +38,8 @@ func main() {
 	st := store.New(handle)
 	cfg := api.DefaultConfig()
 	cfg.GatewayURL = gatewayURL
+	cfg.CDNBase = cdnBase
+	cfg.UploadDir = env("WAVEYCORD_UPLOAD_DIR", "./uploads")
 	cfg.Logger = log
 	if v := os.Getenv("WAVEYCORD_RATE_LIMIT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

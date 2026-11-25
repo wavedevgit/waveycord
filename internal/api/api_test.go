@@ -44,6 +44,7 @@ func newHarness(t *testing.T) *harness {
 	st := store.New(handle)
 	cfg := api.DefaultConfig()
 	cfg.RateLimit = 10000
+	cfg.UploadDir = t.TempDir()
 	hub := gateway.NewHub(
 		func(token string) (string, bool) {
 			_, user, err := st.SessionByToken(api.TokenHash(token))

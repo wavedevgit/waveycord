@@ -269,6 +269,7 @@ func (s *Server) handleCreateGuildChannel(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, g.ID, store.AuditChannelCreate, ch.ID, []store.AuditChange{{Key: "name", NewValue: ch.Name}})
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "CHANNEL_CREATE", ch)
 	}
@@ -442,6 +443,7 @@ func (s *Server) handleKickMember(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, g.ID, store.AuditMemberKick, target, nil)
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "GUILD_MEMBER_REMOVE", map[string]any{"guild_id": g.ID, "user": model.User{ID: target}})
 	}
@@ -538,6 +540,7 @@ func (s *Server) handleCreateRole(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, g.ID, store.AuditRoleCreate, role.ID, []store.AuditChange{{Key: "name", NewValue: role.Name}})
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "GUILD_ROLE_CREATE", map[string]any{"guild_id": g.ID, "role": role})
 	}
@@ -577,6 +580,7 @@ func (s *Server) handleUpdateRole(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, g.ID, store.AuditRoleUpdate, role.ID, nil)
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "GUILD_ROLE_UPDATE", map[string]any{"guild_id": g.ID, "role": role})
 	}
@@ -597,6 +601,7 @@ func (s *Server) handleDeleteRole(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, g.ID, store.AuditRoleDelete, c.Param("roleID"), nil)
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "GUILD_ROLE_DELETE", map[string]any{"guild_id": g.ID, "role_id": c.Param("roleID")})
 	}
@@ -657,6 +662,7 @@ func (s *Server) handleCreateBan(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, g.ID, store.AuditMemberBanAdd, target, nil)
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "GUILD_BAN_ADD", map[string]any{"guild_id": g.ID, "user": model.User{ID: target}})
 	}
@@ -677,6 +683,7 @@ func (s *Server) handleDeleteBan(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, g.ID, store.AuditMemberBanRemove, c.Param("userID"), nil)
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "GUILD_BAN_REMOVE", map[string]any{"guild_id": g.ID, "user": model.User{ID: c.Param("userID")}})
 	}

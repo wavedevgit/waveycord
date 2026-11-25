@@ -108,6 +108,17 @@ func (s *Server) handleCreateMessage(c *Ctx) {
 		if req.Attachments[i].ID == "" {
 			req.Attachments[i].ID = s.Store.NewID()
 		}
+		if req.Attachments[i].Filename == "" {
+			req.Attachments[i].Filename = "file"
+		}
+		if u, err := s.Store.Upload(req.Attachments[i].ID); err == nil && u.ChannelID == ch.ID {
+			req.Attachments[i].Size = u.Size
+			if req.Attachments[i].ContentType == nil && u.ContentType != nil {
+				req.Attachments[i].ContentType = u.ContentType
+			}
+			req.Attachments[i].URL = s.cfg.CDNBase + "/cdn/attachments/" + ch.ID + "/" + u.ID + "/" + urlEscape(req.Attachments[i].Filename)
+			req.Attachments[i].ProxyURL = req.Attachments[i].URL
+		}
 	}
 	msg, err := s.Store.CreateMessage(store.CreateMessageParams{
 		ChannelID: ch.ID, GuildID: guildID, AuthorID: c.User.ID,
@@ -224,6 +235,9 @@ func (s *Server) handleDeleteMessage(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	if ch.GuildID != nil {
+		s.audit(c, *ch.GuildID, store.AuditMessageDelete, ch.ID, nil)
+	}
 	s.dispatchDelete(ch, msg.ID)
 	c.NoContent()
 }
@@ -282,6 +296,9 @@ func (s *Server) handleBulkDelete(c *Ctx) {
 	if err := s.Store.DeleteMessages(ch.ID, filtered); err != nil {
 		fail(c, err)
 		return
+	}
+	if ch.GuildID != nil {
+		s.audit(c, *ch.GuildID, store.AuditMessageBulkDelete, ch.ID, []store.AuditChange{{Key: "count", NewValue: len(filtered)}})
 	}
 	for _, idv := range filtered {
 		s.dispatchDelete(ch, idv)

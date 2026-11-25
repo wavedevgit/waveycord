@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at         BIGINT NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS users_username_discriminator
+CREATE INDEX IF NOT EXISTS users_username_discriminator
     ON users (lower(username), discriminator);
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -274,3 +274,41 @@ CREATE TABLE IF NOT EXISTS gateway_events (
     created_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS gateway_events_created ON gateway_events (created_at);
+
+CREATE TABLE IF NOT EXISTS uploads (
+    id           TEXT PRIMARY KEY,
+    channel_id   TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename     TEXT NOT NULL,
+    content_type TEXT,
+    size         BIGINT NOT NULL DEFAULT 0,
+    path         TEXT,
+    uploaded     SMALLINT NOT NULL DEFAULT 0,
+    created_at   BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS webhooks (
+    id             TEXT PRIMARY KEY,
+    type           INTEGER NOT NULL DEFAULT 1,
+    guild_id       TEXT REFERENCES guilds(id) ON DELETE CASCADE,
+    channel_id     TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    creator_id     TEXT REFERENCES users(id) ON DELETE SET NULL,
+    name           TEXT NOT NULL,
+    avatar         TEXT,
+    token          TEXT NOT NULL,
+    application_id TEXT,
+    created_at     BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS webhooks_channel ON webhooks (channel_id);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id          TEXT PRIMARY KEY,
+    guild_id    TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    actor_id    TEXT,
+    action_type INTEGER NOT NULL,
+    target_id   TEXT,
+    changes     TEXT NOT NULL DEFAULT '[]',
+    reason      TEXT,
+    created_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS audit_guild ON audit_logs (guild_id, id DESC);

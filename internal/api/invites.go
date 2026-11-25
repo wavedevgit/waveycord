@@ -44,6 +44,9 @@ func (s *Server) handleDeleteInvite(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	if inv.Guild != nil {
+		s.audit(c, inv.Guild.ID, store.AuditInviteDelete, code, nil)
+	}
 	if s.Hub != nil && inv.Guild != nil {
 		s.Hub.DispatchGuild(inv.Guild.ID, "INVITE_DELETE", map[string]any{
 			"channel_id": inv.Channel.ID, "guild_id": inv.Guild.ID, "code": code,
@@ -137,6 +140,7 @@ func (s *Server) handleCreateInvite(c *Ctx) {
 		fail(c, err)
 		return
 	}
+	s.audit(c, *ch.GuildID, store.AuditInviteCreate, inv.Code, nil)
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(*ch.GuildID, "INVITE_CREATE", inv)
 	}
