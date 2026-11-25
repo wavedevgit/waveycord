@@ -18,6 +18,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/wavedevgit/waveycord/internal/bus"
+	"github.com/wavedevgit/waveycord/internal/store"
 )
 
 // Opcodes from the gateway opcode table.
@@ -72,15 +73,17 @@ type Hub struct {
 	Guilds GuildsFunc
 	Log    *slog.Logger
 
-	mu           sync.RWMutex
-	conns        map[*conn]struct{}
-	bus          bus.Bus
-	dispatched   atomic.Int64
-	journal      *deltaJournal
-	passiveNanos atomic.Int64
-	wake         chan struct{}
-	stopOnce     sync.Once
-	stop         chan struct{}
+	mu            sync.RWMutex
+	conns         map[*conn]struct{}
+	bus           bus.Bus
+	dispatched    atomic.Int64
+	journal       *deltaJournal
+	store         *store.Store
+	voiceEndpoint string
+	passiveNanos  atomic.Int64
+	wake          chan struct{}
+	stopOnce      sync.Once
+	stop          chan struct{}
 	// sessions keeps at most one live connection per gateway session id, which
 	// is what RESUME and session takeover depend on.
 	sessions map[string]*conn
@@ -97,6 +100,16 @@ func NewHub(auth AuthFunc, ready ReadyFunc, guilds GuildsFunc, log *slog.Logger)
 	h.passiveNanos.Store(int64(10 * time.Second))
 	go h.passiveLoop()
 	return h
+}
+
+// SetStore gives the hub access to voice-state persistence and guild data. It is
+// called once at startup, before connections are accepted.
+func (h *Hub) SetStore(st *store.Store, voiceEndpoint string) {
+	if h == nil {
+		return
+	}
+	h.store = st
+	h.voiceEndpoint = voiceEndpoint
 }
 
 // SetPassiveInterval controls how often passive sessions receive a delta. The
@@ -381,10 +394,13 @@ func (h *Hub) serve(ctx context.Context, ws *websocket.Conn, compress string) {
 			if err := json.Unmarshal(frame.D, &sub); err == nil && sub.GuildID != "" {
 				c.activateGuild(sub.GuildID)
 			}
-		case OpPresenceUpdate, OpVoiceStateUpdate:
-			// Accepted and acknowledged by sequence; presence/voice state carry no
-			// server-side persistence in this implementation.
+		case OpPresenceUpdate:
+			// Presence is accepted and acknowledged by sequence; it is not persisted.
 			c.nextSeq()
+		case OpVoiceStateUpdate:
+			if !h.handleVoiceState(c, frame.D) {
+				return
+			}
 		default:
 			c.close(CloseUnknownOpcode, "Unknown opcode")
 			return
@@ -448,6 +464,73 @@ func (h *Hub) publish(ev bus.Event) {
 	if err := b.Publish(ctx, ev); err != nil && h.Log != nil {
 		h.Log.Warn("gateway bus publish", "event", ev.Name, "err", err)
 	}
+}
+
+// handleVoiceState applies an OP 4 voice state update, persists it, and emits
+// VOICE_STATE_UPDATE plus a VOICE_SERVER_UPDATE to the joining user. It returns
+// false when the connection must close.
+func (h *Hub) handleVoiceState(c *conn, raw json.RawMessage) bool {
+	if h.store == nil {
+		c.close(CloseUnknownError, "Voice states unavailable")
+		return false
+	}
+	var upd struct {
+		GuildID        string  `json:"guild_id"`
+		ChannelID      *string `json:"channel_id"`
+		SelfMute       bool    `json:"self_mute"`
+		SelfDeaf       bool    `json:"self_deaf"`
+		SelfVideo      bool    `json:"self_video"`
+		SelfStream     bool    `json:"self_stream"`
+		RequestToSpeak *string `json:"request_to_speak_timestamp"`
+	}
+	if err := json.Unmarshal(raw, &upd); err != nil || upd.GuildID == "" {
+		c.close(CloseDecodeError, "Invalid voice state payload")
+		return false
+	}
+	if ok, _ := h.store.IsMember(upd.GuildID, c.userID); !ok {
+		c.close(CloseUnknownError, "Not a member of the guild")
+		return false
+	}
+	if upd.ChannelID == nil {
+		previous, err := h.store.DeleteVoiceState(upd.GuildID, c.userID)
+		if err != nil {
+			c.close(CloseUnknownError, "Voice state update failed")
+			return false
+		}
+		if previous != nil {
+			h.DispatchGuild(upd.GuildID, "VOICE_STATE_UPDATE", store.VoiceState{
+				GuildID: upd.GuildID, ChannelID: nil, UserID: c.userID, SessionID: c.sessionID,
+			})
+		}
+		return true
+	}
+	ch, err := h.store.Channel(*upd.ChannelID)
+	if err != nil || ch.GuildID == nil || *ch.GuildID != upd.GuildID ||
+		(ch.Type != store.ChannelVoice && ch.Type != store.ChannelStage) {
+		c.close(CloseUnknownError, "Invalid voice channel")
+		return false
+	}
+	suppress := ch.Type == store.ChannelStage
+	state := store.VoiceState{
+		GuildID: upd.GuildID, ChannelID: upd.ChannelID, UserID: c.userID,
+		SessionID: c.sessionID, SelfMute: upd.SelfMute, SelfDeaf: upd.SelfDeaf,
+		SelfVideo: upd.SelfVideo, SelfStream: upd.SelfStream, Suppress: suppress,
+		RequestToSpeakTimestamp: upd.RequestToSpeak,
+	}
+	token := randomSessionID()
+	saved, err := h.store.PutVoiceState(state, token)
+	if err != nil {
+		c.close(CloseUnknownError, "Voice state update failed")
+		return false
+	}
+	h.DispatchGuild(upd.GuildID, "VOICE_STATE_UPDATE", saved)
+	h.DispatchUser(c.userID, "VOICE_SERVER_UPDATE", map[string]any{
+		"guild_id":   upd.GuildID,
+		"channel_id": *upd.ChannelID,
+		"token":      token,
+		"endpoint":   h.voiceEndpoint,
+	})
+	return true
 }
 
 // DispatchGuild sends a guild-scoped dispatch to local connections and to every

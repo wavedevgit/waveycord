@@ -132,6 +132,17 @@ OAuth2 bearer token, verify the token's application matches the path, and requir
 the `role_connections.write` scope — the session and bot authentication paths are
 rejected.
 
+## Voice signaling
+
+`voice_states` stores one row per `(guild_id, user_id)` with channel, session,
+self/server mute and deaf flags, stream/video flags, stage suppression,
+request-to-speak timestamp, a per-join voice token and the channel status. OP 4
+validates membership and channel type, writes the row, dispatches
+`VOICE_STATE_UPDATE` through the guild fanout (so passive sessions see it as a
+journal delta) and sends `VOICE_SERVER_UPDATE` to the user. READY includes the
+persisted states. Media transport is out of scope: the advertised endpoint has no
+voice gateway behind it.
+
 ## Permissions
 
 `internal/perm` implements the documented resolution order: base role bits

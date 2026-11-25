@@ -71,6 +71,7 @@ func newHarness(t *testing.T) *harness {
 		api.GuildIDsFor(st),
 		nil,
 	)
+	hub.SetStore(st, "wss://voice.test")
 	srv := httptest.NewServer(api.New(st, hub, cfg).Handler())
 	t.Cleanup(func() {
 		hub.Close()

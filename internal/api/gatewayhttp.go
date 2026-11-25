@@ -45,22 +45,23 @@ func ReadyBuilder(st *store.Store, gatewayURL string) gateway.ReadyFunc {
 		}
 		type readyGuild struct {
 			model.Guild
-			Unavailable bool            `json:"unavailable"`
-			Channels    []model.Channel `json:"channels"`
-			Members     []model.Member  `json:"members"`
-			Threads     []model.Channel `json:"threads"`
-			VoiceStates []any           `json:"voice_states"`
-			Presences   []any           `json:"presences"`
-			MemberCount int             `json:"member_count"`
+			Unavailable bool               `json:"unavailable"`
+			Channels    []model.Channel    `json:"channels"`
+			Members     []model.Member     `json:"members"`
+			Threads     []model.Channel    `json:"threads"`
+			VoiceStates []store.VoiceState `json:"voice_states"`
+			Presences   []any              `json:"presences"`
+			MemberCount int                `json:"member_count"`
 		}
 		out := make([]readyGuild, 0, len(guilds))
 		for _, g := range guilds {
 			channels, _ := st.GuildChannels(g.ID)
 			members, _ := st.Members(g.ID, 100, "")
 			threads, _ := st.ActiveThreads(g.ID)
+			voice, _ := st.VoiceStatesForGuild(g.ID)
 			out = append(out, readyGuild{
 				Guild: g, Channels: channels, Members: members, Threads: threads,
-				VoiceStates: []any{}, Presences: []any{}, MemberCount: len(members),
+				VoiceStates: voice, Presences: []any{}, MemberCount: len(members),
 			})
 		}
 		dms, _ := st.DMChannels(userID)

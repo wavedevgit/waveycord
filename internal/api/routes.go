@@ -99,6 +99,8 @@ func (s *Server) buildRoutes() []route {
 	r("PUT", "/channels/{channelID}/permissions/{overwriteID}", true, s.handlePutOverwrite)
 	r("DELETE", "/channels/{channelID}/permissions/{overwriteID}", true, s.handleDeleteOverwrite)
 	r("POST", "/channels/{channelID}/typing", true, s.handleTyping)
+	r("GET", "/channels/{channelID}/voice-status", true, s.handleGetVoiceStatus)
+	r("PATCH", "/channels/{channelID}/voice-status", true, s.handleUpdateVoiceStatus)
 	r("GET", "/channels/{channelID}/invites", true, s.handleChannelInvites)
 	r("POST", "/channels/{channelID}/invites", true, s.handleCreateInvite)
 	r("PUT", "/channels/{channelID}/recipients/{userID}", true, s.handleAddRecipient)

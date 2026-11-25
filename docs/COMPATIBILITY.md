@@ -82,7 +82,10 @@ route is not registered yet.
 | `POST /channels/{channel.id}/messages/{message.id}/threads` | implemented |
 | Thread member routes | implemented |
 | `GET /channels/{channel.id}/threads/archived/public` and `/private` | implemented |
-| Voice state routes, stage instances | TBD |
+| `GET/PATCH /channels/{channel.id}/voice-status` | implemented + tested |
+| Gateway OP 4 voice state update, persisted voice states | implemented + tested |
+| `VOICE_STATE_UPDATE` + `VOICE_SERVER_UPDATE` dispatches | implemented + tested |
+| RTP/media transport, SFU, DAVE encryption, voice gateway WS protocol | TBD |
 
 ## Messages
 
@@ -245,6 +248,23 @@ remain:
 An Elasticsearch adapter only has to implement `search.Index`: write documents to
 a guild-sharded index, stream deletes, and return ranked ids. Handlers, permission
 filtering and the API shape do not change.
+
+## Voice signaling
+
+This is the signaling half only. OP 4 updates are validated against guild
+membership and voice/stage channel type, persisted in `voice_states`, and emitted
+as `VOICE_STATE_UPDATE` to the guild plus `VOICE_SERVER_UPDATE`
+(`{guild_id, channel_id, token, endpoint}`) to the joining user. Leaving clears
+the row and emits a null-channel state. Fresh READY payloads include the persisted
+`voice_states`. `GET/PATCH /channels/{id}/voice-status` require an existing state
+in that channel and bound the status to 140 characters.
+
+Not implemented: the media plane. There is no voice WebSocket server at the
+advertised endpoint, no UDP/RTP transport, no Opus codec negotiation, no SFU
+routing, no DAVE end-to-end encryption, and no speaking/ping events. The endpoint
+is advertised so clients exercise real signaling, but joining a call cannot carry
+audio. This is a media-infrastructure gap, not an API-shape gap, and it is not
+claimed as parity.
 
 ## Deliberately different from Discord
 

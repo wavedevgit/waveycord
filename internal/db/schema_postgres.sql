@@ -456,3 +456,23 @@ CREATE TABLE IF NOT EXISTS role_connections (
     updated_at        BIGINT NOT NULL,
     PRIMARY KEY (user_id, application_id)
 );
+
+CREATE TABLE IF NOT EXISTS voice_states (
+    guild_id                   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    channel_id                 TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id                    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    session_id                 TEXT NOT NULL,
+    deaf                       SMALLINT NOT NULL DEFAULT 0,
+    mute                       SMALLINT NOT NULL DEFAULT 0,
+    self_deaf                  SMALLINT NOT NULL DEFAULT 0,
+    self_mute                  SMALLINT NOT NULL DEFAULT 0,
+    self_stream                SMALLINT NOT NULL DEFAULT 0,
+    self_video                 SMALLINT NOT NULL DEFAULT 0,
+    suppress                   SMALLINT NOT NULL DEFAULT 0,
+    request_to_speak_timestamp TEXT,
+    voice_token                TEXT NOT NULL DEFAULT '',
+    status                     TEXT NOT NULL DEFAULT '',
+    updated_at                 BIGINT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS voice_states_channel ON voice_states (channel_id);
