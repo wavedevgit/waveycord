@@ -88,6 +88,7 @@ route is not registered yet.
 | Voice gateway WebSocket (`/voice`): HELLO, IDENTIFY, READY, SELECT_PROTOCOL, SESSION_DESCRIPTION, heartbeats | implemented + tested |
 | UDP IP discovery (74-byte request/response) | implemented + tested |
 | RTP packet reception + counters (no decode) | implemented + tested |
+| SFU-style RTP fanout to same-channel connections (local + cross-instance via bus) | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
 

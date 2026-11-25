@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"time"
@@ -114,6 +115,16 @@ func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
 		}
 		if json.Unmarshal(data, &ev) == nil && ev.GuildID != "" {
 			s.raids.add(ev.GuildID, ev.Mentions)
+		}
+	case "VOICE_RTP":
+		var ev struct {
+			ChannelID string `json:"channel_id"`
+			Packet    string `json:"packet"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			if packet, err := base64.StdEncoding.DecodeString(ev.Packet); err == nil {
+				s.voice.DeliverRTP(ev.ChannelID, packet)
+			}
 		}
 	case "VOICE_SPEAKING":
 		var ev struct {

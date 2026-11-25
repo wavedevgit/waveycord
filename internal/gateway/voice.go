@@ -3,12 +3,14 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,15 +48,16 @@ type VoiceServer struct {
 	store *store.Store
 	log   *slog.Logger
 
-	udp     *net.UDPConn
-	ip      string
-	port    int
-	mu      sync.Mutex
-	conns   map[*voiceConn]struct{}
-	session atomic.Int64
-	rtp     atomic.Int64
-	speak   atomic.Int64
-	publish func(name string, data any)
+	udp       *net.UDPConn
+	ip        string
+	port      int
+	mu        sync.Mutex
+	conns     map[*voiceConn]struct{}
+	session   atomic.Int64
+	rtp       atomic.Int64
+	speak     atomic.Int64
+	forwarded atomic.Int64
+	publish   func(name string, data any)
 }
 
 // VoiceOptions tunes the advertised address.
@@ -110,6 +113,31 @@ func (v *VoiceServer) DeliverSpeaking(channelID string, speaking, delay int, ssr
 	}
 }
 
+// Forwarded counts RTP packets sent to other voice connections.
+func (v *VoiceServer) Forwarded() int64 { return v.forwarded.Load() }
+
+// DeliverRTP forwards a packet received from another instance to local voice
+// connections in the channel.
+func (v *VoiceServer) DeliverRTP(channelID string, packet []byte) {
+	if len(packet) == 0 {
+		return
+	}
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		if addr := c.udp(); addr != nil {
+			_, _ = v.udp.WriteToUDP(packet, addr)
+			v.forwarded.Add(1)
+		}
+	}
+}
+
 // Port is the UDP discovery port advertised in READY.
 func (v *VoiceServer) Port() int { return v.port }
 
@@ -131,6 +159,51 @@ func (v *VoiceServer) Close() {
 }
 
 // readUDP answers discovery packets and counts RTP.
+// forwardRTP routes a packet from a known ssrc to the other connections in that
+// channel and publishes it for other instances.
+func (v *VoiceServer) forwardRTP(ssrc uint32, packet []byte, from *net.UDPAddr) {
+	v.mu.Lock()
+	var sender *voiceConn
+	channel := ""
+	for c := range v.conns {
+		c.mu.Lock()
+		match := c.ready && c.ssrc == ssrc && c.channelID != ""
+		if match {
+			sender = c
+			channel = c.channelID
+		}
+		c.mu.Unlock()
+		if match {
+			break
+		}
+	}
+	targets := make([]*voiceConn, 0, len(v.conns))
+	if sender != nil {
+		for c := range v.conns {
+			if c != sender && c.channel() == channel {
+				targets = append(targets, c)
+			}
+		}
+	}
+	v.mu.Unlock()
+	if sender == nil {
+		return
+	}
+	for _, c := range targets {
+		if addr := c.udp(); addr != nil {
+			_, _ = v.udp.WriteToUDP(packet, addr)
+			v.forwarded.Add(1)
+		}
+	}
+	if v.publish != nil {
+		v.publish("VOICE_RTP", map[string]any{
+			"channel_id": channel,
+			"packet":     base64.StdEncoding.EncodeToString(packet),
+		})
+	}
+	_ = from
+}
+
 func (v *VoiceServer) readUDP() {
 	buf := make([]byte, 1500)
 	for {
@@ -154,9 +227,12 @@ func (v *VoiceServer) readUDP() {
 			_, _ = v.udp.WriteToUDP(resp, from)
 			continue
 		}
-		// RTP v2 packet.
-		if buf[0]>>6 == 2 {
+		// RTP v2 packet: count, then fan out to the same channel (SFU-style).
+		if buf[0]>>6 == 2 && n >= 12 {
 			v.rtp.Add(1)
+			packet := append([]byte(nil), buf[:n]...)
+			ssrc := binary.BigEndian.Uint32(packet[8:12])
+			v.forwardRTP(ssrc, packet, from)
 		}
 	}
 }
@@ -180,9 +256,10 @@ func (v *VoiceServer) Handler() http.Handler {
 }
 
 type voiceConn struct {
-	ws     *websocket.Conn
-	server *VoiceServer
-	token  string
+	ws      *websocket.Conn
+	udpAddr *net.UDPAddr
+	server  *VoiceServer
+	token   string
 
 	mu        sync.Mutex
 	writeMu   sync.Mutex
@@ -280,6 +357,13 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				c.close(voiceCloseNotAuth, "Identify first")
 				return
 			}
+			if sel.Data.Address != "" && sel.Data.Port > 0 {
+				if addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(sel.Data.Address, strconv.Itoa(sel.Data.Port))); err == nil {
+					c.mu.Lock()
+					c.udpAddr = addr
+					c.mu.Unlock()
+				}
+			}
 			key := make([]byte, 32)
 			_, _ = rand.Read(key)
 			// Discord encodes secret_key as an array of byte values, not base64.
@@ -317,6 +401,12 @@ func (c *voiceConn) isReady() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.ready
+}
+
+func (c *voiceConn) udp() *net.UDPAddr {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.udpAddr
 }
 
 func (c *voiceConn) channel() string {
