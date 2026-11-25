@@ -328,6 +328,7 @@ CREATE TABLE IF NOT EXISTS applications (
     signing_key            TEXT NOT NULL DEFAULT '',
     signing_public_key     TEXT NOT NULL DEFAULT '',
     interactions_endpoint_url TEXT,
+    role_connection_metadata TEXT NOT NULL DEFAULT '[]',
     created_at             INTEGER NOT NULL
 );
 
@@ -406,3 +407,13 @@ CREATE TABLE IF NOT EXISTS auto_moderation_rules (
     created_at       BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS automod_guild ON auto_moderation_rules (guild_id);
+
+CREATE TABLE IF NOT EXISTS role_connections (
+    user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    application_id    TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    platform_name     TEXT,
+    platform_username TEXT,
+    metadata          TEXT NOT NULL DEFAULT '{}',
+    updated_at        BIGINT NOT NULL,
+    PRIMARY KEY (user_id, application_id)
+);

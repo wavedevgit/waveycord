@@ -123,6 +123,15 @@ The index is populated for existing rows by `Backfiller` (bounded batch at
 startup). Writes are inline, not queued; the message row stays authoritative and
 an index failure does not fail the write.
 
+## Role connections
+
+`role_connections` stores one row per `(user_id, application_id)` with platform
+name, username and a metadata map; `applications.role_connection_metadata` holds
+the registry the values are validated against. Both endpoints authenticate with an
+OAuth2 bearer token, verify the token's application matches the path, and require
+the `role_connections.write` scope — the session and bot authentication paths are
+rejected.
+
 ## Permissions
 
 `internal/perm` implements the documented resolution order: base role bits

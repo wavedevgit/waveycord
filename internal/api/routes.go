@@ -29,6 +29,10 @@ func (s *Server) buildRoutes() []route {
 	r("PUT", "/applications/{applicationID}/guilds/{guildID}/commands", true, s.handlePutCommands)
 	r("POST", "/applications/{applicationID}/guilds/{guildID}/commands", true, s.handleCreateCommand)
 	r("GET", "/oauth2/@me", true, s.handleOAuth2Me)
+	r("GET", "/applications/{applicationID}/role-connections/metadata", true, s.handleGetRoleMetadata)
+	r("PUT", "/applications/{applicationID}/role-connections/metadata", true, s.handlePutRoleMetadata)
+	r("GET", "/users/@me/applications/{applicationID}/role-connection", true, s.handleGetRoleConnection)
+	r("PUT", "/users/@me/applications/{applicationID}/role-connection", true, s.handlePutRoleConnection)
 	r("POST", "/applications/{applicationID}/bot/reset", true, s.handleResetBotToken)
 
 	// Auth.

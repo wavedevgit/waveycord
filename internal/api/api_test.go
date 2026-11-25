@@ -133,6 +133,37 @@ func (h *harness) request(method, path, token string, body any) (int, []byte) {
 	return resp.StatusCode, raw
 }
 
+// requestWithToken sends a request with an explicit Authorization value, needed
+// for bearer tokens that are not harness accounts.
+func (h *harness) requestWithToken(method, path, auth string, body any) (int, []byte) {
+	h.t.Helper()
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			h.t.Fatalf("marshal: %v", err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequest(method, h.server.URL+"/api/v10"+path, reader)
+	if err != nil {
+		h.t.Fatalf("request: %v", err)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	resp, err := h.server.Client().Do(req)
+	if err != nil {
+		h.t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, raw
+}
+
 func (h *harness) decode(method, path, token string, body any, out any) int {
 	h.t.Helper()
 	status, raw := h.request(method, path, token, body)

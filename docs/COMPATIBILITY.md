@@ -128,6 +128,8 @@ route is not registered yet.
 | `POST /oauth2/token` `grant_type=authorization_code` | implemented + tested |
 | `POST /oauth2/token` `grant_type=refresh_token` | implemented + tested |
 | `GET /oauth2/@me` | implemented + tested |
+| `GET/PUT /applications/{id}/role-connections/metadata` | implemented + tested |
+| `GET/PUT /users/@me/applications/{id}/role-connection` | implemented + tested (scope-enforced) |
 | `PATCH /applications/{application.id}` (redirect URIs) | implemented + tested |
 | Bot install via `scope=bot` + `guild_id` | implemented + tested (requires MANAGE_GUILD) |
 
@@ -176,9 +178,16 @@ echoed in the in-process callback. Type-5 interactions require a modal `custom_i
 and action-row structure with text inputs or selects; submitted fields are parsed
 and summarised. Both types forward unchanged when an endpoint is configured.
 
+Role connections: an application registers up to five metadata records
+(types 1-8, unique keys, bounded names/descriptions). A user's connection is stored
+per `(user, application)` with platform name, username and metadata. Both GET and
+PUT require an OAuth2 bearer token for that application carrying
+`role_connections.write`; user sessions, bot tokens, missing scope, and tokens
+issued for another application are rejected with `403`. Metadata keys are validated
+against the registered registry.
+
 Deliberate adaptations: the interactions endpoint is global, so the payload must
-carry `application_id` (Discord routes by per-application URL); role connections
-remain TBD.
+carry `application_id` (Discord routes by per-application URL).
 
 Deliberate adaptation: Discord's consent screen is a browser UI. This server
 returns the same fields as JSON when `Accept: application/json` is sent, and a

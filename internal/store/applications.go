@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
 
 	"github.com/wavedevgit/waveycord/internal/model"
@@ -14,27 +15,28 @@ import (
 
 // Application is the application object as documented.
 type Application struct {
-	ID                      string      `json:"id"`
-	Name                    string      `json:"name"`
-	Description             string      `json:"description"`
-	Icon                    *string     `json:"icon"`
-	OwnerID                 string      `json:"owner_id,omitempty"`
-	BotPublic               bool        `json:"bot_public"`
-	BotRequireCodeGrant     bool        `json:"bot_require_code_grant"`
-	VerifyKey               string      `json:"verify_key,omitempty"`
-	Bot                     *model.User `json:"bot,omitempty"`
-	Token                   string      `json:"token,omitempty"`
-	ClientSecret            string      `json:"client_secret,omitempty"`
-	RedirectURIs            []string    `json:"redirect_uris"`
-	InteractionsEndpointURL *string     `json:"interactions_endpoint_url"`
-	SigningPublicKey        string      `json:"signing_public_key,omitempty"`
-	SigningKey              string      `json:"-"`
-	CreatedAt               string      `json:"-"`
+	ID                      string               `json:"id"`
+	Name                    string               `json:"name"`
+	Description             string               `json:"description"`
+	Icon                    *string              `json:"icon"`
+	OwnerID                 string               `json:"owner_id,omitempty"`
+	BotPublic               bool                 `json:"bot_public"`
+	BotRequireCodeGrant     bool                 `json:"bot_require_code_grant"`
+	VerifyKey               string               `json:"verify_key,omitempty"`
+	Bot                     *model.User          `json:"bot,omitempty"`
+	Token                   string               `json:"token,omitempty"`
+	ClientSecret            string               `json:"client_secret,omitempty"`
+	RedirectURIs            []string             `json:"redirect_uris"`
+	InteractionsEndpointURL *string              `json:"interactions_endpoint_url"`
+	SigningPublicKey        string               `json:"signing_public_key,omitempty"`
+	SigningKey              string               `json:"-"`
+	RoleConnectionMetadata  []RoleMetadataRecord `json:"role_connection_metadata,omitempty"`
+	CreatedAt               string               `json:"-"`
 }
 
 const applicationColumns = `id, name, description, icon, owner_id, bot_user_id, bot_public,
 	bot_require_code_grant, verify_key, redirect_uris, signing_key, signing_public_key,
-	interactions_endpoint_url`
+	interactions_endpoint_url, role_connection_metadata`
 
 func (s *Store) scanApplication(row rowScanner) (Application, string, error) {
 	var (
@@ -43,10 +45,14 @@ func (s *Store) scanApplication(row rowScanner) (Application, string, error) {
 		botUID    string
 		redirects string
 		endpoint  sql.NullString
+		roleMeta  string
 	)
 	err := row.Scan(&a.ID, &a.Name, &a.Description, &icon, &a.OwnerID, &botUID,
 		&a.BotPublic, &a.BotRequireCodeGrant, &a.VerifyKey, &redirects,
-		&a.SigningKey, &a.SigningPublicKey, &endpoint)
+		&a.SigningKey, &a.SigningPublicKey, &endpoint, &roleMeta)
+	if json.Unmarshal([]byte(roleMeta), &a.RoleConnectionMetadata) != nil {
+		a.RoleConnectionMetadata = []RoleMetadataRecord{}
+	}
 	a.Icon = ns(icon)
 	a.RedirectURIs = parseJSONStrings(redirects)
 	if a.RedirectURIs == nil {
