@@ -92,6 +92,13 @@ documented envelope (`type: 4`, `data.content`) comes from an in-process handler
 registry. Per-application signing seeds are stored in the application row; a
 production deployment would hold them in a KMS instead.
 
+Component surfaces share one validator (`internal/api/components.go`): message
+create/edit/webhook reject malformed action rows before persistence, type-3
+interactions validate `custom_id`/`component_type`/`values`, and type-5
+interactions validate the modal row tree and extract submitted fields. Local
+callbacks are acknowledgements (`type: 4`) describing what was received; a
+configured bot endpoint receives the raw payload instead.
+
 ## Auto moderation
 
 Rules are rows scoped by guild with JSON trigger metadata and actions. Message

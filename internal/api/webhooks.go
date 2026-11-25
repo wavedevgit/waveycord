@@ -202,6 +202,10 @@ func (s *Server) handleExecuteWebhook(c *Ctx) {
 		fail(c, ErrEmptyMessage)
 		return
 	}
+	if msg := validateMessageComponents(req.Components); msg != "" {
+		c.FailForm("components", msg)
+		return
+	}
 	atts := make([]model.Attachment, 0, len(req.Attachments))
 	for _, in := range req.Attachments {
 		atts = append(atts, model.Attachment{ID: in.ID, Filename: in.Filename})

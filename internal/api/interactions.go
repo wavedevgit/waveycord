@@ -99,6 +99,36 @@ func (s *Server) handleInteraction(c *Ctx) {
 		s.dispatchInteraction(c, app, payload)
 	case interactionApplicationCommandAutocomplete:
 		c.JSON(map[string]any{"type": 8, "data": map[string]any{"choices": []any{}}})
+	case interactionMessageComponent:
+		var env struct {
+			Data json.RawMessage `json:"data"`
+		}
+		_ = json.Unmarshal(body, &env)
+		comp, msg := validateComponentInteraction(env.Data)
+		if msg != "" {
+			c.JSONStatus(400, map[string]any{"code": 50035, "message": msg})
+			return
+		}
+		text := "Component `" + *comp.CustomID + "` received."
+		if len(comp.Values) > 0 {
+			text = "Component `" + *comp.CustomID + "` received values: " + strings.Join(comp.Values, ", ") + "."
+		}
+		c.JSON(interactionMessage(text))
+	case interactionModalSubmit:
+		var env struct {
+			Data json.RawMessage `json:"data"`
+		}
+		_ = json.Unmarshal(body, &env)
+		customID, fields, msg := validateModalSubmit(env.Data)
+		if msg != "" {
+			c.JSONStatus(400, map[string]any{"code": 50035, "message": msg})
+			return
+		}
+		text := "Modal `" + customID + "` submitted"
+		if summary := summarizeModal(fields); summary != "" {
+			text += ": " + summary
+		}
+		c.JSON(interactionMessage(text + "."))
 	default:
 		c.JSONStatus(400, map[string]any{"code": 50035, "message": "Unsupported interaction type"})
 	}

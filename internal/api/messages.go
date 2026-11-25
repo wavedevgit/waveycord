@@ -71,6 +71,10 @@ func (s *Server) handleCreateMessage(c *Ctx) {
 		c.FailForm("embeds", "Must be 10 or fewer in length")
 		return
 	}
+	if msg := validateMessageComponents(req.Components); msg != "" {
+		c.FailForm("components", msg)
+		return
+	}
 	if strings.TrimSpace(req.Content) == "" && len(req.Embeds) == 0 && len(req.Attachments) == 0 {
 		fail(c, ErrEmptyMessage)
 		return
@@ -197,6 +201,12 @@ func (s *Server) handleUpdateMessage(c *Ctx) {
 	if req.Embeds != nil && len(*req.Embeds) > 10 {
 		c.FailForm("embeds", "Must be 10 or fewer in length")
 		return
+	}
+	if req.Components != nil {
+		if msg := validateMessageComponents(*req.Components); msg != "" {
+			c.FailForm("components", msg)
+			return
+		}
 	}
 	updated, err := s.Store.UpdateMessage(msg.ID, req.Content, req.Embeds, req.Flags, req.Components)
 	if err != nil {

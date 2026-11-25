@@ -62,7 +62,8 @@ func TestInteractionForwardingToBotEndpoint(t *testing.T) {
 		var payload struct {
 			Type int `json:"type"`
 			Data struct {
-				Name string `json:"name"`
+				Name     string `json:"name"`
+				CustomID string `json:"custom_id"`
 			} `json:"data"`
 		}
 		_ = json.Unmarshal(body, &payload)
@@ -73,6 +74,10 @@ func TestInteractionForwardingToBotEndpoint(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"boom"}`))
 		case payload.Type == 1:
 			_, _ = w.Write([]byte(`{"type":1}`))
+		case payload.Type == 3:
+			_, _ = w.Write([]byte(`{"type":4,"data":{"content":"component:` + payload.Data.CustomID + `"}}`))
+		case payload.Type == 5:
+			_, _ = w.Write([]byte(`{"type":4,"data":{"content":"modal:` + payload.Data.CustomID + `"}}`))
 		default:
 			_, _ = w.Write([]byte(`{"type":4,"data":{"content":"forwarded ` + payload.Data.Name + `"}}`))
 		}
@@ -119,6 +124,22 @@ func TestInteractionForwardingToBotEndpoint(t *testing.T) {
 	})
 	if status != 200 || !strings.Contains(string(body), "forwarded deploy") {
 		t.Fatalf("forwarded command status %d body %s", status, body)
+	}
+
+	// Component and modal interactions forward too.
+	status, body = signedInteraction(t, h, inboundPriv, now, map[string]any{
+		"id": "2b", "type": 3, "application_id": app.ID,
+		"data": map[string]any{"custom_id": "approve", "component_type": 2},
+	})
+	if status != 200 || !strings.Contains(string(body), "component:approve") {
+		t.Fatalf("forwarded component status %d body %s", status, body)
+	}
+	status, body = signedInteraction(t, h, inboundPriv, now, map[string]any{
+		"id": "2c", "type": 5, "application_id": app.ID,
+		"data": map[string]any{"custom_id": "feedback", "components": []map[string]any{}},
+	})
+	if status != 200 || !strings.Contains(string(body), "modal:feedback") {
+		t.Fatalf("forwarded modal status %d body %s", status, body)
 	}
 
 	// A failing bot endpoint becomes 502 for the caller.

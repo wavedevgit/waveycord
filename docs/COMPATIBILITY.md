@@ -149,6 +149,9 @@ rejected.
 | `GET/PATCH/DELETE /applications/{id}/commands/{command.id}` | implemented + tested |
 | Guild command variants at `/applications/{id}/guilds/{guild.id}/commands` | implemented + tested |
 | `verify_key` registration through `PATCH /applications/{id}` | implemented + tested |
+| Interaction type 3 (message component) callback + payload validation | implemented + tested |
+| Interaction type 5 (modal submit) callback + submitted-field parsing | implemented + tested |
+| Outgoing message component validation (rows, buttons, selects) | implemented + tested |
 | External interactions endpoint forwarding + outbound Ed25519 signature | implemented + tested |
 | Endpoint callback relay, 502 on failure, URL validation | implemented + tested |
 
@@ -164,9 +167,18 @@ callback is relayed to the caller; transport errors, non-2xx responses and inval
 JSON become `502`. Without an endpoint, dispatch stays in-process. URLs must be
 `https` (plain `http` is accepted for localhost).
 
+Components: outgoing message components are validated on create, edit and webhook
+execute — at most five action rows, 1-5 children per row, one select per row,
+button style 1-5 with `custom_id` (or `url` for link buttons), string selects with
+1-25 options, and no text inputs outside modals. Type-3 interactions require a
+valid `custom_id` and interactive `component_type`; select values are bounded and
+echoed in the in-process callback. Type-5 interactions require a modal `custom_id`
+and action-row structure with text inputs or selects; submitted fields are parsed
+and summarised. Both types forward unchanged when an endpoint is configured.
+
 Deliberate adaptations: the interactions endpoint is global, so the payload must
-carry `application_id` (Discord routes by per-application URL); message components,
-modals and role connections remain TBD.
+carry `application_id` (Discord routes by per-application URL); role connections
+remain TBD.
 
 Deliberate adaptation: Discord's consent screen is a browser UI. This server
 returns the same fields as JSON when `Accept: application/json` is sent, and a
