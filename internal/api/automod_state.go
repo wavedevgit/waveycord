@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -92,6 +93,46 @@ func (r *raidTracker) hit(guildID string, mentions int) int {
 	r.windows[guildID] = kept
 	return total
 }
+
+// handleClusterEvent applies counters and voice events published by other API
+// instances over the gateway bus.
+func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
+	switch name {
+	case "AUTOMOD_SPAM":
+		var ev struct {
+			GuildID   string `json:"guild_id"`
+			ChannelID string `json:"channel_id"`
+			UserID    string `json:"user_id"`
+		}
+		if json.Unmarshal(data, &ev) == nil && ev.GuildID != "" {
+			s.rates.add(ev.GuildID + "|" + ev.ChannelID + "|" + ev.UserID)
+		}
+	case "AUTOMOD_RAID":
+		var ev struct {
+			GuildID  string `json:"guild_id"`
+			Mentions int    `json:"mentions"`
+		}
+		if json.Unmarshal(data, &ev) == nil && ev.GuildID != "" {
+			s.raids.add(ev.GuildID, ev.Mentions)
+		}
+	case "VOICE_SPEAKING":
+		var ev struct {
+			ChannelID string `json:"channel_id"`
+			Speaking  int    `json:"speaking"`
+			Delay     int    `json:"delay"`
+			SSRC      uint32 `json:"ssrc"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			s.voice.DeliverSpeaking(ev.ChannelID, ev.Speaking, ev.Delay, ev.SSRC)
+		}
+	}
+}
+
+// add records a remote message in the sliding window.
+func (r *messageRate) add(key string) { r.hit(key) }
+
+// add records remote mention counts for the guild window.
+func (r *raidTracker) add(guildID string, mentions int) { r.hit(guildID, mentions) }
 
 // enforceProfileAutoMod scans a member's username, display name and nickname
 // against MEMBER_PROFILE rules and applies timeout/alert actions. Blocking cannot

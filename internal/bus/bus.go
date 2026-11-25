@@ -143,7 +143,7 @@ func (p *Postgres) deliver(ctx context.Context, payload string) {
 	err := p.pool.QueryRow(ctx, `SELECT origin, payload FROM gateway_events WHERE id = $1`, payload).
 		Scan(&origin, &raw)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
+		if !errors.Is(err, pgx.ErrNoRows) && !p.closed.Load() && ctx.Err() == nil {
 			p.log.Warn("gateway bus fetch", "err", err)
 		}
 		return

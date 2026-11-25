@@ -78,6 +78,7 @@ type Hub struct {
 	bus           bus.Bus
 	dispatched    atomic.Int64
 	journal       *deltaJournal
+	clusterFn     func(name string, data json.RawMessage)
 	store         *store.Store
 	voiceEndpoint string
 	passiveNanos  atomic.Int64
@@ -100,6 +101,28 @@ func NewHub(auth AuthFunc, ready ReadyFunc, guilds GuildsFunc, log *slog.Logger)
 	h.passiveNanos.Store(int64(10 * time.Second))
 	go h.passiveLoop()
 	return h
+}
+
+// OnCluster registers the receiver for cluster-only events (auto-moderation
+// counters, cross-instance voice speaking). Cluster events are never fanned out
+// to gateway clients directly.
+func (h *Hub) OnCluster(fn func(name string, data json.RawMessage)) {
+	if h == nil {
+		return
+	}
+	h.clusterFn = fn
+}
+
+// PublishCluster sends an event to other instances only.
+func (h *Hub) PublishCluster(name string, data any) {
+	if h == nil {
+		return
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	h.publish(bus.Event{Name: name, Data: raw})
 }
 
 // SetStore gives the hub access to voice-state persistence and guild data. It is
@@ -442,6 +465,10 @@ func (h *Hub) SetBus(b bus.Bus) {
 // never republishes.
 func (h *Hub) DeliverRemote(ev bus.Event) {
 	if h == nil {
+		return
+	}
+	if ev.GuildID == "" && len(ev.UserIDs) == 0 && h.clusterFn != nil {
+		h.clusterFn(ev.Name, ev.Data)
 		return
 	}
 	if ev.GuildID != "" {

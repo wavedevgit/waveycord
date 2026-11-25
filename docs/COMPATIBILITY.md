@@ -230,7 +230,9 @@ registration) and on member updates, applying the configured timeout and alert
 actions. MENTION_RAID aggregates mentions per guild across every channel and user in a
 ten-second window; more than ten mentions trips the rule and runs the configured
 block/alert/timeout actions. `@everyone` and `@here` count as one mention each.
-Normal volume and other guilds' windows do not trip it. Discord's production raid
+Normal volume and other guilds' windows do not trip it. Counters are published
+over the gateway bus, so a burst split across API instances still aggregates and
+trips the rule; the same applies to the SPAM window. Discord's production raid
 thresholds are unpublished, so the window and limit here are fixed and documented
 rather than tuned.
 

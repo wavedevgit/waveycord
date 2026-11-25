@@ -54,6 +54,7 @@ type VoiceServer struct {
 	session atomic.Int64
 	rtp     atomic.Int64
 	speak   atomic.Int64
+	publish func(name string, data any)
 }
 
 // VoiceOptions tunes the advertised address.
@@ -81,6 +82,32 @@ func NewVoiceServer(st *store.Store, opts VoiceOptions) (*VoiceServer, error) {
 		port: conn.LocalAddr().(*net.UDPAddr).Port, conns: map[*voiceConn]struct{}{}}
 	go v.readUDP()
 	return v, nil
+}
+
+// SetPublisher enables cross-instance speaking events.
+func (v *VoiceServer) SetPublisher(fn func(name string, data any)) {
+	if v == nil {
+		return
+	}
+	v.publish = fn
+}
+
+// DeliverSpeaking broadcasts a speaking event received from another instance to
+// local voice connections in the channel.
+func (v *VoiceServer) DeliverSpeaking(channelID string, speaking, delay int, ssrc uint32) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": voiceOpSpeaking, "d": map[string]any{
+			"speaking": speaking, "delay": delay, "ssrc": ssrc,
+		}})
+	}
 }
 
 // Port is the UDP discovery port advertised in READY.
@@ -211,7 +238,11 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				c.close(voiceCloseUnknownOpcode, "Invalid identify")
 				return
 			}
-			state, err := v.store.VoiceStateByToken(identify.Token)
+			token := identify.Token
+			if token == "" {
+				token = c.token // token from the connection query string
+			}
+			state, err := v.store.VoiceStateByToken(token)
 			if err != nil || (identify.UserID != "" && identify.UserID != state.UserID) {
 				c.close(voiceCloseNotAuth, "Invalid voice token")
 				return
@@ -294,10 +325,16 @@ func (c *voiceConn) channel() string {
 	return c.channelID
 }
 
-// broadcastSpeaking delivers OP 5 to other voice connections in the same channel.
+// broadcastSpeaking delivers OP 5 to other voice connections in the same channel
+// and publishes it for other instances.
 func (c *voiceConn) broadcastSpeaking(speaking, delay int, ssrc uint32) {
 	v := c.server
 	channel := c.channel()
+	if v.publish != nil && channel != "" {
+		v.publish("VOICE_SPEAKING", map[string]any{
+			"channel_id": channel, "speaking": speaking, "delay": delay, "ssrc": ssrc,
+		})
+	}
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for other := range v.conns {

@@ -98,6 +98,9 @@ func New(st *store.Store, hub *gateway.Hub, cfg Config) *Server {
 	s := &Server{Store: st, Hub: hub, cfg: cfg, limit: newLimiter(cfg.RateLimit, cfg.RateWindow),
 		rates: newMessageRate(), raids: newRaidTracker(), metrics: newMetrics(), started: time.Now()}
 	s.routes = s.buildRoutes()
+	if hub != nil {
+		hub.OnCluster(s.handleClusterEvent)
+	}
 	return s
 }
 
@@ -105,7 +108,12 @@ func New(st *store.Store, hub *gateway.Hub, cfg Config) *Server {
 func (s *Server) Config() Config { return s.cfg }
 
 // SetVoice mounts the voice gateway on /voice.
-func (s *Server) SetVoice(v *gateway.VoiceServer) { s.voice = v }
+func (s *Server) SetVoice(v *gateway.VoiceServer) {
+	s.voice = v
+	if v != nil && s.Hub != nil {
+		v.SetPublisher(s.Hub.PublishCluster)
+	}
+}
 
 // Handler returns the root handler (API + gateway).
 func (s *Server) Handler() http.Handler {

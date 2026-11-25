@@ -210,7 +210,20 @@ func (s *Server) enforceAutoMod(c *Ctx, ch model.Channel, content string) bool {
 		roles = member.Roles
 	}
 	recent := s.rates.hit(*ch.GuildID + "|" + ch.ID + "|" + c.User.ID)
-	raidMentions := s.raids.hit(*ch.GuildID, store.CountMentions(content))
+	mentions := store.CountMentions(content)
+	raidMentions := s.raids.hit(*ch.GuildID, mentions)
+	if s.Hub != nil {
+		// Publish raw increments so other instances count the same message; the
+		// publishing instance already recorded it locally.
+		s.Hub.PublishCluster("AUTOMOD_SPAM", map[string]any{
+			"guild_id": *ch.GuildID, "channel_id": ch.ID, "user_id": c.User.ID,
+		})
+		if mentions > 0 {
+			s.Hub.PublishCluster("AUTOMOD_RAID", map[string]any{
+				"guild_id": *ch.GuildID, "mentions": mentions,
+			})
+		}
+	}
 	matches := store.AutoModEvaluate(rules, store.EvalInput{
 		Content: content, ChannelID: ch.ID, MemberRoles: roles,
 		RecentMessages: recent, SpamThreshold: spamLimit,

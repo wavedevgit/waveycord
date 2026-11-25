@@ -111,9 +111,8 @@ API process; member-profile rules run the keyword/regex/preset matcher over
 username, display name and nickname at join and on member update. Mention-raid detection uses a guild-scoped window: every message's user/role
 mention count (plus `@everyone`/`@here`) is added to one per-guild bucket, pruned
 to ten seconds, and compared against the threshold before the rule actions run.
-The bucket is per API process, so a multi-instance deployment aggregates
-per-instance rather than cluster-wide; that limitation is deliberate and
-documented.
+Each message's count is published over the gateway bus, so counters from every API
+instance aggregate into the same logical window.
 
 ## Message search
 
