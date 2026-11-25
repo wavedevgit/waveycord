@@ -190,20 +190,33 @@ keep, and are exposed only as stored rules.
 
 ## Message search
 
-Search is `ILIKE`-style SQL over the partitioned message table, filtered by the
-caller's readable channels. It is **not** the published sharded-index
-architecture: there is no Elasticsearch/Lucene cell, no PubSub-backed indexing
-queue, no per-guild index sizing and no BFG cell. Consequences:
+Search is a concrete service boundary: `internal/search` defines `Index`
+(`Index`/`Delete`/`Search`). The Postgres implementation maintains a
+`search_documents` table with a `tsvector` body and a GIN index; message create,
+update and delete write through to it (`Store.indexMessage` / `search.Delete`).
+`GET /guilds/{id}/messages/search` resolves the caller's readable channels first,
+then queries the index, so permission filtering is independent of the search
+backend. SQLite falls back to substring matching because it has no tsvector.
 
-- Result quality is substring matching, not tokenised relevance.
-- Latency grows with guild history rather than staying index-bound.
-- Large guilds cannot exceed a single table scan budget.
+Tested: indexed insert, update reindexing, delete removal, author filter,
+channel permission filtering, and GIN usage in the query plan
+(`TestPostgresFullTextSearch`).
 
-Closing this gap means deploying an external index (Elasticsearch/OpenSearch) with
-guild-sharded indices and an indexing worker fed from message writes. The code
-boundary is `Store.SearchMessages`; a real implementation would replace that call
-with an index client and keep the same permission filtering. This is recorded as a
-known, deliberate gap rather than claimed parity.
+This is still **not** Discord's Elasticsearch-cell architecture. Differences that
+remain:
+
+- One Postgres index for all guilds instead of guild-sharded Lucene indices, so a
+  very large guild competes with every other guild.
+- No PubSub-backed indexing queue or bulk indexing workers; indexing happens
+  inline after the write.
+- No dedicated "big freaking guild" cell, no multi-shard reindexing flow, no
+  index-sizing automation.
+- Ranking is `ts_rank` on a `simple` dictionary, not Lucene relevance with
+  language analysis.
+
+An Elasticsearch adapter only has to implement `search.Index`: write documents to
+a guild-sharded index, stream deletes, and return ranked ids. Handlers, permission
+filtering and the API shape do not change.
 
 ## Deliberately different from Discord
 

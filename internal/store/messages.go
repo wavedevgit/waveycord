@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/wavedevgit/waveycord/internal/id"
 	"github.com/wavedevgit/waveycord/internal/model"
+	"github.com/wavedevgit/waveycord/internal/search"
 )
 
 const messageColumns = `id, channel_id, guild_id, author_id, content, timestamp, edited_timestamp,
@@ -213,7 +215,20 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 	if err := tx.Commit(); err != nil {
 		return model.Message{}, mapErr(err)
 	}
+	s.indexMessage(mid, p.GuildID, p.ChannelID, p.AuthorID, p.Content, ts)
 	return s.Message(mid)
+}
+
+// indexMessage writes the search document if an index is configured. Indexing is
+// best-effort relative to the write: the message row is authoritative.
+func (s *Store) indexMessage(messageID, guildID, channelID, authorID, content string, createdAt int64) {
+	if s.Search == nil || guildID == "" {
+		return
+	}
+	_ = s.Search.Index(context.Background(), search.Doc{
+		MessageID: messageID, GuildID: guildID, ChannelID: channelID,
+		AuthorID: authorID, Content: content, CreatedAt: createdAt,
+	})
 }
 
 // Message loads one message with reactions attached.
@@ -348,6 +363,23 @@ func (s *Store) MessagesPage(channelID, before, after, around string, limit int)
 
 // UpdateMessage applies a content/embed patch.
 func (s *Store) UpdateMessage(idv string, content *string, embeds *[]model.Embed, flags *int, components *[]any) (model.Message, error) {
+	msg, err := s.updateMessage(idv, content, embeds, flags, components)
+	if err != nil {
+		return msg, err
+	}
+	if s.Search != nil {
+		if raw, rerr := scanRawMessage(s.DB.QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, idv)); rerr == nil {
+			guildID := ""
+			if raw.GuildID.Valid {
+				guildID = raw.GuildID.String
+			}
+			s.indexMessage(raw.ID, guildID, raw.ChannelID, raw.AuthorID, raw.Content, raw.Timestamp)
+		}
+	}
+	return msg, nil
+}
+
+func (s *Store) updateMessage(idv string, content *string, embeds *[]model.Embed, flags *int, components *[]any) (model.Message, error) {
 	set := []string{"edited_timestamp = ?"}
 	args := []any{now()}
 	if content != nil {
@@ -413,6 +445,9 @@ func (s *Store) DeleteMessage(idv string) (string, error) {
 	if err := tx.Commit(); err != nil {
 		return "", mapErr(err)
 	}
+	if s.Search != nil {
+		_ = s.Search.Delete(context.Background(), idv)
+	}
 	s.refreshLastMessage(channelID)
 	return channelID, nil
 }
@@ -445,6 +480,11 @@ func (s *Store) DeleteMessages(channelID string, ids []string) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return mapErr(err)
+	}
+	if s.Search != nil {
+		for _, idv := range ids {
+			_ = s.Search.Delete(context.Background(), idv)
+		}
 	}
 	s.refreshLastMessage(channelID)
 	return nil

@@ -14,6 +14,7 @@ import (
 
 	"github.com/wavedevgit/waveycord/internal/db"
 	"github.com/wavedevgit/waveycord/internal/id"
+	"github.com/wavedevgit/waveycord/internal/search"
 	"github.com/wavedevgit/waveycord/internal/sqlx"
 )
 
@@ -31,7 +32,12 @@ type Store struct {
 	// never missing. A nil value means every read goes to DB.
 	ReadDB *sqlx.DB
 	Gen    *id.Generator
+	// Search is the message-search index; nil keeps the LIKE fallback.
+	Search search.Index
 }
+
+// SetSearchIndex installs the search service.
+func (s *Store) SetSearchIndex(ix search.Index) { s.Search = ix }
 
 // SetReadReplica enables read/write splitting for message scans.
 func (s *Store) SetReadReplica(db *sqlx.DB) { s.ReadDB = db }

@@ -98,6 +98,19 @@ message authored by a system account; timeouts update the member row. Spam,
 member-profile and mention-raid triggers are stored but not evaluated; they need
 cross-message state this deployment does not keep.
 
+## Message search
+
+`internal/search` is the boundary; `pgIndex` is the default on Postgres and
+`sqliteIndex` keeps substring behavior for the embedded engine. The Postgres index
+is a `search_documents` table (`message_id` primary key, `body tsvector`, GIN) kept
+in sync on message create/update/delete. `Store.SearchMessages` hydrates ranked ids
+back into API objects; the handler filters channels by permission before the query,
+so both backends share one authorization path.
+
+The index is populated for existing rows by `Backfiller` (bounded batch at
+startup). Writes are inline, not queued; the message row stays authoritative and
+an index failure does not fail the write.
+
 ## Permissions
 
 `internal/perm` implements the documented resolution order: base role bits

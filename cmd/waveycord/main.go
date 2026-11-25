@@ -17,6 +17,7 @@ import (
 	"github.com/wavedevgit/waveycord/internal/bus"
 	"github.com/wavedevgit/waveycord/internal/db"
 	"github.com/wavedevgit/waveycord/internal/gateway"
+	"github.com/wavedevgit/waveycord/internal/search"
 	"github.com/wavedevgit/waveycord/internal/sqlx"
 	"github.com/wavedevgit/waveycord/internal/store"
 )
@@ -37,6 +38,23 @@ func main() {
 	defer handle.Close()
 
 	st := store.New(handle)
+	searchIndex, err := search.Open(context.Background(), handle)
+	if err != nil {
+		log.Error("open search index", "err", err)
+		os.Exit(1)
+	}
+	st.SetSearchIndex(searchIndex)
+	if bf, ok := searchIndex.(search.Backfiller); ok {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			if n, err := bf.Backfill(ctx, 5000); err != nil {
+				log.Warn("search backfill", "err", err)
+			} else if n > 0 {
+				log.Info("search backfill", "documents", n)
+			}
+		}()
+	}
 	if replicaDSN := os.Getenv("WAVEYCORD_PG_REPLICA_DSN"); replicaDSN != "" {
 		replica, err := db.OpenReplica(replicaDSN)
 		if err != nil {

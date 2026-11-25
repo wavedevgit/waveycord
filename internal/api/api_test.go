@@ -12,9 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	"github.com/wavedevgit/waveycord/internal/api"
 	"github.com/wavedevgit/waveycord/internal/db"
+
 	"github.com/wavedevgit/waveycord/internal/gateway"
+	"github.com/wavedevgit/waveycord/internal/search"
 	"github.com/wavedevgit/waveycord/internal/sqlx"
 	"github.com/wavedevgit/waveycord/internal/store"
 )
@@ -43,6 +46,11 @@ func newHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { handle.Close() })
 	st := store.New(handle)
+	ix, err := search.Open(context.Background(), handle)
+	if err != nil {
+		t.Fatalf("open search index: %v", err)
+	}
+	st.SetSearchIndex(ix)
 	if replicaDSN := os.Getenv("WAVEYCORD_TEST_REPLICA_DSN"); replicaDSN != "" {
 		replica, err := db.OpenReplica(replicaDSN)
 		if err != nil {
