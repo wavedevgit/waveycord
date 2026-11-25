@@ -240,30 +240,96 @@ type AutoModViolation struct {
 	Reason string
 }
 
+// ProfileFields is the member profile scanned by the MEMBER_PROFILE trigger.
+type ProfileFields struct {
+	Username   string
+	GlobalName string
+	Nick       string
+}
+
+// EvalInput carries everything the triggers may inspect.
+type EvalInput struct {
+	Content        string
+	ChannelID      string
+	MemberRoles    []string
+	RecentMessages int // messages from this user in this channel inside the window
+	SpamThreshold  int // messages above this count trip the SPAM trigger
+	Profile        *ProfileFields
+}
+
 // AutoModMatches returns every enabled message-send rule that matches, with the
 // actions the caller must carry out. Blocking is the caller's decision so alert
 // and timeout actions still run when a block action is absent.
 func AutoModMatches(rules []AutoModRule, content, channelID string, memberRoles []string) []AutoModViolation {
-	lower := strings.ToLower(content)
-	mentions := len(mentionRe.FindAllString(content, -1))
+	return AutoModEvaluate(rules, EvalInput{Content: content, ChannelID: channelID, MemberRoles: memberRoles})
+}
+
+// AutoModEvaluate evaluates message, spam and profile triggers.
+func AutoModEvaluate(rules []AutoModRule, in EvalInput) []AutoModViolation {
+	lower := strings.ToLower(in.Content)
+	mentions := len(mentionRe.FindAllString(in.Content, -1))
 	if strings.Contains(lower, "@everyone") || strings.Contains(lower, "@here") {
 		mentions++
+	}
+	threshold := in.SpamThreshold
+	if threshold <= 0 {
+		threshold = 5
 	}
 	out := []AutoModViolation{}
 	for _, rule := range rules {
 		if !rule.Enabled || rule.EventType != AutoModEventMessageSend {
 			continue
 		}
-		if containsID(rule.ExemptChannels, channelID) || intersects(rule.ExemptRoles, memberRoles) {
+		if containsID(rule.ExemptChannels, in.ChannelID) || intersects(rule.ExemptRoles, in.MemberRoles) {
 			continue
 		}
-		matched, reason := ruleMatches(rule, lower, mentions)
-		if !matched {
-			continue
+		var matched bool
+		var reason string
+		switch rule.TriggerType {
+		case AutoModTriggerSpam:
+			matched = in.RecentMessages > threshold
+			reason = "spam"
+		case AutoModTriggerMemberProfile:
+			if in.Profile == nil {
+				continue
+			}
+			haystack := strings.ToLower(in.Profile.Username + "\n" + in.Profile.GlobalName + "\n" + in.Profile.Nick)
+			matched, reason = textMatches(rule.TriggerMetadata, haystack)
+			reason = "member_profile"
+		default:
+			matched, reason = ruleMatches(rule, lower, mentions)
 		}
-		out = append(out, AutoModViolation{Rule: rule, Reason: reason})
+		if matched {
+			out = append(out, AutoModViolation{Rule: rule, Reason: reason})
+		}
 	}
 	return out
+}
+
+// textMatches applies keyword/regex/preset terms to an arbitrary profile string.
+func textMatches(meta AutoModTriggerMetadata, text string) (bool, string) {
+	for _, kw := range meta.KeywordFilter {
+		if kw == "" {
+			continue
+		}
+		if containsWithAllowList(text, strings.ToLower(kw), meta.AllowList) {
+			return true, "keyword"
+		}
+	}
+	for _, pattern := range meta.RegexPatterns {
+		re, err := regexp.Compile(pattern)
+		if err == nil && re.MatchString(text) {
+			return true, "regex"
+		}
+	}
+	for _, preset := range meta.Presets {
+		for _, term := range autoModPresets[strings.ToLower(preset)] {
+			if containsWithAllowList(text, term, meta.AllowList) {
+				return true, "preset"
+			}
+		}
+	}
+	return false, ""
 }
 
 // HasAutoModBlock reports whether a matched rule blocks the message.

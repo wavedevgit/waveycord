@@ -106,9 +106,11 @@ creation calls `enforceAutoMod` before persistence: enabled `MESSAGE_SEND` rules
 are matched by keyword/regex/preset or mention count, exempt roles and channels
 are skipped, then block, alert and timeout actions run. Blocking is a response
 decision (`400`, code `200000`) and the row is never written. Alerts create a
-message authored by a system account; timeouts update the member row. Spam,
-member-profile and mention-raid triggers are stored but not evaluated; they need
-cross-message state this deployment does not keep.
+message authored by a system account; timeouts update the member row. Spam is evaluated with a per-`(guild, channel, user)` sliding window held in the
+API process; member-profile rules run the keyword/regex/preset matcher over
+username, display name and nickname at join and on member update. Mention-raid
+detection is still stored-only: it needs cross-channel aggregation that this
+process does not keep.
 
 ## Message search
 

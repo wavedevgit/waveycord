@@ -93,6 +93,7 @@ func (s *Server) handleAcceptInvite(c *Ctx) {
 		s.Hub.DispatchUser(c.User.ID, "GUILD_CREATE", g)
 		s.Hub.DispatchGuild(inv.Guild.ID, "GUILD_MEMBER_ADD", member)
 	}
+	s.enforceProfileAutoMod(inv.Guild.ID, c.User.ID)
 	c.JSON(inv)
 }
 

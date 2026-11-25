@@ -421,6 +421,7 @@ func (s *Server) handleUpdateMember(c *Ctx) {
 	if s.Hub != nil {
 		s.Hub.DispatchGuild(g.ID, "GUILD_MEMBER_UPDATE", m)
 	}
+	s.enforceProfileAutoMod(g.ID, target)
 	c.JSON(m)
 }
 

@@ -160,6 +160,7 @@ func (s *Server) handleRegister(c *Ctx) {
 	if req.Invite != nil {
 		if inv, err := s.Store.Invite(*req.Invite); err == nil && inv.Guild != nil {
 			_, _ = s.Store.AddMember(inv.Guild.ID, user.ID)
+			s.enforceProfileAutoMod(inv.Guild.ID, user.ID)
 		}
 	}
 	token, err := NewToken()

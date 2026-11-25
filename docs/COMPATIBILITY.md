@@ -208,16 +208,25 @@ role connections and the developer portal UI remain TBD.
 | MESSAGE_SEND regex trigger (`regex_patterns`) | executed + tested |
 | Keyword preset trigger (`presets`) | executed (built-in term lists) |
 | Mention spam trigger (`mention_total_limit`) | executed + tested |
+| Spam trigger (stateful per-user/channel window) | executed + tested |
+| Member profile trigger (join and member update) | executed + tested |
 | Actions: block message, send alert, timeout | executed + tested |
 | Exempt roles / exempt channels | executed + tested |
 | Keyword allow lists | executed |
-| Spam, member profile, mention raid triggers | stored, not evaluated |
+| Mention raid trigger | stored, not evaluated |
 
 Blocked messages return `400` with code `200000` and are not persisted. Alerts are
 posted by a system account into the configured channel; timeouts set
-`communication_disabled_until` on the member. Spam heuristics, profile scans and
-mention-raid detection require cross-message state that this deployment does not
-keep, and are exposed only as stored rules.
+`communication_disabled_until` on the member.
+
+SPAM is stateful: a sliding five-second window counts a user's messages per
+channel, and the sixth message trips the rule. MEMBER_PROFILE rules scan the
+username, display name and nickname both at join time (invite accept, invite on
+registration) and on member updates, applying the configured timeout and alert
+actions. Mention-raid detection still needs cross-channel aggregation and is
+exposed only as a stored rule; Discord's production spam thresholds are
+unpublished, so the window and limit here are fixed and documented rather than
+tuned.
 
 ## Message search
 
