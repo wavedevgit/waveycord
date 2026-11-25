@@ -230,50 +230,35 @@ tuned.
 
 ## Message search
 
-Search is a concrete service boundary: `internal/search` defines `Index`
-(`Index`/`Delete`/`Search`). The Postgres implementation maintains a
-`search_documents` table with a `tsvector` body and a GIN index; message create,
-update and delete write through to it (`Store.indexMessage` / `search.Delete`).
-`GET /guilds/{id}/messages/search` resolves the caller's readable channels first,
-then queries the index, so permission filtering is independent of the search
-backend. SQLite falls back to substring matching because it has no tsvector.
+Search is a service boundary (`internal/search.Index`) with three backends:
 
-Tested: indexed insert, update reindexing, delete removal, author filter,
-channel permission filtering, and GIN usage in the query plan
-(`TestPostgresFullTextSearch`).
+- `pgIndex` — Postgres tsvector + GIN, write-through on message create/update/delete.
+- `sqliteIndex` — substring matching for the embedded engine.
+- `esIndex` — Elasticsearch/OpenSearch adapter. Messages are written to one index
+  per guild (`<prefix>-guild-<guild_id>`), created with the configured shard and
+  replica count. Writes go through a bounded bulk-indexing worker (batch/interval
+  flush, `Flush` barrier); deletes resolve through an in-memory id→index map and
+  fall back to a wildcard `_delete_by_query`. Queries are guild-scoped: the
+  index name carries the guild, and channel/author filters are applied inside the
+  request, after the caller's readable channels are resolved. `GET
+  /guilds/{id}/messages/search` is unchanged.
 
-This is still **not** Discord's Elasticsearch-cell architecture. Differences that
-remain:
+Tested: guild-sharded indexing, ranked results (`_score` ordering), shard
+isolation between guilds, channel and author filtering, and delete propagation.
+Two tests exist: a protocol-double test against a fake Elasticsearch REST server,
+and `TestESRealCluster`, which runs the same assertions against a live
+Elasticsearch/OpenSearch node when `WAVEYCORD_TEST_ES_URL` is set. The real-cluster
+run was executed against OpenSearch 2.19.0 and passed.
 
-- One Postgres index for all guilds instead of guild-sharded Lucene indices, so a
-  very large guild competes with every other guild.
-- No PubSub-backed indexing queue or bulk indexing workers; indexing happens
-  inline after the write.
-- No dedicated "big freaking guild" cell, no multi-shard reindexing flow, no
-  index-sizing automation.
-- Ranking is `ts_rank` on a `simple` dictionary, not Lucene relevance with
-  language analysis.
+Remaining differences from Discord's published design:
 
-An Elasticsearch adapter only has to implement `search.Index`: write documents to
-a guild-sharded index, stream deletes, and return ranked ids. Handlers, permission
-filtering and the API shape do not change.
-
-## Voice signaling
-
-This is the signaling half only. OP 4 updates are validated against guild
-membership and voice/stage channel type, persisted in `voice_states`, and emitted
-as `VOICE_STATE_UPDATE` to the guild plus `VOICE_SERVER_UPDATE`
-(`{guild_id, channel_id, token, endpoint}`) to the joining user. Leaving clears
-the row and emits a null-channel state. Fresh READY payloads include the persisted
-`voice_states`. `GET/PATCH /channels/{id}/voice-status` require an existing state
-in that channel and bound the status to 140 characters.
-
-Not implemented: the media plane. There is no voice WebSocket server at the
-advertised endpoint, no UDP/RTP transport, no Opus codec negotiation, no SFU
-routing, no DAVE end-to-end encryption, and no speaking/ping events. The endpoint
-is advertised so clients exercise real signaling, but joining a call cannot carry
-audio. This is a media-infrastructure gap, not an API-shape gap, and it is not
-claimed as parity.
+- One cluster configured by URL list, not a multi-cluster "cell" architecture with
+  per-cell routing and BFG (big-freaking-guild) reindexing.
+- Inline bounded bulk worker, not a PubSub-backed guaranteed-delivery indexing
+  queue with destination-grouped batching.
+- No index-size automation or reindex-on-threshold workflow.
+- No ES backfill from existing rows; the Postgres index has `Backfiller`, the ES
+  adapter requires an external reindex. Documented, not claimed.
 
 ## Deliberately different from Discord
 

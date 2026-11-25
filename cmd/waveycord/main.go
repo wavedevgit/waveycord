@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -39,23 +40,47 @@ func main() {
 	defer handle.Close()
 
 	st := store.New(handle)
-	searchIndex, err := search.Open(context.Background(), handle)
-	if err != nil {
-		log.Error("open search index", "err", err)
-		os.Exit(1)
+	var searchIndex search.Index
+	if esURLs := os.Getenv("WAVEYCORD_ES_URL"); esURLs != "" {
+		es, err := search.NewES(search.ESConfig{
+			URLs:     strings.Split(esURLs, ","),
+			Username: os.Getenv("WAVEYCORD_ES_USERNAME"),
+			Password: os.Getenv("WAVEYCORD_ES_PASSWORD"),
+			Prefix:   env("WAVEYCORD_ES_PREFIX", "waveycord"),
+			Shards:   envInt("WAVEYCORD_ES_SHARDS", 1),
+			Replicas: envInt("WAVEYCORD_ES_REPLICAS", 0),
+		})
+		if err != nil {
+			log.Error("open elasticsearch index", "err", err)
+			os.Exit(1)
+		}
+		searchIndex = es
+		defer es.Close()
+		if err := es.Health(context.Background()); err != nil {
+			log.Warn("elasticsearch health", "err", err)
+		} else {
+			log.Info("search backend", "backend", "elasticsearch", "prefix", env("WAVEYCORD_ES_PREFIX", "waveycord"))
+		}
+	} else {
+		ix, err := search.Open(context.Background(), handle)
+		if err != nil {
+			log.Error("open search index", "err", err)
+			os.Exit(1)
+		}
+		searchIndex = ix
+		if bf, ok := ix.(search.Backfiller); ok {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				if n, err := bf.Backfill(ctx, 5000); err != nil {
+					log.Warn("search backfill", "err", err)
+				} else if n > 0 {
+					log.Info("search backfill", "documents", n)
+				}
+			}()
+		}
 	}
 	st.SetSearchIndex(searchIndex)
-	if bf, ok := searchIndex.(search.Backfiller); ok {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			if n, err := bf.Backfill(ctx, 5000); err != nil {
-				log.Warn("search backfill", "err", err)
-			} else if n > 0 {
-				log.Info("search backfill", "documents", n)
-			}
-		}()
-	}
 	if replicaDSN := os.Getenv("WAVEYCORD_PG_REPLICA_DSN"); replicaDSN != "" {
 		replica, err := db.OpenReplica(replicaDSN)
 		if err != nil {
@@ -151,6 +176,15 @@ func maintainPartitions(ctx context.Context, handle *sqlx.DB, log *slog.Logger) 
 		case <-time.After(24 * time.Hour):
 		}
 	}
+}
+
+func envInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
 }
 
 func env(key, fallback string) string {

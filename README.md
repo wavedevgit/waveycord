@@ -45,6 +45,19 @@ go run ./cmd/waveycord-lb -addr 127.0.0.1:8081 \
 
 `docker compose up --build` runs Postgres, two instances and the balancer.
 
+### Elasticsearch/OpenSearch search backend
+
+```bash
+WAVEYCORD_ES_URL=http://127.0.0.1:9200 \
+WAVEYCORD_ES_PREFIX=waveycord \
+WAVEYCORD_ES_SHARDS=1 \
+go run ./cmd/waveycord
+```
+
+One index per guild (`<prefix>-guild-<guild_id>`), written through a bulk worker.
+Without `WAVEYCORD_ES_URL` the server uses Postgres tsvector (or SQLite substring
+matching).
+
 The server serves `GET /api/v10/gateway` against the same listener, so a client
 points its REST base at `http://127.0.0.1:8080/api/v10` (or the balancer at
 `http://127.0.0.1:8081/api/v10`).

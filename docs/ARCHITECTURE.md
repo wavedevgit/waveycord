@@ -114,36 +114,19 @@ process does not keep.
 
 ## Message search
 
-`internal/search` is the boundary; `pgIndex` is the default on Postgres and
-`sqliteIndex` keeps substring behavior for the embedded engine. The Postgres index
-is a `search_documents` table (`message_id` primary key, `body tsvector`, GIN) kept
-in sync on message create/update/delete. `Store.SearchMessages` hydrates ranked ids
-back into API objects; the handler filters channels by permission before the query,
-so both backends share one authorization path.
+`internal/search` is the boundary. `pgIndex` (tsvector + GIN) is the default on
+Postgres, `sqliteIndex` keeps substring behavior for the embedded engine, and
+`esIndex` speaks the Elasticsearch REST API. The ES adapter writes one index per
+guild (`<prefix>-guild-<guild_id>`) and runs a bulk worker: `Index`/`Delete`
+enqueue operations, the worker batches them into `_bulk` requests, and `Flush`
+acts as a barrier. Searches target only that guild's index and carry channel and
+author filters, so the permission-filtered channel list is enforced inside the
+query. `Store.SearchMessages` hydrates ranked ids back into API objects for every
+backend.
 
-The index is populated for existing rows by `Backfiller` (bounded batch at
-startup). Writes are inline, not queued; the message row stays authoritative and
-an index failure does not fail the write.
-
-## Role connections
-
-`role_connections` stores one row per `(user_id, application_id)` with platform
-name, username and a metadata map; `applications.role_connection_metadata` holds
-the registry the values are validated against. Both endpoints authenticate with an
-OAuth2 bearer token, verify the token's application matches the path, and require
-the `role_connections.write` scope — the session and bot authentication paths are
-rejected.
-
-## Voice signaling
-
-`voice_states` stores one row per `(guild_id, user_id)` with channel, session,
-self/server mute and deaf flags, stream/video flags, stage suppression,
-request-to-speak timestamp, a per-join voice token and the channel status. OP 4
-validates membership and channel type, writes the row, dispatches
-`VOICE_STATE_UPDATE` through the guild fanout (so passive sessions see it as a
-journal delta) and sends `VOICE_SERVER_UPDATE` to the user. READY includes the
-persisted states. Media transport is out of scope: the advertised endpoint has no
-voice gateway behind it.
+The Postgres index backfills existing rows through `Backfiller`; the ES adapter
+requires an external reindex because it has no database handle. Message rows stay
+authoritative: indexing failures are logged/ignored and never fail the write.
 
 ## Permissions
 
