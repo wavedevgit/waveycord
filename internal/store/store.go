@@ -25,8 +25,23 @@ var (
 
 // Store is the aggregate root for persistence.
 type Store struct {
-	DB  *sqlx.DB
-	Gen *id.Generator
+	DB *sqlx.DB
+	// ReadDB is an optional read replica. Message list/search scans use it; row
+	// hydration stays on the primary so a freshly created user or channel is
+	// never missing. A nil value means every read goes to DB.
+	ReadDB *sqlx.DB
+	Gen    *id.Generator
+}
+
+// SetReadReplica enables read/write splitting for message scans.
+func (s *Store) SetReadReplica(db *sqlx.DB) { s.ReadDB = db }
+
+// read returns the handle for replica-safe scans.
+func (s *Store) read() *sqlx.DB {
+	if s.ReadDB != nil {
+		return s.ReadDB
+	}
+	return s.DB
 }
 
 // New wraps an open database handle.

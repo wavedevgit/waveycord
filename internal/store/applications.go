@@ -216,10 +216,10 @@ func (s *Store) SearchMessages(guildID, content, authorID string, channels []str
 		args = append(args, authorID)
 	}
 	var total int
-	if err := s.DB.QueryRow(`SELECT COUNT(*) FROM messages WHERE `+where, args...).Scan(&total); err != nil {
+	if err := s.read().QueryRow(`SELECT COUNT(*) FROM messages WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, mapErr(err)
 	}
-	rows, err := s.DB.Query(`SELECT `+messageColumns+` FROM messages WHERE `+where+` ORDER BY id DESC LIMIT ?`,
+	rows, err := s.read().Query(`SELECT `+messageColumns+` FROM messages WHERE `+where+` ORDER BY id DESC LIMIT ?`,
 		append(args, limit)...)
 	if err != nil {
 		return nil, 0, mapErr(err)

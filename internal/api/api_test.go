@@ -42,6 +42,14 @@ func newHarness(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { handle.Close() })
 	st := store.New(handle)
+	if replicaDSN := os.Getenv("WAVEYCORD_TEST_REPLICA_DSN"); replicaDSN != "" {
+		replica, err := db.OpenReplica(replicaDSN)
+		if err != nil {
+			t.Fatalf("open replica: %v", err)
+		}
+		t.Cleanup(func() { replica.Close() })
+		st.SetReadReplica(replica)
+	}
 	cfg := api.DefaultConfig()
 	cfg.RateLimit = 10000
 	cfg.UploadDir = t.TempDir()

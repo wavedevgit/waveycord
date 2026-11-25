@@ -4,10 +4,13 @@ package gateway
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -67,9 +70,10 @@ type Hub struct {
 	Guilds GuildsFunc
 	Log    *slog.Logger
 
-	mu    sync.RWMutex
-	conns map[*conn]struct{}
-	bus   bus.Bus
+	mu         sync.RWMutex
+	conns      map[*conn]struct{}
+	bus        bus.Bus
+	dispatched atomic.Int64
 	// sessions keeps at most one live connection per gateway session id, which
 	// is what RESUME and session takeover depend on.
 	sessions map[string]*conn
@@ -233,6 +237,24 @@ func (h *Hub) serve(ctx context.Context, ws *websocket.Conn) {
 	}
 }
 
+// ConnectionCount reports live gateway connections.
+func (h *Hub) ConnectionCount() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.conns)
+}
+
+// DispatchCount reports events fanned out since start.
+func (h *Hub) DispatchCount() int64 {
+	if h == nil {
+		return 0
+	}
+	return h.dispatched.Load()
+}
+
 // SetBus attaches the cluster transport. Events published by other instances
 // are delivered through DeliverRemote; local connections are fanned out first so
 // the publishing instance does not depend on the bus round trip.
@@ -298,6 +320,7 @@ func (h *Hub) DispatchUser(userID, event string, data any) {
 }
 
 func (h *Hub) localGuild(guildID, event string, data any) {
+	h.dispatched.Add(1)
 	h.mu.RLock()
 	targets := make([]*conn, 0, len(h.conns))
 	for c := range h.conns {
@@ -312,6 +335,7 @@ func (h *Hub) localGuild(guildID, event string, data any) {
 }
 
 func (h *Hub) localUser(userID, event string, data any) {
+	h.dispatched.Add(1)
 	h.mu.RLock()
 	targets := make([]*conn, 0, 4)
 	for c := range h.conns {
@@ -457,11 +481,9 @@ func (c *conn) close(code int, reason string) {
 }
 
 func randomSessionID() string {
-	const alphabet = "0123456789abcdef"
-	b := make([]byte, 32)
-	now := time.Now().UnixNano()
-	for i := range b {
-		b[i] = alphabet[(int(now>>uint(i%16))^i*7)%len(alphabet)]
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		panic("gateway: crypto/rand failed: " + err.Error())
 	}
-	return string(b)
+	return hex.EncodeToString(buf)
 }

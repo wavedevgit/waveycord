@@ -138,5 +138,25 @@ func envInt(key string, fallback int) int {
 	return fallback
 }
 
+// OpenReplica opens a read-only connection pool against a replica. The schema is
+// assumed to already exist on that host.
+func OpenReplica(dsn string) (*sqlx.DB, error) {
+	if !isPostgres(dsn) {
+		return nil, fmt.Errorf("db: replica DSN must be a postgres URL")
+	}
+	handle, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db: open replica: %w", err)
+	}
+	maxConns := envInt("WAVEYCORD_PG_MAX_CONNS", 16)
+	handle.SetMaxOpenConns(maxConns)
+	handle.SetMaxIdleConns(maxConns / 2)
+	if err := handle.Ping(); err != nil {
+		handle.Close()
+		return nil, fmt.Errorf("db: ping replica: %w", err)
+	}
+	return &sqlx.DB{DB: handle, Dialect: sqlx.Postgres}, nil
+}
+
 // NowMillis is the single clock used for row timestamps.
 func NowMillis() int64 { return time.Now().UnixMilli() }

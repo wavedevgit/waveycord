@@ -72,3 +72,32 @@ documented recovery path.
   drained and closed before hydration. The single SQLite connection makes that
   mandatory rather than stylistic.
 - Every mutating handler writes an audit entry when a guild is involved.
+
+## Operations
+
+| Variable | Purpose |
+| --- | --- |
+| `WAVEYCORD_ADDR` | listen address (default `127.0.0.1:8080`) |
+| `WAVEYCORD_DB` | SQLite path or `postgres://` URL |
+| `WAVEYCORD_PG_DSN` | bus/listener DSN if it differs from `WAVEYCORD_DB` |
+| `WAVEYCORD_PG_REPLICA_DSN` | read replica for message scans |
+| `WAVEYCORD_PG_MAX_CONNS` | Postgres pool size (default 16) |
+| `WAVEYCORD_GATEWAY_URL` | value advertised by `GET /gateway` |
+| `WAVEYCORD_CDN_BASE` | absolute base for attachment URLs |
+| `WAVEYCORD_UPLOAD_DIR` | attachment storage directory |
+| `WAVEYCORD_RATE_LIMIT` | requests per route bucket per window |
+| `WAVEYCORD_WORKER_ID` | snowflake worker bits (0–31) |
+
+Endpoints outside the API:
+
+- `GET /healthz` — pings the database; `503` with `"status":"degraded"` on failure.
+- `GET /metrics` — Prometheus text: request counts by method/route/status, DB pool
+  gauges, gateway connections and dispatch totals.
+- `GET /-/ring` (balancer) — current live backends.
+
+Read/write splitting: only the message-list and message-search scans use the
+replica (`Store.read`). Hydration (users, members, reactions) stays on the
+primary so a just-created account or channel is never a replica miss.
+
+Graceful shutdown drains HTTP for 10 s and closes the bus listener, which is the
+only connection with a session-scoped Postgres advisory lock.

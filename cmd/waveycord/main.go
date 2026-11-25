@@ -36,6 +36,16 @@ func main() {
 	defer handle.Close()
 
 	st := store.New(handle)
+	if replicaDSN := os.Getenv("WAVEYCORD_PG_REPLICA_DSN"); replicaDSN != "" {
+		replica, err := db.OpenReplica(replicaDSN)
+		if err != nil {
+			log.Error("open read replica", "err", err)
+			os.Exit(1)
+		}
+		defer replica.Close()
+		st.SetReadReplica(replica)
+		log.Info("read replica enabled for message scans")
+	}
 	cfg := api.DefaultConfig()
 	cfg.GatewayURL = gatewayURL
 	cfg.CDNBase = cdnBase

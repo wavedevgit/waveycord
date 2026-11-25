@@ -211,7 +211,7 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 
 // Message loads one message with reactions attached.
 func (s *Store) Message(idv string) (model.Message, error) {
-	raw, err := scanRawMessage(s.DB.QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, idv))
+	raw, err := scanRawMessage(s.read().QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, idv))
 	if err != nil {
 		return model.Message{}, mapErr(err)
 	}
@@ -233,7 +233,7 @@ func (s *Store) MessagesPage(channelID, before, after, around string, limit int)
 	// Rows must be fully read and closed before hydration: hydration issues its
 	// own queries, and the store runs on a single writer connection.
 	query := func(q string, args ...any) ([]rawMessage, error) {
-		rows, err := s.DB.Query(q, args...)
+		rows, err := s.read().Query(q, args...)
 		if err != nil {
 			return nil, mapErr(err)
 		}

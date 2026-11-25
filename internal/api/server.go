@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -64,6 +65,7 @@ type Server struct {
 	// the same protection the published message-storage design calls request
 	// coalescing.
 	reads   singleflight.Group
+	metrics *metrics
 	started time.Time
 }
 
@@ -90,7 +92,8 @@ func New(st *store.Store, hub *gateway.Hub, cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	s := &Server{Store: st, Hub: hub, cfg: cfg, limit: newLimiter(cfg.RateLimit, cfg.RateWindow), started: time.Now()}
+	s := &Server{Store: st, Hub: hub, cfg: cfg, limit: newLimiter(cfg.RateLimit, cfg.RateWindow),
+		metrics: newMetrics(), started: time.Now()}
 	s.routes = s.buildRoutes()
 	return s
 }
@@ -115,11 +118,21 @@ func (s *Server) Handler() http.Handler {
 	})))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		status := "ok"
+		code := http.StatusOK
+		if err := s.Store.DB.PingContext(ctx); err != nil {
+			status = "degraded"
+			code = http.StatusServiceUnavailable
+		}
+		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "dialect": s.Store.DB.Dialect.String(),
+			"status": status, "dialect": s.Store.DB.Dialect.String(),
 			"uptime_seconds": int(time.Since(s.started).Seconds()),
 		})
 	})
+	mux.HandleFunc("/metrics", s.handleMetrics)
 	return mux
 }
 
@@ -356,7 +369,8 @@ func (s *Server) apiHandler() http.Handler {
 			}
 			return
 		}
-		c := &Ctx{W: w, R: r, Srv: s, Params: params, route: rt}
+		rec := &statusRecorder{ResponseWriter: w}
+		c := &Ctx{W: rec, R: r, Srv: s, Params: params, route: rt}
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.cfg.Logger.Error("panic", "route", rt.pattern, "err", rec)
@@ -383,6 +397,11 @@ func (s *Server) apiHandler() http.Handler {
 			}
 		}
 		rt.h(c)
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		s.metrics.observe(r.Method, rt.pattern, status)
 	})
 }
 
