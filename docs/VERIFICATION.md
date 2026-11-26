@@ -28,7 +28,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Index-size automation: MaxDocs crossing, growth-triggered rebuild, small guild inert | `TestBFGSizePolicy`, `TestBFGSizeAutomationRebuildsGrowingGuild` |
 | BFG baseline persisted across store reopen and shared via the database | `TestBFGSizeStatePersistsAcrossReopen` |
 | Durable search queue: enqueue-only writes, drain/ack, retry, deletes, runner (SQLite + Postgres) | `TestDurableSearchQueue`, `TestDurableSearchQueuePostgres` |
-| LISTEN wake-up (dedicated pgx connection), immediate drain, SQLite rejection | `TestSearchQueueListenWakes`, `TestListenSearchQueueRejectsSQLite` |
+| LISTEN wake-up (dedicated pgx connection), immediate drain, SQLite rejection; per-job acknowledgement check | `TestSearchQueueListenWakes`, `TestListenSearchQueueRejectsSQLite` |
 | Voice gateway, UDP discovery, RTP fanout, jitter/PLC, Opus mixing, AEAD, MLS-style epochs | `TestVoice*` |
 | Host-only voice endpoint advertised; root upgrade path connects | `TestVoiceHostOnlyEndpoint` |
 | Opaque group-media reorder, dedupe and gap release (local) | `TestVoiceOpaqueJitter` |

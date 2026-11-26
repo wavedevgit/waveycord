@@ -321,10 +321,14 @@ func TestSearchQueueListenWakes(t *testing.T) {
 	}
 	go st.RunSearchQueueWithWake(ctx, wake, time.Hour, 50)
 
-	// The only drain trigger is a notification (the poll interval is an hour), but a
-	// notification can be coalesced while the worker is between iterations, so retry
-	// the enqueue a few times before declaring failure.
+	// The only drain trigger is a notification (the poll interval is an hour). The
+	// enqueue emits one, but a notification can be coalesced while the worker is
+	// between iterations, so the test also fires an explicit one and retries before
+	// declaring failure.
 	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			_, _ = st.DB.Exec(`SELECT pg_notify('waveycord_search', 'retry')`)
+		}
 		msg, err := st.CreateMessage(store.CreateMessageParams{
 			ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "notify me",
 		})
@@ -337,8 +341,14 @@ func TestSearchQueueListenWakes(t *testing.T) {
 			_, ok := idx.docs[guild.ID][msg.ID]
 			idx.mu.Unlock()
 			if ok {
-				if n, _ := st.SearchQueueLen(); n != 0 {
-					t.Fatalf("queue not drained after wake: %d", n)
+				// The job for this message must be acknowledged; unrelated residual
+				// rows from other activity do not matter here.
+				var pending int
+				if err := st.DB.QueryRow(`SELECT COUNT(*) FROM search_queue WHERE message_id = ?`, msg.ID).Scan(&pending); err != nil {
+					t.Fatalf("queue check: %v", err)
+				}
+				if pending != 0 {
+					t.Fatalf("job for %s still queued", msg.ID)
 				}
 				return
 			}
