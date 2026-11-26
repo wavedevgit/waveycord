@@ -54,34 +54,35 @@ type VoiceServer struct {
 	store *store.Store
 	log   *slog.Logger
 
-	udp         *net.UDPConn
-	ip          string
-	port        int
-	mu          sync.Mutex
-	conns       map[*voiceConn]struct{}
-	session     atomic.Int64
-	rtp         atomic.Int64
-	speak       atomic.Int64
-	forwarded   atomic.Int64
-	transcodes  atomic.Int64
-	publish     func(name string, data any)
-	codecReady  bool
-	done        chan struct{}
-	tick        *time.Ticker
-	mixMu       sync.Mutex
-	mixers      map[string]*channelMixer
-	mixes       atomic.Int64
-	e2eeGaps    atomic.Int64
-	e2eeDupes   atomic.Int64
-	remoteMu    sync.Mutex
-	remote      map[uint32]*remoteOpaque
-	mlsMu       sync.Mutex
-	mlsRoster   map[string][]mls.Leaf
-	mlsSuite    map[string]mls.Ciphersuite
-	mlsSign     map[string]map[string]ed25519.PublicKey
-	mlsUserSign map[string]ed25519.PublicKey
-	instanceID  string
-	clusterMix  bool
+	udp          *net.UDPConn
+	ip           string
+	port         int
+	mu           sync.Mutex
+	conns        map[*voiceConn]struct{}
+	session      atomic.Int64
+	rtp          atomic.Int64
+	speak        atomic.Int64
+	forwarded    atomic.Int64
+	transcodes   atomic.Int64
+	publish      func(name string, data any)
+	codecReady   bool
+	done         chan struct{}
+	tick         *time.Ticker
+	mixMu        sync.Mutex
+	mixers       map[string]*channelMixer
+	mixes        atomic.Int64
+	e2eeGaps     atomic.Int64
+	e2eeDupes    atomic.Int64
+	remoteMu     sync.Mutex
+	remote       map[uint32]*remoteOpaque
+	mlsMu        sync.Mutex
+	mlsRoster    map[string][]mls.Leaf
+	mlsSuite     map[string]mls.Ciphersuite
+	mlsConfirmed map[string][32]byte
+	mlsSign      map[string]map[string]ed25519.PublicKey
+	mlsUserSign  map[string]ed25519.PublicKey
+	instanceID   string
+	clusterMix   bool
 }
 
 // VoiceOptions tunes the advertised address.
@@ -482,6 +483,14 @@ func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) erro
 	if err != nil {
 		return err
 	}
+	if len(prev) > 0 {
+		v.mlsMu.Lock()
+		prevConfirmed := v.mlsConfirmed[channel]
+		v.mlsMu.Unlock()
+		if mls.ChainedConfirmed(prevConfirmed, ec.TreeHash, ec.Epoch) != ec.ConfirmedHash {
+			return mls.ErrVerification
+		}
+	}
 	if err := mls.VerifyEpochCommitWithProposals(ec, prev, prevSuite, external, keys); err != nil {
 		return err
 	}
@@ -494,6 +503,10 @@ func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) erro
 		v.mlsSuite = map[string]mls.Ciphersuite{}
 	}
 	v.mlsSuite[channel] = ec.CipherSuite
+	if v.mlsConfirmed == nil {
+		v.mlsConfirmed = map[string][32]byte{}
+	}
+	v.mlsConfirmed[channel] = ec.ConfirmedHash
 	v.mlsMu.Unlock()
 	return nil
 }

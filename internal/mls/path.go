@@ -131,10 +131,12 @@ func resolutionUnder(node, size int, roster []Leaf) []string {
 // so a retained member keeps its slot and any persisted node key above it stays
 // valid.
 type TreeState struct {
-	Size      int              `json:"size"`
-	Users     []string         `json:"users"`
-	Positions []int            `json:"positions"`
-	Publics   map[int][32]byte `json:"publics"`
+	Size int `json:"size"`
+	// ConfirmedHash chains this epoch's transcript into the next.
+	ConfirmedHash [32]byte         `json:"confirmed_transcript_hash"`
+	Users         []string         `json:"users"`
+	Positions     []int            `json:"positions"`
+	Publics       map[int][32]byte `json:"publics"`
 }
 
 // SlotFor returns the leaf index for a user, or -1.
@@ -536,7 +538,19 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 		}
 		signed = append(signed, SignProposalMessage(p, committerID, committerSignPriv))
 	}
+	// RFC-style context: commit to the previous tree and chain the transcript.
+	var prevTreeHash, prevConfirmed [32]byte
+	if previous != nil {
+		tw := &tlsWriter{}
+		if err := encodeTree(tw, previous); err == nil {
+			prevTreeHash = sha256.Sum256(tw.buf)
+		}
+		prevConfirmed = previous.ConfirmedHash
+	}
+	ctxHash := nextContext(prevTreeHash, prevConfirmed, epoch)
+	tree.ConfirmedHash = ctxHash
 	commit := EpochCommit{Commit: Commit{Epoch: epoch, CipherSuite: suite,
+		TreeHash: prevTreeHash, ConfirmedHash: ctxHash,
 		ProposalRefs: ProposalRefsFor(signed), ProposalMessages: signed,
 		Roster: next, Proposals: proposals,
 		Envelopes: map[string]Envelope{}, Committer: committerID}}

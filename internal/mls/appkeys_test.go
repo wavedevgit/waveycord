@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"testing"
 )
 
@@ -213,5 +214,39 @@ func TestProposalSuiteNegotiation(t *testing.T) {
 	if _, _, err := NewEpochCommitNegotiating(2, roster, nil, Ciphersuite(0x0099),
 		a.id, a.signP, a.priv, nil); err == nil {
 		t.Fatal("unsupported negotiation accepted")
+	}
+}
+
+// TestCommitContextChaining proves each commit commits to the previous tree hash and
+// chains the confirmed transcript hash.
+func TestCommitContextChaining(t *testing.T) {
+	a := newMember(t, "cha")
+	b := newMember(t, "chb")
+	roster := []Leaf{a.leaf(), b.leaf()}
+	base, _, err := NewEpochCommit(1, roster, nil, a.id, a.signP, a.priv)
+	if err != nil {
+		t.Fatalf("epoch1: %v", err)
+	}
+	if base.ConfirmedHash == ([32]byte{}) || base.TreeHash != ([32]byte{}) {
+		t.Fatalf("epoch1 context: tree=%x confirmed=%x", base.TreeHash, base.ConfirmedHash)
+	}
+	commit2, _, err := NewEpochCommitWithState(2, roster, nil, a.id, a.signP, a.priv, base.Tree)
+	if err != nil {
+		t.Fatalf("epoch2: %v", err)
+	}
+	// Tree hash must cover the previous tree.
+	tw := &tlsWriter{}
+	if err := encodeTree(tw, base.Tree); err != nil {
+		t.Fatal(err)
+	}
+	wantTree := sha256.Sum256(tw.buf)
+	if commit2.TreeHash != wantTree {
+		t.Fatalf("epoch2 tree hash mismatch")
+	}
+	if got := ChainedConfirmed(base.ConfirmedHash, commit2.TreeHash, 2); got != commit2.ConfirmedHash {
+		t.Fatalf("confirmed hash not chained: %x vs %x", got, commit2.ConfirmedHash)
+	}
+	if ChainedConfirmed(base.ConfirmedHash, commit2.TreeHash, 3) == commit2.ConfirmedHash {
+		t.Fatal("epoch is not bound into the chain")
 	}
 }

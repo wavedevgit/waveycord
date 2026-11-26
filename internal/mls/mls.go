@@ -73,6 +73,9 @@ type Envelope struct {
 // Commit is the signed epoch transition.
 type Commit struct {
 	Epoch            uint32              `json:"epoch"`
+	GroupID          []byte              `json:"group_id,omitempty"`
+	TreeHash         [32]byte            `json:"tree_hash"`
+	ConfirmedHash    [32]byte            `json:"confirmed_transcript_hash"`
 	CipherSuite      Ciphersuite         `json:"cipher_suite"`
 	ProposalRefs     []string            `json:"proposal_refs"`
 	ProposalMessages []ProposalMessage   `json:"proposal_messages,omitempty"`
@@ -82,6 +85,7 @@ type Commit struct {
 	Proposals        []Proposal          `json:"proposals"`
 	Envelopes        map[string]Envelope `json:"envelopes"`
 	Committer        string              `json:"committer"`
+	Path             *PathChain          `json:"path,omitempty"`
 	Signature        []byte              `json:"signature"`
 }
 
@@ -172,6 +176,10 @@ func normSlice[T any](v []T) []T {
 }
 
 func canonical(c Commit) []byte {
+	return authContent(c)
+}
+
+func canonicalLegacy(c Commit) []byte {
 	type canon struct {
 		Epoch            uint32              `json:"epoch"`
 		CipherSuite      Ciphersuite         `json:"cipher_suite"`

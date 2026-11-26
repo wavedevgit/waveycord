@@ -117,6 +117,15 @@ func encodeEpochCommitBody(c EpochCommit) ([]byte, error) {
 	w := &tlsWriter{}
 	w.u32(c.Epoch)
 	w.u32(uint32(c.CipherSuite))
+	if err := w.opaque16(c.GroupID); err != nil {
+		return nil, err
+	}
+	if err := w.opaque16(c.TreeHash[:]); err != nil {
+		return nil, err
+	}
+	if err := w.opaque16(c.ConfirmedHash[:]); err != nil {
+		return nil, err
+	}
 	if err := w.vector16(len(c.ProposalRefs), func(i int) error { return w.opaque16([]byte(c.ProposalRefs[i])) }); err != nil {
 		return nil, err
 	}
@@ -243,6 +252,24 @@ func decodeEpochCommitBody(body []byte) (EpochCommit, error) {
 	if !c.CipherSuite.Supported() {
 		return c, errTLS
 	}
+	groupID, err := r.opaque16()
+	if err != nil {
+		return c, err
+	}
+	c.GroupID = groupID
+	treeHash, err := r.opaque16()
+	if err != nil {
+		return c, err
+	}
+	confirmed, err := r.opaque16()
+	if err != nil {
+		return c, err
+	}
+	if len(treeHash) != 32 || len(confirmed) != 32 {
+		return c, errTLS
+	}
+	copy(c.TreeHash[:], treeHash)
+	copy(c.ConfirmedHash[:], confirmed)
 	n, err := r.vector16()
 	if err != nil {
 		return c, err
