@@ -524,6 +524,15 @@ func (v *VoiceServer) jitterLoop() {
 			return
 		case <-ticker.C:
 			v.mu.Lock()
+			connsAll := make([]*voiceConn, 0, len(v.conns))
+			for c := range v.conns {
+				connsAll = append(connsAll, c)
+			}
+			v.mu.Unlock()
+			for _, c := range connsAll {
+				v.drainOpaque(c)
+			}
+			v.mu.Lock()
 			conns := make([]*voiceConn, 0, len(v.conns))
 			for c := range v.conns {
 				conns = append(conns, c)
@@ -585,6 +594,146 @@ func (v *VoiceServer) ingestRTP(sender *voiceConn, packet []byte) {
 }
 
 func seqLess(a, b uint16) bool { return int16(a-b) < 0 }
+
+// opaqueJitter reorders server-opaque group envelopes by their sender counter.
+// No loss concealment is possible: the payload is ciphertext the server cannot
+// decode, so a gap is released after the hold window rather than filled.
+type opaqueJitter struct {
+	started  bool
+	emitted  bool
+	expected uint64
+	buf      map[uint64][]byte
+	firstAt  time.Time
+	gapSince time.Time
+}
+
+const (
+	opaqueDepth    = 2
+	opaqueHold     = 20 * time.Millisecond
+	opaqueGapLimit = 60 * time.Millisecond
+)
+
+func counterLess(a, b uint64) bool { return int64(a-b) < 0 }
+
+// ingestOpaque buffers one opaque frame and drains what is in order.
+func (v *VoiceServer) ingestOpaque(sender *voiceConn, packet []byte) {
+	if len(packet) < 20 {
+		return
+	}
+	counter := binary.BigEndian.Uint64(packet[8:16])
+	sender.mu.Lock()
+	if sender.opaque == nil {
+		sender.opaque = &opaqueJitter{buf: map[uint64][]byte{}}
+	}
+	j := sender.opaque
+	if !j.started {
+		j.started = true
+		j.expected = counter
+	}
+	if counterLess(counter, j.expected) {
+		if j.emitted {
+			sender.mu.Unlock()
+			return
+		}
+		// Before the first emission the expected counter can move backwards, so
+		// a reordered first frame still sets the starting point.
+		j.expected = counter
+	}
+	j.buf[counter] = packet
+	sender.mu.Unlock()
+	v.drainOpaque(sender)
+}
+
+// drainOpaque emits consecutive opaque frames, releasing a stuck gap once the
+// hold window expires so a lost packet cannot stall the stream.
+func (v *VoiceServer) drainOpaque(sender *voiceConn) {
+	channel := sender.channel()
+	sender.mu.Lock()
+	j := sender.opaque
+	if j == nil || !j.started {
+		sender.mu.Unlock()
+		return
+	}
+	for {
+		if !j.emitted && len(j.buf) < opaqueDepth {
+			if j.gapSince.IsZero() {
+				j.gapSince = time.Now()
+				sender.mu.Unlock()
+				return
+			}
+			if time.Since(j.gapSince) < opaqueHold {
+				sender.mu.Unlock()
+				return
+			}
+		}
+		if pkt, ok := j.buf[j.expected]; ok {
+			delete(j.buf, j.expected)
+			j.expected++
+			j.emitted = true
+			j.gapSince = time.Time{}
+			sender.mu.Unlock()
+			v.deliverOpaque(sender, channel, pkt)
+			sender.mu.Lock()
+			j = sender.opaque
+			if j == nil {
+				sender.mu.Unlock()
+				return
+			}
+			continue
+		}
+		if len(j.buf) == 0 {
+			sender.mu.Unlock()
+			return
+		}
+		// Hold briefly for an out-of-order neighbour, then skip to the lowest
+		// buffered counter; the missing frame is unrecoverable ciphertext.
+		if j.gapSince.IsZero() {
+			j.gapSince = time.Now()
+			sender.mu.Unlock()
+			return
+		}
+		if time.Since(j.gapSince) < opaqueGapLimit {
+			sender.mu.Unlock()
+			return
+		}
+		var next uint64
+		first := true
+		for c := range j.buf {
+			if first || counterLess(c, next) {
+				next, first = c, false
+			}
+		}
+		j.expected = next
+		j.gapSince = time.Time{}
+	}
+}
+
+// deliverOpaque fans an opaque group frame to the channel and other instances.
+func (v *VoiceServer) deliverOpaque(sender *voiceConn, channel string, packet []byte) {
+	if channel == "" {
+		return
+	}
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c != sender && c.channel() == channel {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		if addr := c.udp(); addr != nil {
+			_, _ = v.udp.WriteToUDP(packet, addr)
+			v.forwarded.Add(1)
+		}
+	}
+	if v.publish != nil {
+		v.publish("VOICE_RTP_E2EE", map[string]any{
+			"channel_id": channel,
+			"packet":     base64.StdEncoding.EncodeToString(packet),
+		})
+	}
+}
 
 // drainJitter emits contiguous frames, inserting PLC after the gap delay.
 func (v *VoiceServer) drainJitter(sender *voiceConn) {
@@ -802,19 +951,14 @@ func (v *VoiceServer) readUDP() {
 			_, _ = v.udp.WriteToUDP(resp, from)
 			continue
 		}
-		// End-to-end group envelope ("WCE2"): forwarded untouched, never decrypted.
+		// End-to-end group envelope ("WCE2"): never decrypted, but reordered by
+		// sender counter so a jittery path is smoothed without touching ciphertext.
 		if n > 20 && string(buf[0:4]) == e2eeMagic {
 			packet := append([]byte(nil), buf[:n]...)
 			v.rtp.Add(1)
 			ssrc := binary.BigEndian.Uint32(packet[16:20])
 			if sender := v.findBySSRC(ssrc); sender != nil {
-				v.deliver(sender, packet)
-				if v.publish != nil {
-					v.publish("VOICE_RTP_E2EE", map[string]any{
-						"channel_id": sender.channel(),
-						"packet":     base64.StdEncoding.EncodeToString(packet),
-					})
-				}
+				v.ingestOpaque(sender, packet)
 			}
 			continue
 		}
@@ -894,6 +1038,7 @@ type voiceConn struct {
 	peerPub     [32]byte
 	codec       voicecodec.Codec
 	jitter      *jitterState
+	opaque      *opaqueJitter
 	e2eePub     [32]byte
 	e2eeSign    string
 	hasE2EE     bool

@@ -26,6 +26,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Multi-cell search routing and cell isolation | `TestMultiCellRouting` (two fake clusters) |
 | Voice gateway, UDP discovery, RTP fanout, jitter/PLC, Opus mixing, AEAD, MLS-style epochs | `TestVoice*` |
 | Host-only voice endpoint advertised; root upgrade path connects | `TestVoiceHostOnlyEndpoint` |
+| Opaque group-media reorder, dedupe and gap release | `TestVoiceOpaqueJitter` |
 | MLS path secrets + Welcome (removal and add) | `TestPathUpdateAndWelcome`, `TestVoiceMLSSignedRosterCommit` |
 | MLS ciphersuite negotiation + proposal references | `TestCiphersuiteAndProposalRefs` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
@@ -57,7 +58,9 @@ change. Treat a single cluster-test failure as suspect until reproduced alone.
 
 - No RFC 9420 MLS path secrets/Welcome/ciphersuite negotiation; rotation needs a
   member commit.
-- Group-E2EE frames bypass jitter/PLC and mixing (server cannot decode them).
+- Group-E2EE frames bypass PLC and mixing (server cannot decode them); they do get
+  per-sender reorder/dedupe from the envelope counter, but frames relayed from other
+  instances are delivered in bus order.
 - Search is one ES cluster with bounded reindex, not multi-cell/PubSub/BFG.
 - Some documented REST surfaces remain unregistered.
 

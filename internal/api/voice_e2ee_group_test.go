@@ -228,20 +228,15 @@ func TestClusterE2EEGroupKey(t *testing.T) {
 		t.Fatal("decrypted group media mismatch")
 	}
 
-	// Receiver-side replay protection: a duplicated counter is rejected by the
-	// member, because the server forwards group envelopes without inspecting them.
-	lastCounter := binary.BigEndian.Uint64(buf[8:16])
+	// The reorder buffer suppresses an already-emitted counter; the payload stays
+	// opaque, so only the header counter is used for ordering and dedupe.
 	if _, err := sender.Write(sealed); err != nil {
 		t.Fatal(err)
 	}
-	_ = bobRecv.SetReadDeadline(time.Now().Add(3 * time.Second))
-	n, _, err = bobRecv.ReadFromUDP(buf)
-	if err != nil {
-		t.Fatalf("expected the duplicate to reach the receiver: %v", err)
-	}
-	dupCounter := binary.BigEndian.Uint64(buf[8:16])
-	if dupCounter > lastCounter {
-		t.Fatalf("duplicate counter advanced: %d -> %d", lastCounter, dupCounter)
+	_ = bobRecv.SetReadDeadline(time.Now().Add(600 * time.Millisecond))
+	if n, _, err := bobRecv.ReadFromUDP(buf); err == nil {
+		t.Fatalf("duplicate counter was forwarded: %d -> %d", 1, binary.BigEndian.Uint64(buf[8:16]))
+		_ = n
 	}
 
 	// The server must not have decoded the group media.

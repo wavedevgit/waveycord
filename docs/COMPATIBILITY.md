@@ -101,6 +101,7 @@ route is not registered yet.
 | SFU-style RTP fanout to same-channel connections (local + cross-instance via bus) | implemented + tested |
 | Media crypto boundary: X25519 key exchange, AES-256-GCM envelope, replay protection, key rotation | implemented + tested (server-terminated for the WCDF path) |
 | Member group key agreement (op 34/35) with server-opaque `WCE2` media, local + cross-instance | implemented + tested |
+| Reorder/dedupe for server-opaque group media by sender counter (no PLC possible) | implemented + tested |
 | Epoch rekey signal on voice join/leave (op 36, local + cross-instance) | implemented + tested |
 | Epoch rotation excluding departed members; stale-epoch rejection | implemented + tested |
 | Joint epoch secret from per-member contributions (TreeKEM-style) | implemented + tested |
@@ -109,7 +110,14 @@ route is not registered yet.
 | Path secrets (per-divergence envelopes) + Welcome for added members | implemented + tested |
 | Ciphersuite negotiation (X25519/HKDF-SHA256/AES-256-GCM) + proposal references | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
-| Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
+| Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | implemented + tested (`-tags opus` for codec paths) |
+
+Group-E2EE media (`WCE2`) is never decrypted. Each sender's frames pass through a
+reorder buffer keyed by the envelope counter: the first frame is held briefly,
+out-of-order frames are emitted in counter order, a duplicate of an already emitted
+counter is dropped, and a lost counter is released after the gap window instead of
+stalling. PLC is impossible there because the payload is ciphertext; frames arriving
+from other instances are delivered in bus order.
 
 ## Messages
 
@@ -385,9 +393,9 @@ Remaining differences from Discord's published design:
   `WAVEYCORD_SEARCH_REINDEX=reset` runs it in the background at startup. Tested by
   wiping the Postgres tsvector index and by resetting live OpenSearch indices and
   rebuilding them; searches return the original results afterwards.
-- Still absent: multi-cluster cells, PubSub-backed guaranteed indexing, BFG
-  reindex-on-threshold, and index-size automation. The reindex is a single bounded
-  scan, not a distributed migration.
+- Still absent: PubSub-backed guaranteed indexing, BFG reindex-on-threshold, and
+  index-size automation. The reindex is a single bounded scan, not a distributed
+  migration.
 
 ## Permission inspection routes
 
