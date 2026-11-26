@@ -66,14 +66,38 @@ type GuildResetter interface {
 	ResetGuild(ctx context.Context, guildID string) error
 }
 
-// BFGPolicy decides when a single guild's index has drifted far enough from the
-// authoritative row count to justify a full per-guild rebuild.
+// BFGPolicy decides when a single guild's index should be rebuilt: either because it
+// drifted from the authoritative row count, or because index-size automation says the
+// guild has grown enough past the last rebuild to be worth compacting again.
 type BFGPolicy struct {
-	// Threshold is the minimum number of rows before per-guild rebuilds are
+	// Threshold is the minimum number of rows before drift-based rebuilds are
 	// considered at all; below it the incremental path is always used.
 	Threshold int
 	// Drift is the allowed |indexed-rows|/rows ratio. Zero means 0.1.
 	Drift float64
+	// MaxDocs is the size at which a guild enters the automated rebuild cycle. Zero
+	// disables size automation.
+	MaxDocs int
+	// Growth is the fraction a guild must grow past the size captured at its last
+	// rebuild before it is rebuilt again. Zero means 0.25.
+	Growth float64
+}
+
+// NeedsSizeRebuild reports whether a guild at rows documents should be rebuilt for
+// size reasons, given the row count captured at its previous rebuild (0 means it has
+// never been rebuilt).
+func (p BFGPolicy) NeedsSizeRebuild(rows, lastRebuildRows int) bool {
+	if p.MaxDocs <= 0 || rows < p.MaxDocs {
+		return false
+	}
+	if lastRebuildRows <= 0 {
+		return true
+	}
+	growth := p.Growth
+	if growth <= 0 {
+		growth = 0.25
+	}
+	return float64(rows) >= float64(lastRebuildRows)*(1+growth)
 }
 
 // NeedsRebuild applies the policy to one guild.

@@ -171,7 +171,15 @@ func (s *Store) BFGMaintainGuild(ctx context.Context, guildID string, policy sea
 	if err != nil {
 		return false, 0, err
 	}
-	if !policy.NeedsRebuild(rows, indexed) {
+	s.bfgMu.Lock()
+	lastSize := 0
+	if s.bfgLastSize != nil {
+		lastSize = s.bfgLastSize[guildID]
+	}
+	s.bfgMu.Unlock()
+	driftRebuild := policy.NeedsRebuild(rows, indexed)
+	sizeRebuild := policy.NeedsSizeRebuild(rows, lastSize)
+	if !driftRebuild && !sizeRebuild {
 		return false, indexed, nil
 	}
 	if resetter, ok := s.Search.(search.GuildResetter); ok {
@@ -180,6 +188,14 @@ func (s *Store) BFGMaintainGuild(ctx context.Context, guildID string, policy sea
 		}
 	}
 	n, err := s.ReindexGuild(ctx, guildID, batch)
+	if err == nil {
+		s.bfgMu.Lock()
+		if s.bfgLastSize == nil {
+			s.bfgLastSize = map[string]int{}
+		}
+		s.bfgLastSize[guildID] = rows
+		s.bfgMu.Unlock()
+	}
 	return true, n, err
 }
 

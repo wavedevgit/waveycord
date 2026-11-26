@@ -100,7 +100,13 @@ func main() {
 		if v, err := strconv.ParseFloat(os.Getenv("WAVEYCORD_SEARCH_BFG_DRIFT"), 64); err == nil && v > 0 {
 			drift = v
 		}
-		st.SetBFGPolicy(search.BFGPolicy{Threshold: n, Drift: drift}, envInt("WAVEYCORD_SEARCH_BFG_EVERY", 250))
+		size := envInt("WAVEYCORD_SEARCH_BFG_MAX_DOCS", 0)
+		growth := 0.25
+		if v, err := strconv.ParseFloat(os.Getenv("WAVEYCORD_SEARCH_BFG_GROWTH"), 64); err == nil && v > 0 {
+			growth = v
+		}
+		st.SetBFGPolicy(search.BFGPolicy{Threshold: n, Drift: drift, MaxDocs: size, Growth: growth},
+			envInt("WAVEYCORD_SEARCH_BFG_EVERY", 250))
 		log.Info("search bfg enabled", "threshold", n, "drift", drift)
 	}
 	if os.Getenv("WAVEYCORD_SEARCH_QUEUE") == "1" {

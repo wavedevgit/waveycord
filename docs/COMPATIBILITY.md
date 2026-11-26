@@ -153,6 +153,7 @@ synthesise and none is fabricated.
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | BFG reindex-on-threshold: drifted large guild reset and rebuilt alone (`WAVEYCORD_SEARCH_BFG_THRESHOLD`, `_DRIFT`, `_EVERY`) | implemented + tested |
+| Index-size automation: guilds at `WAVEYCORD_SEARCH_BFG_MAX_DOCS` rebuild, then again after `_GROWTH` expansion since the last rebuild | implemented + tested |
 | Durable indexing queue: message writes enqueued, worker drains with retry (`WAVEYCORD_SEARCH_QUEUE=1`) | implemented + tested |
 | Postgres `LISTEN` wake-up on a dedicated connection; poll interval as fallback | implemented + tested |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
@@ -438,10 +439,18 @@ Remaining differences from Discord's published design:
   connection (its own `pgx` connection, never a pooled writer) wakes the worker
   immediately; the poll interval is the fallback and the durable row remains the
   guarantee, so a missed notification costs one poll.
-- Still absent: index-size automation. The LISTEN connection is per instance and
-  carries no payload, so a wake-up is coalesced and only tells the worker to poll the
-  durable table; the BFG rebuild remains a bounded per-guild scan, not a distributed
-  migration.
+- Index-size automation: `BFGPolicy.MaxDocs` puts a guild into an automated rebuild
+  cycle once it reaches that size, and `Growth` (default 0.25) is the fraction it must
+  expand past the row count captured at its previous rebuild before rebuilding again.
+  `Store.BFGMaintainGuild` captures that size after each successful rebuild, so a
+  growing guild is compacted at the target and then on growth, while a brand-new guild
+  below the target is untouched. Configured by `WAVEYCORD_SEARCH_BFG_MAX_DOCS` and
+  `WAVEYCORD_SEARCH_BFG_GROWTH`, tested at the policy and store level (first crossing,
+  below-growth no-op, growth rebuild, small guild inert).
+- Remaining size limitations: the last-rebuild size is tracked in memory per instance,
+  so a restart (or a second instance) performs one extra rebuild before re-arming; the
+  rebuild is still a bounded per-guild scan, not a distributed migration; the LISTEN
+  connection is per instance and payload-less.
 
 ## Components v2
 

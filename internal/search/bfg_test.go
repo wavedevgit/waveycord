@@ -32,6 +32,29 @@ func TestBFGPolicy(t *testing.T) {
 	}
 }
 
+// TestBFGSizePolicy pins index-size automation thresholds.
+func TestBFGSizePolicy(t *testing.T) {
+	base := search.BFGPolicy{MaxDocs: 100, Growth: 0.25}
+	cases := []struct {
+		name   string
+		policy search.BFGPolicy
+		rows   int
+		last   int
+		want   bool
+	}{
+		{"disabled", search.BFGPolicy{}, 1000, 0, false},
+		{"below max", base, 99, 0, false},
+		{"first crossing", base, 100, 0, true},
+		{"growth reached", base, 125, 100, true},
+		{"below growth", base, 124, 100, false},
+	}
+	for _, tc := range cases {
+		if got := tc.policy.NeedsSizeRebuild(tc.rows, tc.last); got != tc.want {
+			t.Fatalf("%s: size rebuild %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // TestESGuildCountAndReset proves the per-guild index size read and the per-guild
 // reset used by the BFG rebuild path.
 func TestESGuildCountAndReset(t *testing.T) {

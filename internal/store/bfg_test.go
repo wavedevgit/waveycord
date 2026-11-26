@@ -222,3 +222,85 @@ func TestBFGWriteTrigger(t *testing.T) {
 	}
 	t.Fatalf("index never rebuilt: %d docs, want 4", idx.count(guild.ID))
 }
+
+// TestBFGSizeAutomationRebuildsGrowingGuild proves index-size automation: once a
+// guild reaches MaxDocs it is rebuilt, then rebuilt again only after it grows by the
+// configured fraction past the size captured at the previous rebuild.
+func TestBFGSizeAutomationRebuildsGrowingGuild(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "bfgsize.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer handle.Close()
+	st := store.New(handle)
+	user, err := st.CreateUser(store.CreateUserParams{
+		Username: "sizeuser", Email: strPtr("size@example.test"), PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guild, err := st.CreateGuild(user.ID, store.CreateGuildParams{Name: "Size Guild"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "chat"
+	channel, err := st.CreateChannel(guild.ID, store.CreateChannelParams{Name: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := newCountingIndex()
+	st.SetSearchIndex(idx)
+	// Drift rebuilds disabled (huge threshold); only size automation can fire.
+	policy := search.BFGPolicy{Threshold: 100000, Drift: 0.1, MaxDocs: 4, Growth: 1.0}
+
+	add := func(n int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			if _, err := st.CreateMessage(store.CreateMessageParams{
+				ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "grow",
+			}); err != nil {
+				t.Fatalf("create message: %v", err)
+			}
+		}
+	}
+
+	add(4)
+	rebuilt, n, err := st.BFGMaintainGuild(context.Background(), guild.ID, policy, 10)
+	if err != nil || !rebuilt || n != 4 {
+		t.Fatalf("first size rebuild rebuilt=%v n=%d err=%v", rebuilt, n, err)
+	}
+
+	// 6 rows is above MaxDocs but below 4 * 2, so no rebuild.
+	add(2)
+	rebuilt, _, err = st.BFGMaintainGuild(context.Background(), guild.ID, policy, 10)
+	if err != nil || rebuilt {
+		t.Fatalf("rebuild below growth rebuilt=%v err=%v", rebuilt, err)
+	}
+
+	// 8 rows crosses the growth target measured from the last rebuild.
+	add(2)
+	rebuilt, n, err = st.BFGMaintainGuild(context.Background(), guild.ID, policy, 10)
+	if err != nil || !rebuilt || n != 8 {
+		t.Fatalf("growth rebuild rebuilt=%v n=%d err=%v", rebuilt, n, err)
+	}
+
+	// Below MaxDocs the size path is inert even when drift rebuilds are enabled.
+	small, err := st.CreateGuild(user.ID, store.CreateGuildParams{Name: "Small Guild"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	smallCh, err := st.CreateChannel(small.ID, store.CreateChannelParams{Name: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateMessage(store.CreateMessageParams{
+		ChannelID: smallCh.ID, GuildID: small.ID, AuthorID: user.ID, Content: "one",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, _, err = st.BFGMaintainGuild(context.Background(), small.ID,
+		search.BFGPolicy{Threshold: 100000, MaxDocs: 1000}, 10)
+	if err != nil || rebuilt {
+		t.Fatalf("small guild rebuilt=%v err=%v", rebuilt, err)
+	}
+}
