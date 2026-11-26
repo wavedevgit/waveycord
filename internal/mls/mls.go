@@ -81,6 +81,53 @@ const (
 	labelRoot = "waveycord-mls-root-v1"
 )
 
+// ExpandWithLabel is RFC 9420's labeled KDF expansion: the label and context are
+// length-prefixed and fed to HKDF-Expand, so two derivations with different labels
+// never collide.
+func ExpandWithLabel(secret []byte, label string, context []byte, n int) []byte {
+	info := make([]byte, 0, 4+len(label)+len(context))
+	info = append(info, byte(len(label)>>8), byte(len(label)))
+	info = append(info, label...)
+	info = append(info, byte(len(context)>>8), byte(len(context)))
+	info = append(info, context...)
+	reader := hkdf.New(sha256.New, secret, nil, info)
+	out := make([]byte, n)
+	_, _ = io.ReadFull(reader, out)
+	return out
+}
+
+// ApplicationKeys is the per-epoch application key schedule: an AEAD key, a base
+// nonce and an exporter secret, each derived under its own label.
+type ApplicationKeys struct {
+	Key       []byte
+	BaseNonce []byte
+	Exporter  []byte
+}
+
+// DeriveApplicationKeys runs the application key schedule for one epoch.
+func DeriveApplicationKeys(epochSecret []byte, epoch uint32) ApplicationKeys {
+	var ctx [4]byte
+	binary.BigEndian.PutUint32(ctx[:], epoch)
+	es := ExpandWithLabel(epochSecret, "epoch", ctx[:], 32)
+	return ApplicationKeys{
+		Key:       ExpandWithLabel(es, "key", nil, 32),
+		BaseNonce: ExpandWithLabel(es, "nonce", nil, 12),
+		Exporter:  ExpandWithLabel(es, "exporter", nil, 32),
+	}
+}
+
+// NonceFor XORs a 64-bit counter into an application base nonce, the RFC 9420
+// per-record construction.
+func NonceFor(baseNonce []byte, counter uint64) []byte {
+	nonce := append([]byte(nil), baseNonce...)
+	var c [8]byte
+	binary.BigEndian.PutUint64(c[:], counter)
+	for i := 0; i < 8 && i < len(nonce); i++ {
+		nonce[len(nonce)-8+i] ^= c[i]
+	}
+	return nonce
+}
+
 func hkdfBytes(secret []byte, salt, info string, n int) []byte {
 	r := hkdf.New(sha256.New, secret, []byte(salt), []byte(info))
 	out := make([]byte, n)

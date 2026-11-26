@@ -44,8 +44,11 @@ type EpochCommit struct {
 	Welcome map[string]Welcome `json:"welcome,omitempty"`
 }
 
-func pathNodeSecret(child []byte, parent int) []byte {
-	return hkdfBytes(child, "waveycord-mls-path", fmt.Sprintf("parent:%d", parent), 32)
+// pathNodeSecret derives an ancestor secret from its child, using the RFC 9420
+// "path" label. Every ancestor in the chain is one labeled expansion of the child,
+// and only members that learn a node secret through a DH envelope can walk up.
+func pathNodeSecret(child []byte) []byte {
+	return ExpandWithLabel(child, "path", nil, 32)
 }
 
 // leafIndex returns the leaf slot for a roster member, or -1.
@@ -58,8 +61,12 @@ func leafIndex(roster []Leaf, userID string) int {
 	return -1
 }
 
-// leavesUnder lists roster users under a node in a tree of the given size.
-func leavesUnder(node, size int, roster []Leaf) []string {
+// resolutionUnder lists the roster users whose leaves are in a node's subtree. This
+// is the DH resolution of the sibling subtree: the committer encrypts one envelope
+// per resolved member, and only those members can open that node. The tree carries
+// no blank leaves between epochs, so the resolution of a node is exactly the members
+// beneath it.
+func resolutionUnder(node, size int, roster []Leaf) []string {
 	var out []string
 	var walk func(int)
 	walk = func(n int) {
@@ -105,7 +112,7 @@ func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committer
 	publics := map[int][32]byte{}
 	for node > 1 {
 		parent := node / 2
-		secrets[parent] = pathNodeSecret(secrets[node], parent)
+		secrets[parent] = pathNodeSecret(secrets[node])
 		node = parent
 	}
 	for idx, sec := range secrets {
@@ -125,7 +132,7 @@ func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committer
 		parent := node / 2
 		sibling := node ^ 1
 		secret := secrets[parent]
-		for _, uid := range leavesUnder(sibling, size, next) {
+		for _, uid := range resolutionUnder(sibling, size, next) {
 			leaf := next[leafIndex(next, uid)]
 			env, err := sealRoot(secret, leaf)
 			if err != nil {
@@ -199,7 +206,7 @@ func DerivePathRoot(c EpochCommit, userID string, priv [32]byte) ([]byte, error)
 	cur := start
 	for node > 1 {
 		parent := node / 2
-		cur = pathNodeSecret(cur, parent)
+		cur = pathNodeSecret(cur)
 		node = parent
 	}
 	return cur, nil

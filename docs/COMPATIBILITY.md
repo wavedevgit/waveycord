@@ -113,6 +113,7 @@ route is not registered yet.
 | `internal/mls`: HPKE envelopes, Add/Remove proposals, binary tree key schedule | implemented + tested (TreeKEM-style, not RFC 9420) |
 | Path secrets (per-divergence envelopes) + Welcome for added members | implemented + tested |
 | Ciphersuite negotiation (X25519/HKDF-SHA256/AES-256-GCM) + proposal references | implemented + tested |
+| RFC-style `ExpandWithLabel` path KDF, resolution-driven envelopes, per-application key schedule | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | implemented + tested (`-tags opus` for codec paths) |
 

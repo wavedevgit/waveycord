@@ -29,6 +29,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Opaque group-media reorder, dedupe and gap release | `TestVoiceOpaqueJitter` |
 | MLS path secrets + Welcome (removal and add) | `TestPathUpdateAndWelcome`, `TestVoiceMLSSignedRosterCommit` |
 | MLS ciphersuite negotiation + proposal references | `TestCiphersuiteAndProposalRefs` |
+| RFC-style path KDF, application key schedule, nonce ratchet | `TestExpandWithLabelAndApplicationKeys`, `TestVoiceMLSSignedRosterCommit` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |

@@ -408,13 +408,38 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if !bytes.Equal(daveRoot, epoch3State.Root) {
 		t.Fatal("dave welcome root mismatch")
 	}
-	daveKey3 := gcmFromKey(t, mls.EpochSecret(daveRoot, commit3.Roster))
-	aliceKey3 := gcmFromKey(t, mls.EpochSecret(epoch3State.Root, commit3.Roster))
-	packet3 := sendMedia(aliceKey3, 3, 5, "WELCOME-EPOCH3")
-	counter3 := binary.BigEndian.Uint64(packet3[8:16])
-	plain3, err := daveKey3.Open(nil, clientNonce(counter3), packet3[20:], packet3[0:20])
+	// Media for epoch 3 uses the per-application key schedule, not the epoch root
+	// directly: the newcomer derives the same key, nonce and exporter from the root
+	// it received in the Welcome.
+	daveEpochSecret := mls.EpochSecret(daveRoot, commit3.Roster)
+	aliceEpochSecret := mls.EpochSecret(epoch3State.Root, commit3.Roster)
+	if !bytes.Equal(daveEpochSecret, aliceEpochSecret) {
+		t.Fatal("newcomer epoch secret differs from the committer's")
+	}
+	daveApp := mls.DeriveApplicationKeys(daveEpochSecret, 3)
+	aliceApp := mls.DeriveApplicationKeys(aliceEpochSecret, 3)
+	if !bytes.Equal(daveApp.Key, aliceApp.Key) || !bytes.Equal(daveApp.BaseNonce, aliceApp.BaseNonce) ||
+		!bytes.Equal(daveApp.Exporter, aliceApp.Exporter) {
+		t.Fatal("application key schedule disagrees between members")
+	}
+	if bytes.Equal(daveApp.Key, daveApp.Exporter) {
+		t.Fatal("key and exporter are not separated")
+	}
+	aliceGCM3 := gcmFromKey(t, aliceApp.Key)
+	daveGCM3 := gcmFromKey(t, daveApp.Key)
+	inner3 := rtpPacket(ssrc, "WELCOME-EPOCH3")
+	header3 := make([]byte, 20)
+	copy(header3[0:4], "WCE2")
+	binary.BigEndian.PutUint32(header3[4:8], 3)
+	binary.BigEndian.PutUint64(header3[8:16], 5)
+	binary.BigEndian.PutUint32(header3[16:20], ssrc)
+	packet3 := append(header3, aliceGCM3.Seal(nil, mls.NonceFor(aliceApp.BaseNonce, 5), inner3, header3)...)
+	plain3, err := daveGCM3.Open(nil, mls.NonceFor(daveApp.BaseNonce, 5), packet3[20:], packet3[0:20])
 	if err != nil || !bytes.Contains(plain3, []byte("WELCOME-EPOCH3")) {
 		t.Fatalf("dave could not decrypt epoch-3 media: %v", err)
+	}
+	if _, err := daveGCM3.Open(nil, mls.NonceFor(daveApp.BaseNonce, 6), packet3[20:], packet3[0:20]); err == nil {
+		t.Fatal("wrong application nonce decrypted epoch-3 media")
 	}
 
 	// The removed member has no path envelope and cannot derive the epoch-2 root.
