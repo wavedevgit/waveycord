@@ -49,6 +49,14 @@ func readRTP(t *testing.T, conn *net.UDPConn, deadline time.Time) []byte {
 // TestVoiceJitterBufferAndPLC proves the Opus path reorders frames and conceals a
 // dropped one while the peer still decodes contiguous PCM.
 func TestVoiceJitterBufferAndPLC(t *testing.T) {
+	testVoiceJitterBufferAndPLC(t, false)
+}
+
+func TestEscrowVoiceJitterBufferAndPLC(t *testing.T) {
+	testVoiceJitterBufferAndPLC(t, true)
+}
+
+func testVoiceJitterBufferAndPLC(t *testing.T, escrow bool) {
 	h := newHarness(t)
 	alice := h.register("jittera")
 	bob := h.register("jitterb")
@@ -90,8 +98,12 @@ func TestVoiceJitterBufferAndPLC(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	seal := func(p []byte) []byte { return p }
+	if escrow {
+		seal = escrowSealer(t, aliceVoice, aliceReady, aliceToken)
+	}
 	send := func(seq uint16, gap time.Duration) {
-		if _, err := sender.Write(opusFrame(t, enc, seq, uint32(seq)*960, ssrc)); err != nil {
+		if _, err := sender.Write(seal(opusFrame(t, enc, seq, uint32(seq)*960, ssrc))); err != nil {
 			t.Fatalf("send seq %d: %v", seq, err)
 		}
 		time.Sleep(gap)

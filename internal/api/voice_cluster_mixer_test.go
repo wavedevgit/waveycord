@@ -19,6 +19,14 @@ import (
 // the channel's owner instance and the mixed stream reaches a listener on the other
 // instance.
 func TestClusterWideMixing(t *testing.T) {
+	testClusterWideMixing(t, false)
+}
+
+func TestEscrowClusterWideMixing(t *testing.T) {
+	testClusterWideMixing(t, true)
+}
+
+func testClusterWideMixing(t *testing.T, escrow bool) {
 	prev, had := os.LookupEnv("WAVEYCORD_CLUSTER_MIX")
 	os.Setenv("WAVEYCORD_CLUSTER_MIX", "1")
 	defer func() {
@@ -77,11 +85,16 @@ func TestClusterWideMixing(t *testing.T) {
 	enc10, _ := opus.NewEncoder(48000, 1, opus.AppVoIP)
 	aliceSSRC := uint32(aliceReady["ssrc"].(float64))
 	bobSSRC := uint32(bobReady["ssrc"].(float64))
+	aliceSeal, bobSeal := func(p []byte) []byte { return p }, func(p []byte) []byte { return p }
+	if escrow {
+		aliceSeal = escrowSealer(t, aliceVoice, aliceReady, aliceToken)
+		bobSeal = escrowSealer(t, bobVoice, bobReady, bobToken)
+	}
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(2)
-	send := func(socket *net.UDPConn, enc *opus.Encoder, ssrc uint32, samples int, freq float64, every time.Duration) {
+	send := func(socket *net.UDPConn, enc *opus.Encoder, ssrc uint32, samples int, freq float64, every time.Duration, seal func([]byte) []byte) {
 		defer wg.Done()
 		seq := uint16(1)
 		for {
@@ -106,13 +119,13 @@ func TestClusterWideMixing(t *testing.T) {
 			binary.BigEndian.PutUint32(pkt[4:8], uint32(seq)*960)
 			binary.BigEndian.PutUint32(pkt[8:12], ssrc)
 			copy(pkt[12:], buf[:n])
-			_, _ = socket.Write(pkt)
+			_, _ = socket.Write(seal(pkt))
 			seq++
 			time.Sleep(every)
 		}
 	}
-	go send(aliceSink, enc20, aliceSSRC, 960, 440, 20*time.Millisecond)
-	go send(bobSink, enc10, bobSSRC, 480, 880, 10*time.Millisecond)
+	go send(aliceSink, enc20, aliceSSRC, 960, 440, 20*time.Millisecond, aliceSeal)
+	go send(bobSink, enc10, bobSSRC, 480, 880, 10*time.Millisecond, bobSeal)
 	defer func() { close(stop); wg.Wait() }()
 
 	dec, err := opus.NewDecoder(48000, 1)

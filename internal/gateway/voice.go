@@ -55,35 +55,38 @@ type VoiceServer struct {
 	store *store.Store
 	log   *slog.Logger
 
-	udp         *net.UDPConn
-	ip          string
-	port        int
-	mu          sync.Mutex
-	conns       map[*voiceConn]struct{}
-	session     atomic.Int64
-	rtp         atomic.Int64
-	speak       atomic.Int64
-	forwarded   atomic.Int64
-	transcodes  atomic.Int64
-	publish     func(name string, data any)
-	codecReady  bool
-	done        chan struct{}
-	tick        *time.Ticker
-	mixMu       sync.Mutex
-	mixers      map[string]*channelMixer
-	mixes       atomic.Int64
-	e2eeGaps    atomic.Int64
-	e2eeDupes   atomic.Int64
-	remoteMu    sync.Mutex
-	remote      map[uint32]*remoteOpaque
-	mlsMu       sync.Mutex
-	mlsRoster   map[string][]mls.Leaf
-	mlsSuite    map[string]mls.Ciphersuite
-	mlsInterim  map[string][32]byte
-	mlsSign     map[string]map[string]ed25519.PublicKey
-	mlsUserSign map[string]ed25519.PublicKey
-	instanceID  string
-	clusterMix  bool
+	udp             *net.UDPConn
+	ip              string
+	port            int
+	mu              sync.Mutex
+	conns           map[*voiceConn]struct{}
+	session         atomic.Int64
+	rtp             atomic.Int64
+	speak           atomic.Int64
+	forwarded       atomic.Int64
+	transcodes      atomic.Int64
+	publish         func(name string, data any)
+	codecReady      bool
+	done            chan struct{}
+	tick            *time.Ticker
+	mixMu           sync.Mutex
+	mixers          map[string]*channelMixer
+	mixes           atomic.Int64
+	e2eeGaps        atomic.Int64
+	e2eeDupes       atomic.Int64
+	remoteMu        sync.Mutex
+	remote          map[uint32]*remoteOpaque
+	mlsMu           sync.Mutex
+	mlsRoster       map[string][]mls.Leaf
+	mlsSuite        map[string]mls.Ciphersuite
+	mlsInterim      map[string][32]byte
+	mlsSign         map[string]map[string]ed25519.PublicKey
+	mlsUserSign     map[string]ed25519.PublicKey
+	instanceID      string
+	clusterMix      bool
+	mixPriv         [32]byte
+	mixPub          [32]byte
+	mixEscrowFrames atomic.Int64
 }
 
 // VoiceOptions tunes the advertised address.
@@ -107,9 +110,15 @@ func NewVoiceServer(st *store.Store, opts VoiceOptions) (*VoiceServer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("voice: bind udp: %w", err)
 	}
+	priv, pub, err := newEphemeralKey()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("voice: mix key: %w", err)
+	}
 	v := &VoiceServer{store: st, log: logger, udp: conn, ip: ip,
 		port: conn.LocalAddr().(*net.UDPAddr).Port, conns: map[*voiceConn]struct{}{},
-		codecReady: voicecodec.Available(), done: make(chan struct{})}
+		codecReady: voicecodec.Available(), done: make(chan struct{}),
+		mixPriv: priv, mixPub: pub}
 	if v.codecReady {
 		logger.Info("voice opus codec enabled")
 	}
@@ -584,6 +593,9 @@ func (v *VoiceServer) DeliverSpeaking(channelID string, speaking, delay int, ssr
 // E2EEGaps counts opaque group-media gaps shed because the ciphertext could not
 // be reconstructed.
 func (v *VoiceServer) E2EEGaps() int64 { return v.e2eeGaps.Load() }
+
+// EscrowFrames counts authenticated group frames explicitly decrypted for mixing.
+func (v *VoiceServer) EscrowFrames() int64 { return v.mixEscrowFrames.Load() }
 
 // E2EEDupes counts opaque group-media frames dropped as already emitted.
 func (v *VoiceServer) E2EEDupes() int64 { return v.e2eeDupes.Load() }
@@ -1265,13 +1277,24 @@ func (v *VoiceServer) readUDP() {
 			_, _ = v.udp.WriteToUDP(resp, from)
 			continue
 		}
-		// End-to-end group envelope ("WCE2"): never decrypted, but reordered by
-		// sender counter so a jittery path is smoothed without touching ciphertext.
+		// Group envelopes remain opaque unless the sender explicitly installs escrow.
 		if n > 20 && string(buf[0:4]) == e2eeMagic {
 			packet := append([]byte(nil), buf[:n]...)
 			v.rtp.Add(1)
 			ssrc := binary.BigEndian.Uint32(packet[16:20])
 			if sender := v.findBySSRC(ssrc); sender != nil {
+				sender.mu.Lock()
+				escrow, keyID := sender.escrow, sender.escrowKeyID
+				if escrow != nil && binary.BigEndian.Uint32(packet[4:8]) == keyID {
+					inner, err := sender.openEscrowMedia(packet)
+					sender.mu.Unlock()
+					if err == nil {
+						v.mixEscrowFrames.Add(1)
+						v.ingestRTP(sender, inner)
+					}
+					continue
+				}
+				sender.mu.Unlock()
 				v.ingestOpaque(sender, packet)
 			}
 			continue
@@ -1338,26 +1361,30 @@ type voiceConn struct {
 	server  *VoiceServer
 	token   string
 
-	mu          sync.Mutex
-	writeMu     sync.Mutex
-	userID      string
-	guildID     string
-	channelID   string
-	ssrc        uint32
-	ready       bool
-	gcm         cipher.AEAD
-	keyID       uint32
-	lastCounter uint64
-	outCounter  uint64
-	peerPub     [32]byte
-	codec       voicecodec.Codec
-	jitter      *jitterState
-	opaque      *opaqueJitter
-	e2eePub     [32]byte
-	e2eeSign    string
-	hasE2EE     bool
-	closed      bool
-	done        chan struct{}
+	mu              sync.Mutex
+	writeMu         sync.Mutex
+	userID          string
+	guildID         string
+	channelID       string
+	ssrc            uint32
+	ready           bool
+	gcm             cipher.AEAD
+	keyID           uint32
+	lastCounter     uint64
+	outCounter      uint64
+	peerPub         [32]byte
+	codec           voicecodec.Codec
+	jitter          *jitterState
+	opaque          *opaqueJitter
+	escrow          cipher.AEAD
+	escrowKeyID     uint32
+	escrowCounter   uint64
+	escrowInstalled bool
+	e2eePub         [32]byte
+	e2eeSign        string
+	hasE2EE         bool
+	closed          bool
+	done            chan struct{}
 }
 
 func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token string) {
@@ -1429,6 +1456,7 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				"port":               v.port,
 				"modes":              []string{"opus"},
 				"heartbeat_interval": voiceHeartbeatInterval,
+				"mix_public_key":     base64.StdEncoding.EncodeToString(v.mixPub[:]),
 				"experiments":        []string{},
 			}})
 		case voiceOpSelectProtocol:
@@ -1563,9 +1591,11 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			}})
 		case 34: // E2EE_PUBLISH: member static media key for pairwise wraps
 			var ex struct {
-				PublicKey  string `json:"public_key"`
-				SigningKey string `json:"signing_key"`
-				Proof      string `json:"proof"`
+				PublicKey   string `json:"public_key"`
+				SigningKey  string `json:"signing_key"`
+				Proof       string `json:"proof"`
+				EscrowKey   string `json:"escrow_key"`
+				EscrowKeyID uint32 `json:"escrow_key_id"`
 			}
 			if err := json.Unmarshal(frame.D, &ex); err != nil {
 				c.close(voiceCloseUnknownOpcode, "Invalid e2ee key")
@@ -1575,6 +1605,24 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			if err != nil {
 				c.close(voiceCloseUnknownOpcode, "Invalid e2ee key")
 				return
+			}
+			var escrow cipher.AEAD
+			if ex.EscrowKey != "" {
+				raw, derr := base64.StdEncoding.DecodeString(ex.EscrowKey)
+				if derr != nil {
+					c.close(voiceCloseUnknownOpcode, "Invalid escrow key")
+					return
+				}
+				key, kerr := unsealEscrow(v.mixPriv, raw, ex.EscrowKeyID, c.token)
+				if kerr != nil {
+					c.close(voiceCloseUnknownOpcode, "Invalid escrow key")
+					return
+				}
+				escrow, err = newGCM(key)
+				if err != nil {
+					c.close(voiceCloseUnknownOpcode, "Invalid escrow key")
+					return
+				}
 			}
 			c.mu.Lock()
 			c.e2eePub = pub
@@ -1604,6 +1652,20 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 					v.rememberMLSKey(channelID, userID, ed25519.PublicKey(sk))
 				}
 			}
+			c.mu.Lock()
+			// Key ids increase within a session, including after revocation.
+			if escrow != nil {
+				if c.escrowInstalled && ex.EscrowKeyID <= c.escrowKeyID {
+					c.mu.Unlock()
+					c.close(voiceCloseUnknownOpcode, "Escrow key id must increase")
+					return
+				}
+				c.escrowInstalled = true
+				c.escrowKeyID = ex.EscrowKeyID
+				c.escrowCounter = 0
+			}
+			c.escrow = escrow
+			c.mu.Unlock()
 			v.publishE2EEKey(userID, pub, ex.SigningKey)
 		case 35: // E2EE_KEY: wrapped key or epoch contribution relayed between members
 			var ex struct {

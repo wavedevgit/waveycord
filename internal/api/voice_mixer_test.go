@@ -52,6 +52,14 @@ func rtpWith(enc *opus.Encoder, seq uint16, ssrc uint32, pcm []int16) []byte {
 // TestVoiceCrossFrameSizeMixing proves the SFU mixes two senders that use
 // different Opus frame durations into one 20 ms stream containing both tones.
 func TestVoiceCrossFrameSizeMixing(t *testing.T) {
+	testVoiceCrossFrameSizeMixing(t, false)
+}
+
+func TestEscrowVoiceCrossFrameSizeMixing(t *testing.T) {
+	testVoiceCrossFrameSizeMixing(t, true)
+}
+
+func testVoiceCrossFrameSizeMixing(t *testing.T, escrow bool) {
 	h := newHarness(t)
 	alice := h.register("mixalice")
 	bob := h.register("mixbob")
@@ -99,6 +107,11 @@ func TestVoiceCrossFrameSizeMixing(t *testing.T) {
 	enc10, _ := opus.NewEncoder(48000, 1, opus.AppVoIP)
 	aliceSSRC := uint32(aliceReady["ssrc"].(float64))
 	bobSSRC := uint32(bobReady["ssrc"].(float64))
+	aliceSeal, bobSeal := func(p []byte) []byte { return p }, func(p []byte) []byte { return p }
+	if escrow {
+		aliceSeal = escrowSealer(t, aliceVoice, aliceReady, aliceToken)
+		bobSeal = escrowSealer(t, bobVoice, bobReady, bobToken)
+	}
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -112,7 +125,7 @@ func TestVoiceCrossFrameSizeMixing(t *testing.T) {
 				return
 			default:
 			}
-			_, _ = aliceSink.Write(rtpWith(enc20, seq, aliceSSRC, tonePCM(960, 440, 6000)))
+			_, _ = aliceSink.Write(aliceSeal(rtpWith(enc20, seq, aliceSSRC, tonePCM(960, 440, 6000))))
 			seq++
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -126,7 +139,7 @@ func TestVoiceCrossFrameSizeMixing(t *testing.T) {
 				return
 			default:
 			}
-			_, _ = bobSink.Write(rtpWith(enc10, seq, bobSSRC, tonePCM(480, 880, 6000)))
+			_, _ = bobSink.Write(bobSeal(rtpWith(enc10, seq, bobSSRC, tonePCM(480, 880, 6000))))
 			seq++
 			time.Sleep(10 * time.Millisecond)
 		}
