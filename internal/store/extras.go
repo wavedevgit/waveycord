@@ -445,7 +445,21 @@ func (s *Store) UpdateScheduledEvent(guildID, id string, p UpdateEventParams) (S
 		return s.ScheduledEvent(id)
 	}
 	args = append(args, guildID, id)
-	res, err := s.DB.Exec(`UPDATE scheduled_events SET `+joinComma(set)+` WHERE guild_id = ? AND id = ?`, args...)
+	where := ` WHERE guild_id = ? AND id = ?`
+	if p.Status != nil {
+		// Validate at the write boundary too: concurrent requests cannot revive a
+		// terminal event after the handler's earlier read.
+		where += ` AND (status = ?`
+		args = append(args, *p.Status)
+		switch *p.Status {
+		case 2, 4:
+			where += ` OR status = 1`
+		case 3:
+			where += ` OR status = 2`
+		}
+		where += `)`
+	}
+	res, err := s.DB.Exec(`UPDATE scheduled_events SET `+joinComma(set)+where, args...)
 	if err != nil {
 		return ScheduledEvent{}, mapErr(err)
 	}

@@ -383,6 +383,14 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 			return
 		}
 	}
+	if req.EntityMetadata != nil {
+		if event.EntityType != 3 {
+			req.EntityMetadata = nil
+		} else if location, ok := req.EntityMetadata["location"].(string); !ok || len([]rune(location)) < 1 || len([]rune(location)) > 100 {
+			c.FailForm("entity_metadata", "location must be between 1 and 100 characters")
+			return
+		}
+	}
 	start, end := event.ScheduledStartTime, event.ScheduledEndTime
 	if req.Start != nil {
 		start = *req.Start

@@ -295,6 +295,11 @@ func (s *Server) StartPollSweeper(ctx context.Context, interval time.Duration) {
 				return
 			case <-ticker.C:
 				s.SweepExpiredPolls()
+				if events, err := s.Store.AdvanceExternalEvents(time.Now()); err == nil && s.Hub != nil {
+					for _, event := range events {
+						s.Hub.DispatchGuild(event.GuildID, "GUILD_SCHEDULED_EVENT_UPDATE", event)
+					}
+				}
 			}
 		}
 	}()

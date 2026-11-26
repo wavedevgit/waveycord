@@ -116,6 +116,7 @@ func TestScheduledEvents(t *testing.T) {
 	for _, body := range []map[string]any{
 		{"privacy_level": 1},
 		{"channel_id": text.ID},
+		{"entity_metadata": map[string]any{"location": ""}},
 		{"scheduled_end_time": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)},
 	} {
 		if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, body); status != 400 {
@@ -173,6 +174,9 @@ func TestScheduledEvents(t *testing.T) {
 		"name": "Meetup (completed)", "status": 3,
 	}, &updated); status != 200 || updated.Status != 3 {
 		t.Fatalf("patch event %d %+v", status, updated)
+	}
+	if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, map[string]any{"status": 2}); status != 400 {
+		t.Fatalf("terminal event restarted %d", status)
 	}
 	var users []any
 	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID+"/users", alice.Token, nil, &users); status != 200 || len(users) != 1 {
