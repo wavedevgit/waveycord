@@ -50,20 +50,7 @@ func (s *Store) DurableSearchQueue() bool {
 	return s.durableQueue
 }
 
-// enqueueSearch appends a job, collapsing any pending job for the same message so
-// the queue keeps at most one entry per message and ordering cannot invert.
-func (s *Store) enqueueSearch(job SearchJob) error {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return mapErr(err)
-	}
-	defer tx.Rollback()
-	if err := s.enqueueSearchTx(tx, job); err != nil {
-		return err
-	}
-	return mapErr(tx.Commit())
-}
-
+// enqueueSearchTx replaces a pending job inside the message mutation transaction.
 func (s *Store) enqueueSearchTx(tx *sqlx.Tx, job SearchJob) error {
 	if _, err := tx.Exec(`DELETE FROM search_queue WHERE message_id = ?`, job.MessageID); err != nil {
 		return mapErr(err)
@@ -209,27 +196,6 @@ func (s *Store) RunSearchQueue(ctx context.Context, interval time.Duration, batc
 		case <-time.After(interval):
 		}
 	}
-}
-
-// queueIndex records an index job when the queue is enabled.
-func (s *Store) queueIndex(messageID, guildID, channelID, authorID, content string, createdAt int64) bool {
-	if !s.DurableSearchQueue() {
-		return false
-	}
-	_ = s.enqueueSearch(SearchJob{
-		Op: SearchOpIndex, MessageID: messageID, GuildID: guildID,
-		ChannelID: channelID, AuthorID: authorID, Content: content, CreatedAt: createdAt,
-	})
-	return true
-}
-
-// queueDelete records a delete job when the queue is enabled.
-func (s *Store) queueDelete(messageID string) bool {
-	if !s.DurableSearchQueue() {
-		return false
-	}
-	_ = s.enqueueSearch(SearchJob{Op: SearchOpDelete, MessageID: messageID})
-	return true
 }
 
 // ErrListenUnsupported is returned when the wake-up listener is requested on a
