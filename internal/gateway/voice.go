@@ -216,7 +216,7 @@ func (v *VoiceServer) DeliverE2EEKey(channelID, userID, publicKey string) {
 }
 
 // relayE2EEKey routes a wrapped group key to one member and other instances.
-func (v *VoiceServer) relayE2EEKey(channelID, fromUserID, toUserID string, keyID uint32, wrapped string) {
+func (v *VoiceServer) relayE2EEKey(channelID, fromUserID, toUserID string, keyID uint32, wrapped, kind string) {
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, 1)
 	for c := range v.conns {
@@ -227,19 +227,19 @@ func (v *VoiceServer) relayE2EEKey(channelID, fromUserID, toUserID string, keyID
 	v.mu.Unlock()
 	for _, c := range targets {
 		c.send(map[string]any{"op": 35, "d": map[string]any{
-			"from_user_id": fromUserID, "key_id": keyID, "wrapped": wrapped,
+			"from_user_id": fromUserID, "key_id": keyID, "wrapped": wrapped, "kind": kind,
 		}})
 	}
 	if v.publish != nil {
 		v.publish("VOICE_E2EE_KEY", map[string]any{
 			"channel_id": channelID, "from_user_id": fromUserID,
-			"to_user_id": toUserID, "key_id": keyID, "wrapped": wrapped,
+			"to_user_id": toUserID, "key_id": keyID, "wrapped": wrapped, "kind": kind,
 		})
 	}
 }
 
 // DeliverE2EEKeyRelay forwards a wrapped group key received from another instance.
-func (v *VoiceServer) DeliverE2EEKeyRelay(channelID, fromUserID, toUserID string, keyID uint32, wrapped string) {
+func (v *VoiceServer) DeliverE2EEKeyRelay(channelID, fromUserID, toUserID string, keyID uint32, wrapped, kind string) {
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, 1)
 	for c := range v.conns {
@@ -250,7 +250,7 @@ func (v *VoiceServer) DeliverE2EEKeyRelay(channelID, fromUserID, toUserID string
 	v.mu.Unlock()
 	for _, c := range targets {
 		c.send(map[string]any{"op": 35, "d": map[string]any{
-			"from_user_id": fromUserID, "key_id": keyID, "wrapped": wrapped,
+			"from_user_id": fromUserID, "key_id": keyID, "wrapped": wrapped, "kind": kind,
 		}})
 	}
 }
@@ -1024,11 +1024,12 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			userID := c.userID
 			c.mu.Unlock()
 			v.publishE2EEKey(userID, pub)
-		case 35: // E2EE_KEY: wrapped group key relayed between members
+		case 35: // E2EE_KEY: wrapped key or epoch contribution relayed between members
 			var ex struct {
 				RecipientUserID string `json:"recipient_user_id"`
 				KeyID           uint32 `json:"key_id"`
 				Wrapped         string `json:"wrapped"`
+				Kind            string `json:"kind"`
 			}
 			if err := json.Unmarshal(frame.D, &ex); err != nil || ex.RecipientUserID == "" || ex.Wrapped == "" {
 				c.close(voiceCloseUnknownOpcode, "Invalid e2ee key relay")
@@ -1041,7 +1042,7 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			if channel == "" {
 				continue
 			}
-			v.relayE2EEKey(channel, sender, ex.RecipientUserID, ex.KeyID, ex.Wrapped)
+			v.relayE2EEKey(channel, sender, ex.RecipientUserID, ex.KeyID, ex.Wrapped, ex.Kind)
 		case voiceOpHeartbeat:
 			c.send(map[string]any{"op": voiceOpHeartbeatAck, "d": map[string]any{"t": time.Now().UnixMilli()}})
 		case voiceOpSpeaking:

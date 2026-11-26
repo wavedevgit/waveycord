@@ -142,9 +142,10 @@ func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
 			ToUserID   string `json:"to_user_id"`
 			KeyID      uint32 `json:"key_id"`
 			Wrapped    string `json:"wrapped"`
+			Kind       string `json:"kind"`
 		}
 		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
-			s.voice.DeliverE2EEKeyRelay(ev.ChannelID, ev.FromUserID, ev.ToUserID, ev.KeyID, ev.Wrapped)
+			s.voice.DeliverE2EEKeyRelay(ev.ChannelID, ev.FromUserID, ev.ToUserID, ev.KeyID, ev.Wrapped, ev.Kind)
 		}
 	case "VOICE_E2EE_REKEY":
 		var ev struct {

@@ -93,6 +93,7 @@ route is not registered yet.
 | Member group key agreement (op 34/35) with server-opaque `WCE2` media, local + cross-instance | implemented + tested |
 | Epoch rekey signal on voice join/leave (op 36, local + cross-instance) | implemented + tested |
 | Epoch rotation excluding departed members; stale-epoch rejection | implemented + tested |
+| Joint epoch secret from per-member contributions (TreeKEM-style) | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
 
