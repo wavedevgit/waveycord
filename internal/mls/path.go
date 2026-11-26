@@ -294,6 +294,7 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 		present[abs] = true
 		slotUser[abs] = l.UserID
 	}
+	rekeyed := map[int]bool{}
 	for n := range prevPublics {
 		if n >= size {
 			continue
@@ -305,11 +306,36 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 				break
 			}
 		}
-		if stale || len(membersUnder(n, size, slotUser)) == 0 {
-			// The key is no longer safe to use; drop it so later epochs rebuild it
-			// from a fresh path instead of reviving a removed member's key.
+		if len(membersUnder(n, size, slotUser)) == 0 {
 			delete(treePublics, n)
 			continue
+		}
+		if stale {
+			// The branch still has retained members, so reissue it: a fresh node
+			// secret, a fresh public key, and the new secret delivered to every
+			// retained member under the node. The removed member's old key opens
+			// nothing.
+			fresh := make([]byte, 32)
+			if _, err := rand.Read(fresh); err != nil {
+				return EpochCommit{}, nil, err
+			}
+			secrets[n] = fresh
+			priv, err := ecdh.X25519().NewPrivateKey(fresh)
+			if err == nil {
+				pub := clone32(priv.PublicKey().Bytes())
+				publics[n] = pub
+				treePublics[n] = pub
+			}
+			rekeyed[n] = true
+			tree.Publics = treePublics
+			for _, uid := range membersUnder(n, size, slotUser) {
+				i := leafIndex(next, uid)
+				env, err := sealRoot(fresh, next[i])
+				if err != nil {
+					return EpochCommit{}, nil, err
+				}
+				path.Recipients = append(path.Recipients, PathRecipient{Node: n, UserID: uid, Envelope: env})
+			}
 		}
 		present[n] = true
 	}
@@ -346,6 +372,18 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 		node = parent
 	}
 	root := secrets[1]
+	// Members whose branch was rekeyed get the root directly as well: their fresh
+	// node secret does not chain into the committer's independently chosen ancestors.
+	for n := range rekeyed {
+		for _, uid := range membersUnder(n, size, slotUser) {
+			i := leafIndex(next, uid)
+			env, err := sealRoot(root, next[i])
+			if err != nil {
+				return EpochCommit{}, nil, err
+			}
+			path.Recipients = append(path.Recipients, PathRecipient{Node: 1, UserID: uid, Envelope: env})
+		}
+	}
 	messages := make([]ProposalMessage, 0, len(proposals))
 	for _, p := range proposals {
 		messages = append(messages, SignProposalMessage(p, committerID, committerSignPriv))
@@ -483,36 +521,48 @@ func DerivePathRootWithKeys(c EpochCommit, userID string, priv [32]byte, nodePri
 	for node, key := range nodePrivs {
 		updated[node] = key
 	}
-	var start []byte
-	startNode := 0
+	opened := map[int][]byte{}
 	for _, r := range c.Path.Recipients {
 		if r.UserID == userID {
 			if secret, err := openRoot(r.Envelope, userID, priv); err == nil {
-				start, startNode = secret, r.Node
-				break
+				opened[r.Node] = secret
 			}
 			continue
 		}
 		if r.TargetNode > 0 {
 			if key, ok := nodePrivs[r.TargetNode]; ok {
 				if secret, err := openNodeKey(r.Envelope, r.TargetNode, key); err == nil {
-					start, startNode = secret, r.Node
-					break
+					opened[r.Node] = secret
 				}
 			}
 		}
 	}
-	if start == nil {
+	if len(opened) == 0 {
 		return nil, nil, fmt.Errorf("mls: no path envelope for %s", userID)
 	}
-	node := startNode
-	cur := start
+	// The secret closest to the root wins for the root value; deeper opened secrets
+	// are still persisted (they are the member's branch keys).
+	closest := 0
+	for n := range opened {
+		if closest == 0 || n < closest {
+			closest = n
+		}
+	}
+	node := closest
+	cur := opened[node]
 	updated[node] = append([]byte(nil), cur...)
 	for node > 1 {
 		parent := node / 2
 		cur = pathNodeSecret(cur)
 		node = parent
-		updated[node] = append([]byte(nil), cur...)
+		if _, exists := updated[node]; !exists {
+			updated[node] = append([]byte(nil), cur...)
+		}
+	}
+	for n, secret := range opened {
+		if _, exists := updated[n]; !exists {
+			updated[n] = append([]byte(nil), secret...)
+		}
 	}
 	return cur, updated, nil
 }

@@ -2,6 +2,7 @@ package mls
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"testing"
 )
@@ -343,13 +344,22 @@ func TestRemovedMemberBranchExcluded(t *testing.T) {
 	if err := VerifyEpochCommit(commit2, roster, signKeys); err != nil {
 		t.Fatalf("epoch2 verify: %v", err)
 	}
+	addressed := 0
 	for _, r := range commit2.Path.Recipients {
 		if r.TargetNode == 3 {
-			t.Fatalf("stale node 3 was addressed: %+v", r)
+			addressed++
 		}
 	}
-	if _, still := commit2.Tree.Publics[3]; still {
-		t.Fatal("node 3 key was retained after covering a removed member")
+	if addressed == 0 {
+		t.Fatalf("rekeyed branch was not node-addressed: %+v", commit2.Path.Recipients)
+	}
+	oldPub, hadOld := commit1.Tree.Publics[3]
+	newPub, hasNew := commit2.Tree.Publics[3]
+	if !hadOld || !hasNew {
+		t.Fatalf("node 3 key missing (old=%v new=%v)", hadOld, hasNew)
+	}
+	if oldPub == newPub {
+		t.Fatal("node 3 public key was not rotated")
 	}
 	if slot := commit2.Tree.SlotFor(d.id); slot != -1 {
 		t.Fatalf("removed member retained slot %d", slot)
@@ -358,10 +368,22 @@ func TestRemovedMemberBranchExcluded(t *testing.T) {
 	if _, _, err := DerivePathRootWithKeys(commit2, d.id, d.priv, dKeys); err == nil {
 		t.Fatal("removed member derived the epoch-2 root with its stale node key")
 	}
-	// The retained member under the same node gets a leaf envelope and derives.
-	eRoot, _, err := DerivePathRootWithKeys(commit2, e.id, e.priv, nil)
+	// The retained member under the rekeyed node learns the fresh node secret and the
+	// root, and persists the rotated node key for later commits.
+	eRoot, eKeys, err := DerivePathRootWithKeys(commit2, e.id, e.priv, nil)
 	if err != nil || !bytes.Equal(eRoot, epoch2.Root) {
 		t.Fatalf("e epoch2: %v", err)
+	}
+	fresh, ok := eKeys[3]
+	if !ok {
+		t.Fatal("e did not persist the rekeyed node key")
+	}
+	if clone32(fresh) != newPub {
+		// The node secret must match the public key that was published.
+		priv, kerr := ecdh.X25519().NewPrivateKey(fresh)
+		if kerr != nil || clone32(priv.PublicKey().Bytes()) != newPub {
+			t.Fatal("e's node key does not match the published rekeyed public key")
+		}
 	}
 	aRoot, _, err := DerivePathRootWithKeys(commit2, a.id, a.priv, nil)
 	if err != nil || !bytes.Equal(aRoot, epoch2.Root) {
