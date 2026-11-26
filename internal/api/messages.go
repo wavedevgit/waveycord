@@ -91,11 +91,30 @@ func (s *Server) handleCreateMessage(c *Ctx) {
 			return
 		}
 	}
-	if msg := validateMessageComponents(req.Components); msg != "" {
+	if msg := validateMessageComponentsWithFlags(req.Components, req.Flags); msg != "" {
 		c.FailForm("components", msg)
 		return
 	}
-	if strings.TrimSpace(req.Content) == "" && len(req.Embeds) == 0 && len(req.Attachments) == 0 && req.Poll == nil {
+	if req.Flags&flagComponentsV2 != 0 {
+		if strings.TrimSpace(req.Content) != "" {
+			c.FailForm("content", "content is not allowed on components v2 messages")
+			return
+		}
+		if len(req.Embeds) > 0 {
+			c.FailForm("embeds", "embeds are not allowed on components v2 messages")
+			return
+		}
+		if req.Poll != nil {
+			c.FailForm("poll", "polls are not allowed on components v2 messages")
+			return
+		}
+		if len(req.StickerIDs) > 0 {
+			c.FailForm("sticker_ids", "stickers are not allowed on components v2 messages")
+			return
+		}
+	}
+	componentsOnly := req.Flags&flagComponentsV2 != 0 && len(req.Components) > 0
+	if strings.TrimSpace(req.Content) == "" && len(req.Embeds) == 0 && len(req.Attachments) == 0 && req.Poll == nil && !componentsOnly {
 		fail(c, ErrEmptyMessage)
 		return
 	}
@@ -239,9 +258,27 @@ func (s *Server) handleUpdateMessage(c *Ctx) {
 		c.FailForm("embeds", "Must be 10 or fewer in length")
 		return
 	}
+	flags := msg.Flags
+	if req.Flags != nil {
+		flags = *req.Flags
+	}
 	if req.Components != nil {
-		if msg := validateMessageComponents(*req.Components); msg != "" {
+		if msg := validateMessageComponentsWithFlags(*req.Components, flags); msg != "" {
 			c.FailForm("components", msg)
+			return
+		}
+	}
+	if flags&flagComponentsV2 != 0 {
+		if msg.Flags&flagComponentsV2 != 0 && req.Content != nil {
+			c.FailForm("content", "content cannot be edited on components v2 messages")
+			return
+		}
+		if req.Content != nil && strings.TrimSpace(*req.Content) != "" {
+			c.FailForm("content", "content is not allowed on components v2 messages")
+			return
+		}
+		if req.Embeds != nil && len(*req.Embeds) > 0 {
+			c.FailForm("embeds", "embeds are not allowed on components v2 messages")
 			return
 		}
 	}

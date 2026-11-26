@@ -135,7 +135,7 @@ from other instances are delivered in bus order.
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
-| Components v2 validation | TBD |
+| Components v2: container/section/text/media/file/separator validation under flag `1<<15` | implemented + tested |
 
 ## Invites and webhooks
 
@@ -397,6 +397,33 @@ Remaining differences from Discord's published design:
 - Still absent: PubSub-backed guaranteed indexing, BFG reindex-on-threshold, and
   index-size automation. The reindex is a single bounded scan, not a distributed
   migration.
+
+## Components v2
+
+Sending flag `1<<15` switches message components to the v2 layout rules. With the
+flag, `content`, `embeds`, `poll` and `sticker_ids` are rejected, and a component-only
+message is allowed (the empty-message check treats v2 components as content).
+
+Validated: at most 40 components counted recursively (children plus section
+accessory); unique non-negative component `id`s; top level allows action row, section,
+text display, media gallery, file, separator and container; containers reject nesting,
+need at least one child, restrict children to those seven types and require
+`accent_color` in `0x000000`-`0xFFFFFF`; sections need 1-3 text-display children and
+a button or thumbnail accessory; text displays need non-empty content and the total
+across the message is capped at 4000 characters; media galleries need 1-10 items with
+`media.url`; file components need an `attachment://name` url; separator `spacing` is 1
+or 2; thumbnails need `media.url` and descriptions cap at 1024 characters; buttons in
+a section follow style rules (link needs a url, premium needs `sku_id`, others need
+`custom_id` and a label).
+
+Editing a v2 message rejects `content` and non-empty `embeds`, and accepts replacement
+components validated under the same flag.
+
+Not 1:1: component `id`s are accepted as sent and never auto-generated; `custom_id`
+uniqueness across a message is not enforced; attachments referenced by file/media
+components are not resolved or exposed, because the message attachment pipeline is
+separate; legacy action-row rules still reject premium button style 6 outside a
+section accessory.
 
 ## Polls
 
