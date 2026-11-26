@@ -482,8 +482,8 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	signKeyMap[dave] = daveSignPub
 	// Epoch 3 negotiates the AES-128-GCM suite.
 	prevTree := epoch2State.Tree
-	commit3, epoch3State, err := mls.NewEpochCommitWithSuite(3, commit2.Roster,
-		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}}, nil,
+	commit3, epoch3State, err := mls.NewEpochCommitNegotiating(3, commit2.Roster,
+		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}},
 		mls.SuiteX25519AES128GCM, alice.ID, aliceSignPriv, alicePriv, prevTree)
 	if err != nil {
 		t.Fatalf("epoch3 commit: %v", err)
@@ -503,12 +503,26 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if err := mls.VerifyEpochCommit(relayed3, commit2.Roster, signKeyMap); err != nil {
 		t.Fatalf("relayed epoch3 verify: %v", err)
 	}
-	if len(commit3.ProposalMessages) != 1 || commit3.ProposalMessages[0].Proposal.Type != "add" ||
-		commit3.ProposalMessages[0].Proposal.UserID != dave {
-		t.Fatalf("epoch3 add proposal message: %+v", commit3.ProposalMessages)
+	if len(commit3.ProposalMessages) != 2 {
+		t.Fatalf("epoch3 proposal messages: %+v", commit3.ProposalMessages)
 	}
-	if err := mls.VerifyProposalMessage(commit3.ProposalMessages[0], signKeyMap); err != nil {
-		t.Fatalf("epoch3 proposal signature: %v", err)
+	sawAdd, sawSuite := false, false
+	for _, m := range commit3.ProposalMessages {
+		switch m.Proposal.Type {
+		case "add":
+			sawAdd = m.Proposal.UserID == dave
+		case "ciphersuite":
+			sawSuite = m.Proposal.Suite == mls.SuiteX25519AES128GCM
+		}
+	}
+	if !sawAdd || !sawSuite {
+		t.Fatalf("epoch3 proposals: %+v", commit3.ProposalMessages)
+	}
+	_ = sawAdd
+	for _, m := range commit3.ProposalMessages {
+		if err := mls.VerifyProposalMessage(m, signKeyMap); err != nil {
+			t.Fatalf("epoch3 proposal signature (%s): %v", m.Proposal.Type, err)
+		}
 	}
 	if len(commit3.TreePublics) == 0 || len(epoch3State.TreePublics) == 0 {
 		t.Fatal("epoch3 did not publish persisted tree keys")
@@ -523,7 +537,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		t.Fatal("epoch3 dropped every previous tree key")
 	}
 	badAdd := commit3
-	badAdd.ProposalMessages = []mls.ProposalMessage{commit3.ProposalMessages[0]}
+	badAdd.ProposalMessages = append([]mls.ProposalMessage(nil), commit3.ProposalMessages...)
 	badAdd.ProposalMessages[0].Signature = []byte{9, 9, 9}
 	if err := mls.VerifyEpochCommit(badAdd, commit2.Roster, signKeyMap); err == nil {
 		t.Fatal("tampered add proposal signature verified")

@@ -54,13 +54,21 @@ func encodeProposal(w *tlsWriter, p Proposal) error {
 		w.u8(0)
 	case "remove":
 		w.u8(1)
+	case "ciphersuite":
+		w.u8(2)
 	default:
 		return errTLS
 	}
 	if err := w.opaque16([]byte(p.UserID)); err != nil {
 		return err
 	}
-	return w.opaque16(p.Public[:])
+	if err := w.opaque16(p.Public[:]); err != nil {
+		return err
+	}
+	if p.Type == "ciphersuite" {
+		w.u32(uint32(p.Suite))
+	}
+	return nil
 }
 
 func decodeProposal(r *tlsReader) (Proposal, error) {
@@ -82,6 +90,13 @@ func decodeProposal(r *tlsReader) (Proposal, error) {
 		p.Type = "add"
 	case 1:
 		p.Type = "remove"
+	case 2:
+		p.Type = "ciphersuite"
+		suite, err := r.u32()
+		if err != nil {
+			return p, err
+		}
+		p.Suite = Ciphersuite(suite)
 	default:
 		return p, errTLS
 	}

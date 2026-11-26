@@ -188,10 +188,31 @@ func NewEpochCommitWithMessages(epoch uint32, roster []Leaf, proposals []Proposa
 		committerID, committerSignPriv, committerLeafPriv, previous)
 }
 
+// NewEpochCommitNegotiating appends a signed ciphersuite proposal from the committer
+// and commits that suite, the RFC-style way a suite changes.
+func NewEpochCommitNegotiating(epoch uint32, roster []Leaf, proposals []Proposal, suite Ciphersuite, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
+	if !suite.Supported() {
+		return EpochCommit{}, nil, fmt.Errorf("mls: unsupported ciphersuite %#x", suite)
+	}
+	for _, p := range proposals {
+		if p.Type == "ciphersuite" && p.Suite != suite {
+			return EpochCommit{}, nil, fmt.Errorf("mls: ciphersuite proposal %#x does not match commit suite %#x", p.Suite, suite)
+		}
+	}
+	withSuite := append([]Proposal(nil), proposals...)
+	withSuite = append(withSuite, Proposal{Type: "ciphersuite", Suite: suite})
+	return NewEpochCommitWithSuite(epoch, roster, withSuite, nil, suite, committerID, committerSignPriv, committerLeafPriv, previous)
+}
+
 // NewEpochCommitWithSuite selects the negotiated ciphersuite for the commit.
 func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, messages []ProposalMessage, suite Ciphersuite, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
 	if !suite.Supported() {
 		return EpochCommit{}, nil, fmt.Errorf("mls: unsupported ciphersuite %#x", suite)
+	}
+	for _, p := range proposals {
+		if p.Type == "ciphersuite" && p.Suite != suite {
+			return EpochCommit{}, nil, fmt.Errorf("mls: ciphersuite proposal %#x does not match commit suite %#x", p.Suite, suite)
+		}
 	}
 	next, err := ApplyProposals(roster, proposals)
 	if err != nil {
@@ -555,6 +576,18 @@ func membersUnder(node, size int, slotUser map[int]string) []string {
 
 func clone32(b []byte) (out [32]byte) { copy(out[:], b); return out }
 
+// VerifyEpochCommitWithSuite verifies the commit against the previous epoch's
+// ciphersuite as well as its roster.
+func VerifyEpochCommitWithSuite(c EpochCommit, previous []Leaf, previousSuite Ciphersuite, signKeys map[string]ed25519.PublicKey) error {
+	if c.Path == nil || len(c.Path.Publics) == 0 {
+		return ErrVerification
+	}
+	if c.Path.CommitterLeaf < 1 {
+		return ErrVerification
+	}
+	return VerifyWithSuite(c.Commit, previous, previousSuite, signKeys)
+}
+
 // VerifyEpochCommit verifies the commit signature and roster transition, including
 // the path chain shape.
 func VerifyEpochCommit(c EpochCommit, previous []Leaf, signKeys map[string]ed25519.PublicKey) error {
@@ -564,7 +597,7 @@ func VerifyEpochCommit(c EpochCommit, previous []Leaf, signKeys map[string]ed255
 	if c.Path.CommitterLeaf < 1 {
 		return ErrVerification
 	}
-	return Verify(c.Commit, previous, signKeys)
+	return VerifyWithSuite(c.Commit, previous, 0, signKeys)
 }
 
 // sealNodeKey seals a path secret to one internal node's public key.

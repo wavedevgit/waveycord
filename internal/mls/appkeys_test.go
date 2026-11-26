@@ -136,3 +136,82 @@ func TestCiphersuiteNegotiation(t *testing.T) {
 		t.Fatal("unsupported negotiated suite accepted")
 	}
 }
+
+// TestProposalSuiteNegotiation proves a ciphersuite changes only through a signed
+// ciphersuite proposal and that silent changes are rejected against the previous
+// epoch's suite.
+func TestProposalSuiteNegotiation(t *testing.T) {
+	a := newMember(t, "psa")
+	b := newMember(t, "psb")
+	roster := []Leaf{a.leaf(), b.leaf()}
+	signKeys := map[string]ed25519.PublicKey{a.id: a.signK, b.id: b.signK}
+
+	negotiated, epoch, err := NewEpochCommitNegotiating(2, roster,
+		[]Proposal{{Type: "remove", UserID: b.id}}, SuiteX25519AES128GCM,
+		a.id, a.signP, a.priv, nil)
+	if err != nil {
+		t.Fatalf("negotiating commit: %v", err)
+	}
+	if err := VerifyEpochCommitWithSuite(negotiated, roster, SuiteX25519AES256GCM, signKeys); err != nil {
+		t.Fatalf("negotiated change rejected: %v", err)
+	}
+	sawSuite := false
+	for _, p := range negotiated.Proposals {
+		if p.Type == "ciphersuite" && p.Suite == SuiteX25519AES128GCM {
+			sawSuite = true
+		}
+	}
+	if !sawSuite {
+		t.Fatal("ciphersuite proposal missing from the commit")
+	}
+	if negotiated.CipherSuite != SuiteX25519AES128GCM || len(epoch.Root) != 32 {
+		t.Fatalf("commit suite %#x", negotiated.CipherSuite)
+	}
+
+	// The same commit verifies without a previous-suite constraint, but a silent
+	// change (no proposal) is rejected against the previous suite.
+	silent, _, err := NewEpochCommitWithSuite(2, roster, nil, nil, SuiteX25519AES128GCM,
+		a.id, a.signP, a.priv, nil)
+	if err != nil {
+		t.Fatalf("silent commit: %v", err)
+	}
+	if err := VerifyEpochCommit(silent, roster, signKeys); err != nil {
+		t.Fatalf("silent commit with no previous suite: %v", err)
+	}
+	if err := VerifyEpochCommitWithSuite(silent, roster, SuiteX25519AES256GCM, signKeys); err == nil {
+		t.Fatal("silent mid-epoch suite change accepted")
+	}
+	// Staying on the previous suite without a proposal is allowed.
+	same, _, err := NewEpochCommitWithSuite(2, roster, nil, nil, SuiteX25519AES256GCM,
+		a.id, a.signP, a.priv, nil)
+	if err != nil {
+		t.Fatalf("same-suite commit: %v", err)
+	}
+	if err := VerifyEpochCommitWithSuite(same, roster, SuiteX25519AES256GCM, signKeys); err != nil {
+		t.Fatalf("same-suite epoch rejected: %v", err)
+	}
+
+	// Two ciphersuite proposals are rejected.
+	dup, _, err := NewEpochCommitWithSuite(2, roster, []Proposal{
+		{Type: "ciphersuite", Suite: SuiteX25519AES128GCM},
+		{Type: "ciphersuite", Suite: SuiteX25519AES128GCM},
+	}, nil, SuiteX25519AES128GCM, a.id, a.signP, a.priv, nil)
+	if err != nil {
+		t.Fatalf("duplicate proposal build: %v", err)
+	}
+	if err := VerifyEpochCommit(dup, roster, signKeys); err == nil {
+		t.Fatal("duplicate ciphersuite proposals accepted")
+	}
+
+	// A proposal naming a different suite than the commit is refused at build time.
+	if _, _, err := NewEpochCommitWithSuite(2, roster, []Proposal{
+		{Type: "ciphersuite", Suite: SuiteX25519AES128GCM},
+	}, nil, SuiteX25519AES256GCM, a.id, a.signP, a.priv, nil); err == nil {
+		t.Fatal("mismatched suite proposal accepted")
+	}
+	// An unsupported suite proposal is refused when applied.
+	if _, _, err := NewEpochCommitNegotiating(2, roster, nil, Ciphersuite(0x0099),
+		a.id, a.signP, a.priv, nil); err == nil {
+		t.Fatal("unsupported negotiation accepted")
+	}
+}

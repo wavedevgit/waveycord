@@ -57,9 +57,10 @@ type Leaf struct {
 
 // Proposal is an Add or Remove operation inside a commit.
 type Proposal struct {
-	Type   string   `json:"type"` // "add" or "remove"
-	UserID string   `json:"user_id"`
-	Public [32]byte `json:"public,omitempty"`
+	Type   string      `json:"type"` // "add", "remove" or "ciphersuite"
+	UserID string      `json:"user_id,omitempty"`
+	Public [32]byte    `json:"public,omitempty"`
+	Suite  Ciphersuite `json:"cipher_suite,omitempty"`
 }
 
 // Envelope is the HPKE-style recipient encryption of the epoch root.
@@ -302,6 +303,10 @@ func ApplyProposals(roster []Leaf, proposals []Proposal) ([]Leaf, error) {
 				return nil, fmt.Errorf("mls: cannot remove unknown member %s", p.UserID)
 			}
 			delete(byID, p.UserID)
+		case "ciphersuite":
+			if !p.Suite.Supported() {
+				return nil, fmt.Errorf("mls: unsupported ciphersuite proposal %#x", p.Suite)
+			}
 		default:
 			return nil, fmt.Errorf("mls: unknown proposal %q", p.Type)
 		}
@@ -383,8 +388,33 @@ func sealRoot(root []byte, leaf Leaf) (Envelope, error) {
 }
 
 // Verify checks the signature, roster transition and proposer membership.
+// Verify is VerifyWithSuite without a previous-suite constraint.
 func Verify(c Commit, previous []Leaf, signKeys map[string]ed25519.PublicKey) error {
+	return VerifyWithSuite(c, previous, 0, signKeys)
+}
+
+// VerifyWithSuite additionally enforces ciphersuite negotiation: a committed suite
+// may only change through a signed ciphersuite proposal, and an unchanged suite must
+// match the previous epoch's.
+func VerifyWithSuite(c Commit, previous []Leaf, previousSuite Ciphersuite, signKeys map[string]ed25519.PublicKey) error {
 	if !c.CipherSuite.Supported() {
+		return ErrVerification
+	}
+	selected := Ciphersuite(0)
+	for _, p := range c.Proposals {
+		if p.Type != "ciphersuite" {
+			continue
+		}
+		if selected != 0 {
+			return ErrVerification
+		}
+		selected = p.Suite
+	}
+	if selected != 0 {
+		if selected != c.CipherSuite || !selected.Supported() {
+			return ErrVerification
+		}
+	} else if previousSuite != 0 && c.CipherSuite != previousSuite {
 		return ErrVerification
 	}
 	// Every proposal travels as a signed wire message, and the commit references the

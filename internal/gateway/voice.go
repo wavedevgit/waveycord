@@ -77,6 +77,7 @@ type VoiceServer struct {
 	remote      map[uint32]*remoteOpaque
 	mlsMu       sync.Mutex
 	mlsRoster   map[string][]mls.Leaf
+	mlsSuite    map[string]mls.Ciphersuite
 	mlsSign     map[string]map[string]ed25519.PublicKey
 	mlsUserSign map[string]ed25519.PublicKey
 	instanceID  string
@@ -420,6 +421,7 @@ func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) erro
 	}
 	v.mlsMu.Lock()
 	prev := v.mlsRoster[channel]
+	prevSuite := v.mlsSuite[channel]
 	v.mlsMu.Unlock()
 
 	if len(prev) == 0 {
@@ -442,7 +444,7 @@ func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) erro
 		}
 		prev = ec.Roster
 	}
-	if err := mls.VerifyEpochCommit(ec, prev, keys); err != nil {
+	if err := mls.VerifyEpochCommitWithSuite(ec, prev, prevSuite, keys); err != nil {
 		return err
 	}
 	v.mlsMu.Lock()
@@ -450,6 +452,10 @@ func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) erro
 		v.mlsRoster = map[string][]mls.Leaf{}
 	}
 	v.mlsRoster[channel] = append([]mls.Leaf(nil), ec.Roster...)
+	if v.mlsSuite == nil {
+		v.mlsSuite = map[string]mls.Ciphersuite{}
+	}
+	v.mlsSuite[channel] = ec.CipherSuite
 	v.mlsMu.Unlock()
 	return nil
 }
