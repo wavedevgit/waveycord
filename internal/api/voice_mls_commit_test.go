@@ -244,26 +244,34 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		return leaves
 	}
 
-	// Epoch 1: signed commit with the three-member roster.
-	nonce := make([]byte, 8)
-	_, _ = rand.Read(nonce)
-	commit1 := signCommit(aliceSignPriv, mlsCommit{
-		Epoch: 1, Roster: roster(aliceRekey), Nonce: hex.EncodeToString(nonce), Committer: alice.ID,
-	})
-	if !verifyCommit(commit1, roster(bobRekey), signKeys) {
-		t.Fatal("valid commit failed verification")
+	// Epoch 1: a fully signed MLS commit with the three-member roster. The server
+	// validates it (trust-on-first-use) before relaying.
+	leaves1 := []mls.Leaf{
+		{UserID: alice.ID, Public: alicePub},
+		{UserID: bob.ID, Public: bobPub},
+		{UserID: charlie.ID, Public: charliePub},
+	}
+	signKeyMap := map[string]ed25519.PublicKey{
+		alice.ID: aliceSignPub, bob.ID: bobSignPub, charlie.ID: charlieSignPub,
+	}
+	commit1, _, err := mls.NewEpochCommit(1, leaves1, nil, alice.ID, aliceSignPriv, alicePriv)
+	if err != nil {
+		t.Fatalf("epoch1 commit: %v", err)
+	}
+	if err := mls.VerifyEpochCommit(commit1, leaves1, signKeyMap); err != nil {
+		t.Fatalf("epoch1 verify: %v", err)
 	}
 	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit1})
 	for _, conn := range []*websocket.Conn{bobVoice, charlieVoice} {
 		f := readVoiceOp(t, conn, 38, time.Now().Add(20*time.Second))
-		var got mlsCommit
+		var got mls.EpochCommit
 		raw := f["d"].(map[string]any)["commit"]
 		buf, _ := jsonMarshal(raw)
 		if err := jsonUnmarshalBytes(buf, &got); err != nil {
 			t.Fatalf("decode commit: %v", err)
 		}
-		if !verifyCommit(got, roster(bobRekey), signKeys) {
-			t.Fatal("relayed commit failed verification")
+		if err := mls.VerifyEpochCommit(got, leaves1, signKeyMap); err != nil {
+			t.Fatalf("relayed commit failed verification: %v", err)
 		}
 	}
 
@@ -336,14 +344,6 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if len(roster2) != 2 {
 		t.Fatalf("epoch2 roster = %v", roster2)
 	}
-	leaves1 := []mls.Leaf{
-		{UserID: alice.ID, Public: alicePub},
-		{UserID: bob.ID, Public: bobPub},
-		{UserID: charlie.ID, Public: charliePub},
-	}
-	signKeyMap := map[string]ed25519.PublicKey{
-		alice.ID: aliceSignPub, bob.ID: bobSignPub, charlie.ID: charlieSignPub,
-	}
 	// A prior path update by Charlie establishes the internal node above his slot and
 	// publishes a stable leaf layout; carrying it forward keeps Charlie's slot blank
 	// instead of compacting the tree.
@@ -362,6 +362,16 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	}
 	if err := mls.VerifyEpochCommit(commit2, leaves1, signKeyMap); err != nil {
 		t.Fatalf("epoch2 verify: %v", err)
+	}
+	{
+		raw, _ := json.Marshal(commit2)
+		var rt mls.EpochCommit
+		if err := json.Unmarshal(raw, &rt); err != nil {
+			t.Fatalf("roundtrip decode: %v", err)
+		}
+		if err := mls.VerifyEpochCommit(rt, leaves1, signKeyMap); err != nil {
+			t.Fatalf("roundtrip verify: %v", err)
+		}
 	}
 	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit2})
 	cf := readVoiceOp(t, bobVoice, 38, time.Now().Add(20*time.Second))

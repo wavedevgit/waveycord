@@ -3,9 +3,11 @@ package gateway
 import (
 	"context"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -20,6 +22,7 @@ import (
 	"github.com/coder/websocket"
 	"golang.org/x/crypto/curve25519"
 
+	"github.com/wavedevgit/waveycord/internal/mls"
 	"github.com/wavedevgit/waveycord/internal/store"
 	"github.com/wavedevgit/waveycord/internal/voicecodec"
 )
@@ -51,29 +54,33 @@ type VoiceServer struct {
 	store *store.Store
 	log   *slog.Logger
 
-	udp        *net.UDPConn
-	ip         string
-	port       int
-	mu         sync.Mutex
-	conns      map[*voiceConn]struct{}
-	session    atomic.Int64
-	rtp        atomic.Int64
-	speak      atomic.Int64
-	forwarded  atomic.Int64
-	transcodes atomic.Int64
-	publish    func(name string, data any)
-	codecReady bool
-	done       chan struct{}
-	tick       *time.Ticker
-	mixMu      sync.Mutex
-	mixers     map[string]*channelMixer
-	mixes      atomic.Int64
-	e2eeGaps   atomic.Int64
-	e2eeDupes  atomic.Int64
-	remoteMu   sync.Mutex
-	remote     map[uint32]*remoteOpaque
-	instanceID string
-	clusterMix bool
+	udp         *net.UDPConn
+	ip          string
+	port        int
+	mu          sync.Mutex
+	conns       map[*voiceConn]struct{}
+	session     atomic.Int64
+	rtp         atomic.Int64
+	speak       atomic.Int64
+	forwarded   atomic.Int64
+	transcodes  atomic.Int64
+	publish     func(name string, data any)
+	codecReady  bool
+	done        chan struct{}
+	tick        *time.Ticker
+	mixMu       sync.Mutex
+	mixers      map[string]*channelMixer
+	mixes       atomic.Int64
+	e2eeGaps    atomic.Int64
+	e2eeDupes   atomic.Int64
+	remoteMu    sync.Mutex
+	remote      map[uint32]*remoteOpaque
+	mlsMu       sync.Mutex
+	mlsRoster   map[string][]mls.Leaf
+	mlsSign     map[string]map[string]ed25519.PublicKey
+	mlsUserSign map[string]ed25519.PublicKey
+	instanceID  string
+	clusterMix  bool
 }
 
 // VoiceOptions tunes the advertised address.
@@ -232,6 +239,11 @@ func (v *VoiceServer) publishE2EEKey(userID string, pub [32]byte, signingKey str
 // DeliverE2EEKey publishes a member key announcement received from another
 // instance to local peers.
 func (v *VoiceServer) DeliverE2EEKey(channelID, userID, publicKey, signingKey string) {
+	if signingKey != "" {
+		if sk, err := hex.DecodeString(signingKey); err == nil && len(sk) == ed25519.PublicKeySize {
+			v.rememberMLSKey(channelID, userID, ed25519.PublicKey(sk))
+		}
+	}
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for c := range v.conns {
@@ -364,6 +376,66 @@ func (v *VoiceServer) roster(channelID string) []string {
 		}
 	}
 	return ids
+}
+
+// rememberMLSKey records a member's signing key for later commit validation.
+func (v *VoiceServer) rememberMLSKey(channel, userID string, key ed25519.PublicKey) {
+	v.mlsMu.Lock()
+	defer v.mlsMu.Unlock()
+	if v.mlsSign == nil {
+		v.mlsSign = map[string]map[string]ed25519.PublicKey{}
+	}
+	if channel != "" {
+		if v.mlsSign[channel] == nil {
+			v.mlsSign[channel] = map[string]ed25519.PublicKey{}
+		}
+		v.mlsSign[channel][userID] = key
+	}
+	if v.mlsUserSign == nil {
+		v.mlsUserSign = map[string]ed25519.PublicKey{}
+	}
+	v.mlsUserSign[userID] = key
+}
+
+// validateMLSCommit checks a commit before relaying: ciphersuite, proposal
+// signatures from roster members, roster transition and path shape. The server keeps
+// the last accepted roster per channel, so a later commit cannot rewrite history. The
+// first commit in a channel is trusted to declare the roster (trust-on-first-use) and
+// must carry no proposals.
+func (v *VoiceServer) validateMLSCommit(channel string, raw json.RawMessage) error {
+	var ec mls.EpochCommit
+	if err := json.Unmarshal(raw, &ec); err != nil {
+		return err
+	}
+	v.mlsMu.Lock()
+	prev := v.mlsRoster[channel]
+	keys := map[string]ed25519.PublicKey{}
+	for uid, k := range v.mlsSign[channel] {
+		keys[uid] = k
+	}
+	for uid, k := range v.mlsUserSign {
+		if _, ok := keys[uid]; !ok {
+			keys[uid] = k
+		}
+	}
+	v.mlsMu.Unlock()
+
+	if len(prev) == 0 {
+		if len(ec.Proposals) != 0 {
+			return mls.ErrVerification
+		}
+		prev = ec.Roster
+	}
+	if err := mls.VerifyEpochCommit(ec, prev, keys); err != nil {
+		return err
+	}
+	v.mlsMu.Lock()
+	if v.mlsRoster == nil {
+		v.mlsRoster = map[string][]mls.Leaf{}
+	}
+	v.mlsRoster[channel] = append([]mls.Leaf(nil), ec.Roster...)
+	v.mlsMu.Unlock()
+	return nil
 }
 
 // relayCommit broadcasts a signed MLS commit to channel peers and other instances.
@@ -1430,7 +1502,15 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			c.e2eeSign = ex.SigningKey
 			c.hasE2EE = true
 			userID := c.userID
+			channelID := c.channelID
 			c.mu.Unlock()
+			if ex.SigningKey != "" {
+				if sk, err := hex.DecodeString(ex.SigningKey); err == nil && len(sk) == ed25519.PublicKeySize {
+					// Recording by user as well as channel avoids losing the key when
+					// the publish frame races the voice-state channel assignment.
+					v.rememberMLSKey(channelID, userID, ed25519.PublicKey(sk))
+				}
+			}
 			v.publishE2EEKey(userID, pub, ex.SigningKey)
 		case 35: // E2EE_KEY: wrapped key or epoch contribution relayed between members
 			var ex struct {
@@ -1463,6 +1543,10 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			c.mu.Unlock()
 			if channel == "" {
 				continue
+			}
+			if err := v.validateMLSCommit(channel, commit); err != nil {
+				c.close(voiceCloseUnknownOpcode, "Invalid MLS commit")
+				return
 			}
 			v.relayCommit(channel, sender, commit)
 		case voiceOpHeartbeat:
