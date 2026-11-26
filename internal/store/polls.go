@@ -47,7 +47,7 @@ func (s *Store) Poll(messageID string) (model.Poll, error) {
 // me_voted for that user. Counts are always included, matching the documented
 // "results may be present while a poll is in progress" note.
 func (s *Store) PollFor(messageID, viewer string) (model.Poll, error) {
-	p, err := s.pollBase(messageID)
+	p, snap, err := s.pollBase(messageID)
 	if err != nil {
 		return p, err
 	}
@@ -55,14 +55,19 @@ func (s *Store) PollFor(messageID, viewer string) (model.Poll, error) {
 	if err != nil {
 		return p, err
 	}
-	counts, err := s.pollCounts(messageID)
-	if err != nil {
-		return p, err
+	counts := snap
+	if !p.Results.IsFinalized {
+		// Live counts while the poll is open; once finalized the stored snapshot is
+		// authoritative so a later vote-row change cannot move the tally.
+		counts, err = s.pollCounts(messageID)
+		if err != nil {
+			return p, err
+		}
 	}
 	for i := range counts {
 		counts[i].MeVoted = voted[counts[i].ID]
 	}
-	p.Results = &model.PollResults{IsFinalized: p.Results != nil && p.Results.IsFinalized, AnswerCounts: counts}
+	p.Results.AnswerCounts = counts
 	return p, nil
 }
 
@@ -87,25 +92,27 @@ func (s *Store) pollVotedAnswers(messageID, viewer string) (map[int]bool, error)
 	return out, mapErr(rows.Err())
 }
 
-// pollBase loads the poll row and finalizes it lazily when expired.
-func (s *Store) pollBase(messageID string) (model.Poll, error) {
+// pollBase loads the poll row, finalizes it lazily when expired, and returns the
+// persisted final tally when one exists.
+func (s *Store) pollBase(messageID string) (model.Poll, []model.PollAnswerCount, error) {
 	var (
-		p         model.Poll
-		question  string
-		answers   string
-		expiryMs  int64
-		layout    int
-		finalized bool
+		p           model.Poll
+		question    string
+		answers     string
+		finalCounts string
+		expiryMs    int64
+		layout      int
+		finalized   bool
 	)
-	err := s.DB.QueryRow(`SELECT question, answers, expiry, allow_multiselect, layout_type, finalized
+	err := s.DB.QueryRow(`SELECT question, answers, expiry, allow_multiselect, layout_type, finalized, final_counts
 		FROM polls WHERE message_id = ?`, messageID).
-		Scan(&question, &answers, &expiryMs, &p.AllowMultiselect, &layout, &finalized)
+		Scan(&question, &answers, &expiryMs, &p.AllowMultiselect, &layout, &finalized, &finalCounts)
 	if err != nil {
-		return p, mapErr(err)
+		return p, nil, mapErr(err)
 	}
 	p.Question = model.PollMedia{Text: question}
 	if err := json.Unmarshal([]byte(answers), &p.Answers); err != nil {
-		return p, err
+		return p, nil, err
 	}
 	if p.Answers == nil {
 		p.Answers = []model.PollAnswer{}
@@ -113,12 +120,40 @@ func (s *Store) pollBase(messageID string) (model.Poll, error) {
 	p.Expiry = isoTime(expiryMs)
 	p.LayoutType = layout
 	if !finalized && now() >= expiryMs {
-		if _, err := s.DB.Exec(`UPDATE polls SET finalized = 1 WHERE message_id = ?`, messageID); err == nil {
+		if changed, err := s.finalizePoll(messageID); err == nil && changed {
 			finalized = true
+			if row := s.DB.QueryRow(`SELECT final_counts FROM polls WHERE message_id = ?`, messageID); row != nil {
+				_ = row.Scan(&finalCounts)
+			}
 		}
 	}
+	snap := []model.PollAnswerCount{}
+	if finalized && finalCounts != "" {
+		_ = json.Unmarshal([]byte(finalCounts), &snap)
+	}
 	p.Results = &model.PollResults{IsFinalized: finalized}
-	return p, nil
+	return p, snap, nil
+}
+
+// finalizePoll freezes the exact tallies into final_counts and marks the poll
+// finalized. It reports whether this call performed the finalization; a poll that
+// was already finalized is left untouched.
+func (s *Store) finalizePoll(messageID string) (bool, error) {
+	counts, err := s.pollCounts(messageID)
+	if err != nil {
+		return false, err
+	}
+	raw, err := json.Marshal(counts)
+	if err != nil {
+		return false, err
+	}
+	res, err := s.DB.Exec(`UPDATE polls SET finalized = 1, final_counts = ? WHERE message_id = ? AND finalized = 0`,
+		string(raw), messageID)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // pollCounts returns one entry per answer that has at least one vote.
@@ -204,14 +239,11 @@ func (s *Store) SetPollVotes(messageID, userID string, answerIDs []int, multisel
 
 // ExpirePoll finalizes a poll immediately.
 func (s *Store) ExpirePoll(messageID string) error {
-	res, err := s.DB.Exec(`UPDATE polls SET finalized = 1 WHERE message_id = ?`, messageID)
-	if err != nil {
-		return mapErr(err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	if !s.PollExists(messageID) {
 		return ErrNotFound
 	}
-	return nil
+	_, err := s.finalizePoll(messageID)
+	return err
 }
 
 // PollVoters lists voters for one answer in id order.
@@ -285,11 +317,11 @@ func (s *Store) FinalizeExpiredPolls(nowMs int64, limit int) ([]ExpiringPoll, er
 	}
 	finalized := make([]ExpiringPoll, 0, len(out))
 	for _, e := range out {
-		res, err := s.DB.Exec(`UPDATE polls SET finalized = 1 WHERE message_id = ? AND finalized = 0`, e.MessageID)
+		changed, err := s.finalizePoll(e.MessageID)
 		if err != nil {
-			return finalized, mapErr(err)
+			return finalized, err
 		}
-		if n, _ := res.RowsAffected(); n == 1 {
+		if changed {
 			finalized = append(finalized, e)
 		}
 	}

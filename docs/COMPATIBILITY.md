@@ -139,7 +139,7 @@ from other instances are delivered in bus order.
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
-| Poll viewer-relative `me_voted`; expiry sweep finalizes and pushes per-viewer `MESSAGE_UPDATE` | implemented + tested |
+| Poll viewer-relative `me_voted`; expiry sweep finalizes, freezes the tally and pushes per-viewer `MESSAGE_UPDATE` | implemented + tested |
 | Components v2: container/section/text/media/file/separator validation under flag `1<<15` | implemented + tested |
 
 ## Invites and webhooks
@@ -571,8 +571,18 @@ also crosses the cluster bus. Guild fanout is therefore O(members) per poll upda
 which is accepted because poll updates are low-frequency; when the member lookup
 fails the path falls back to a single guild broadcast with viewer-free results.
 
-Not 1:1: there is no separate final-tally job, so counts are exact at read time
-rather than Discord's approximate-live/accurate-finalized split.
+Final tally: when a poll is finalized — by the sweep, by the author's expire call, or
+lazily on the first read after expiry — the exact per-answer counts are computed from
+`poll_votes` once and stored in `polls.final_counts`. A finalized poll serves that
+snapshot rather than recounting, so the tally cannot move after the fact; the tests
+delete the vote rows after finalization to prove the snapshot is authoritative.
+Votes are rejected once finalized, so the snapshot cannot disagree with accepted
+votes.
+
+Not 1:1: counts are computed synchronously at finalization instead of by a separate
+asynchronous tally worker, so there is no window where a poll is ended but not yet
+finalized; a finalized tally also remains visible through reads indefinitely rather
+than Discord's approximate-live/accurate-finalized split during the poll.
 
 ## Permission inspection routes
 

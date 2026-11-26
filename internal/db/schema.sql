@@ -249,6 +249,7 @@ CREATE TABLE IF NOT EXISTS polls (
     allow_multiselect INTEGER NOT NULL DEFAULT 0,
     layout_type       INTEGER NOT NULL DEFAULT 1,
     finalized         INTEGER NOT NULL DEFAULT 0,
+    final_counts      TEXT NOT NULL DEFAULT '[]',
     created_at        INTEGER NOT NULL
 );
 

@@ -340,6 +340,52 @@ func TestPollsCreateVoteExpireAndVoters(t *testing.T) {
 	if got.Poll.Results == nil || !got.Poll.Results.IsFinalized {
 		t.Fatalf("read after sweep not finalized: %+v", got.Poll.Results)
 	}
+	if len(got.Poll.Results.AnswerCounts) != 1 || got.Poll.Results.AnswerCounts[0].Count != 1 {
+		t.Fatalf("finalized tally %+v", got.Poll.Results.AnswerCounts)
+	}
+
+	// The finalized tally is a persisted snapshot, not a live recount: removing the
+	// vote rows must not change the reported counts.
+	if _, err := h.store.DB.Exec(`DELETE FROM poll_votes WHERE message_id = ?`, third.ID); err != nil {
+		t.Fatalf("clear votes: %v", err)
+	}
+	var snap pollMessage
+	h.decode("GET", "/channels/"+channel.ID+"/messages/"+third.ID, bob.Token, nil, &snap)
+	if snap.Poll.Results == nil || !snap.Poll.Results.IsFinalized {
+		t.Fatalf("snapshot read not finalized: %+v", snap.Poll.Results)
+	}
+	if len(snap.Poll.Results.AnswerCounts) != 1 || snap.Poll.Results.AnswerCounts[0].Count != 1 {
+		t.Fatalf("snapshot tally moved: %+v", snap.Poll.Results.AnswerCounts)
+	}
+	if snap.Poll.Results.AnswerCounts[0].MeVoted {
+		t.Fatal("me_voted true after vote rows were cleared")
+	}
+
+	// A manually expired poll also freezes a tally.
+	manualBody := map[string]any{"poll": map[string]any{
+		"question": map[string]any{"text": "Manual end"},
+		"answers":  []any{map[string]any{"poll_media": map[string]any{"text": "A"}}, map[string]any{"poll_media": map[string]any{"text": "B"}}},
+		"duration": 1,
+	}}
+	var manual pollMessage
+	h.decode("POST", "/channels/"+channel.ID+"/messages", alice.Token, manualBody, &manual)
+	if status, _ := h.request("PUT", "/channels/"+channel.ID+"/polls/"+manual.ID+"/answers/@me", bob.Token,
+		map[string]any{"answer_ids": []int{2}}); status != 204 {
+		t.Fatalf("manual poll vote status %d", status)
+	}
+	var endedManual pollMessage
+	if status := h.decode("POST", "/channels/"+channel.ID+"/polls/"+manual.ID+"/expire", alice.Token, nil, &endedManual); status != 200 {
+		t.Fatalf("manual expire status %d", status)
+	}
+	if _, err := h.store.DB.Exec(`DELETE FROM poll_votes WHERE message_id = ?`, manual.ID); err != nil {
+		t.Fatalf("clear manual votes: %v", err)
+	}
+	var manualSnap pollMessage
+	h.decode("GET", "/channels/"+channel.ID+"/messages/"+manual.ID, alice.Token, nil, &manualSnap)
+	if len(manualSnap.Poll.Results.AnswerCounts) != 1 || manualSnap.Poll.Results.AnswerCounts[0].ID != 2 ||
+		manualSnap.Poll.Results.AnswerCounts[0].Count != 1 {
+		t.Fatalf("manual final tally %+v", manualSnap.Poll.Results.AnswerCounts)
+	}
 
 	// Deleting the message removes the poll rows with it.
 	if status, _ := h.request("DELETE", "/channels/"+channel.ID+"/messages/"+multi.ID, alice.Token, nil); status != 204 {

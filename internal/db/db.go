@@ -81,6 +81,7 @@ func openSQLite(path string, opts Options) (*sqlx.DB, error) {
 	// Existing deployments predate mfa_secret; SQLite has no ADD COLUMN IF NOT
 	// EXISTS, so the duplicate-column error means the column already exists.
 	_, _ = handle.Exec(`ALTER TABLE users ADD COLUMN mfa_secret TEXT`)
+	_, _ = handle.Exec(`ALTER TABLE polls ADD COLUMN final_counts TEXT NOT NULL DEFAULT '[]'`)
 	return &sqlx.DB{DB: handle, Dialect: sqlx.SQLite}, nil
 }
 
@@ -124,6 +125,7 @@ func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
 	if schemaErr == nil {
 		// Existing deployments predate mfa_secret.
 		_, _ = conn.ExecContext(ctx, `ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT`)
+		_, _ = conn.ExecContext(ctx, `ALTER TABLE polls ADD COLUMN IF NOT EXISTS final_counts TEXT NOT NULL DEFAULT '[]'`)
 		from := time.Now().AddDate(0, -1, 0)
 		to := time.Now().AddDate(0, 2, 0)
 		if migrating && legacyMin > 0 {
