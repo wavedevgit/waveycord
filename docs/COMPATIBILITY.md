@@ -137,6 +137,7 @@ from other instances are delivered in bus order.
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
+| Poll viewer-relative `me_voted`; expiry sweep finalizes and pushes `MESSAGE_UPDATE` | implemented + tested |
 | Components v2: container/section/text/media/file/separator validation under flag `1<<15` | implemented + tested |
 
 ## Invites and webhooks
@@ -497,10 +498,18 @@ single-select poll rejects more than one answer, and unknown answer ids are reje
 `POST .../expire` returns the updated message and is restricted to the poll author.
 Each vote and expiry dispatches `MESSAGE_UPDATE`.
 
-Not 1:1: `me_voted` is always `false` because hydration has no viewer context; the
-poll object is not view-filtered. There is no background final-tally job, so counts
-are exact at read time rather than Discord's approximate-live/accurate-finalized
-split, and an expiring poll does not push a `MESSAGE_UPDATE` on its own.
+`me_voted` is viewer-relative: message reads (`GET /channels/{id}/messages`,
+`GET .../messages/{id}`, pinned messages, and poll responses) hydrate poll results
+against the requesting user. A poll that passes its expiry is finalized lazily on
+read, and a background sweep (`StartPollSweeper`, every 30 s in `main`) finalizes
+expired polls in a batch and dispatches `MESSAGE_UPDATE` for each, so clients see the
+finalized state without another request. The sweep is idempotent: a poll already
+finalized by a read is not returned again.
+
+Not 1:1: gateway `MESSAGE_UPDATE` dispatches are channel broadcasts serialized without
+a viewer, so `me_voted` is `false` in a pushed poll update (the HTTP read carries the
+correct value per user). There is no separate final-tally job, so counts are exact at
+read time rather than Discord's approximate-live/accurate-finalized split.
 
 ## Permission inspection routes
 

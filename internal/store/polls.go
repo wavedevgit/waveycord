@@ -38,9 +38,57 @@ func (s *Store) CreatePoll(messageID, channelID string, p model.Poll, expiryMs i
 	return mapErr(err)
 }
 
-// Poll loads a poll with tallies. A poll whose expiry has passed is finalized
-// lazily on read, which keeps the API view-consistent without a scheduler.
+// Poll loads a poll with tallies and no viewer context.
 func (s *Store) Poll(messageID string) (model.Poll, error) {
+	return s.PollFor(messageID, "")
+}
+
+// PollFor loads a poll with tallies relative to one viewer: answer_counts carry
+// me_voted for that user. Counts are always included, matching the documented
+// "results may be present while a poll is in progress" note.
+func (s *Store) PollFor(messageID, viewer string) (model.Poll, error) {
+	p, err := s.pollBase(messageID)
+	if err != nil {
+		return p, err
+	}
+	voted, err := s.pollVotedAnswers(messageID, viewer)
+	if err != nil {
+		return p, err
+	}
+	counts, err := s.pollCounts(messageID)
+	if err != nil {
+		return p, err
+	}
+	for i := range counts {
+		counts[i].MeVoted = voted[counts[i].ID]
+	}
+	p.Results = &model.PollResults{IsFinalized: p.Results != nil && p.Results.IsFinalized, AnswerCounts: counts}
+	return p, nil
+}
+
+// pollVotedAnswers returns the answer ids the viewer selected.
+func (s *Store) pollVotedAnswers(messageID, viewer string) (map[int]bool, error) {
+	out := map[int]bool{}
+	if viewer == "" {
+		return out, nil
+	}
+	rows, err := s.DB.Query(`SELECT answer_id FROM poll_votes WHERE message_id = ? AND user_id = ?`, messageID, viewer)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, mapErr(err)
+		}
+		out[id] = true
+	}
+	return out, mapErr(rows.Err())
+}
+
+// pollBase loads the poll row and finalizes it lazily when expired.
+func (s *Store) pollBase(messageID string) (model.Poll, error) {
 	var (
 		p         model.Poll
 		question  string
@@ -69,11 +117,7 @@ func (s *Store) Poll(messageID string) (model.Poll, error) {
 			finalized = true
 		}
 	}
-	counts, err := s.pollCounts(messageID)
-	if err != nil {
-		return p, err
-	}
-	p.Results = &model.PollResults{IsFinalized: finalized, AnswerCounts: counts}
+	p.Results = &model.PollResults{IsFinalized: finalized}
 	return p, nil
 }
 
@@ -207,4 +251,47 @@ func (s *Store) PollAuthor(messageID string) (string, error) {
 		return "", mapErr(err)
 	}
 	return author.String, nil
+}
+
+// ExpiringPoll identifies a poll that has passed its expiry.
+type ExpiringPoll struct {
+	MessageID string
+	ChannelID string
+}
+
+// FinalizeExpiredPolls marks up to limit expired polls finalized and returns them,
+// so the caller can push an update. A poll finalized by a read is not returned.
+func (s *Store) FinalizeExpiredPolls(nowMs int64, limit int) ([]ExpiringPoll, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.DB.Query(`SELECT message_id, channel_id FROM polls
+		WHERE finalized = 0 AND expiry <= ? LIMIT ?`, nowMs, limit)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	var out []ExpiringPoll
+	for rows.Next() {
+		var e ExpiringPoll
+		if err := rows.Scan(&e.MessageID, &e.ChannelID); err != nil {
+			rows.Close()
+			return nil, mapErr(err)
+		}
+		out = append(out, e)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, mapErr(err)
+	}
+	finalized := make([]ExpiringPoll, 0, len(out))
+	for _, e := range out {
+		res, err := s.DB.Exec(`UPDATE polls SET finalized = 1 WHERE message_id = ? AND finalized = 0`, e.MessageID)
+		if err != nil {
+			return finalized, mapErr(err)
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			finalized = append(finalized, e)
+		}
+	}
+	return finalized, nil
 }

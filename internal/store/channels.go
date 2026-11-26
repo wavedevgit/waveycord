@@ -647,6 +647,11 @@ func (s *Store) ArchivedThreads(parentID string, private bool) ([]model.Channel,
 
 // PinnedMessages lists pinned messages newest first.
 func (s *Store) PinnedMessages(channelID string) ([]model.Message, error) {
+	return s.PinnedMessagesFor(channelID, "")
+}
+
+// PinnedMessagesFor is PinnedMessages with poll results relative to one viewer.
+func (s *Store) PinnedMessagesFor(channelID, viewer string) ([]model.Message, error) {
 	rows, err := s.DB.Query(`SELECT message_id FROM pins WHERE channel_id = ? ORDER BY pinned_at DESC`, channelID)
 	if err != nil {
 		return nil, mapErr(err)
@@ -663,7 +668,7 @@ func (s *Store) PinnedMessages(channelID string) ([]model.Message, error) {
 	rows.Close()
 	out := []model.Message{}
 	for _, idv := range ids {
-		m, err := s.Message(idv)
+		m, err := s.MessageFor(idv, viewer)
 		if err != nil {
 			continue
 		}

@@ -20,7 +20,7 @@ func (s *Server) handleListMessages(c *Ctx) {
 	q := c.R.URL.Query()
 	key := "messages|" + ch.ID + "|" + q.Get("before") + "|" + q.Get("after") + "|" + q.Get("around") + "|" + q.Get("limit")
 	v, err, _ := s.reads.Do(key, func() (any, error) {
-		messages, err := s.Store.MessagesPage(ch.ID, q.Get("before"), q.Get("after"), q.Get("around"), atoiSafe(q.Get("limit")))
+		messages, err := s.Store.MessagesPageFor(ch.ID, q.Get("before"), q.Get("after"), q.Get("around"), atoiSafe(q.Get("limit")), c.User.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -212,7 +212,7 @@ func (s *Server) handleGetMessage(c *Ctx) {
 		fail(c, err)
 		return
 	}
-	msg, err := s.Store.Message(c.Param("messageID"))
+	msg, err := s.Store.MessageFor(c.Param("messageID"), c.User.ID)
 	if err != nil || msg.ChannelID != ch.ID {
 		fail(c, ErrUnknownMessage)
 		return
@@ -560,7 +560,7 @@ func (s *Server) handleListPins(c *Ctx) {
 		fail(c, err)
 		return
 	}
-	pins, err := s.Store.PinnedMessages(ch.ID)
+	pins, err := s.Store.PinnedMessagesFor(ch.ID, c.User.ID)
 	if err != nil {
 		fail(c, err)
 		return

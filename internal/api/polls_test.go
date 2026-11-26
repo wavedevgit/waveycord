@@ -1,8 +1,13 @@
 package api_test
 
 import (
+	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 type pollAnswerResp struct {
@@ -193,6 +198,118 @@ func TestPollsCreateVoteExpireAndVoters(t *testing.T) {
 	}
 	if status := bad(map[string]any{"poll": map[string]any{"question": map[string]any{"text": "q"}, "answers": []any{map[string]any{"poll_media": map[string]any{"text": "a"}}}, "layout_type": 2}}); status != 400 {
 		t.Fatalf("bad layout status %d", status)
+	}
+
+	// me_voted is viewer-relative on both the single-message and list routes. The
+	// multiselect poll is still open and Bob voted for both answers.
+	var bobView, aliceView pollMessage
+	h.decode("GET", "/channels/"+channel.ID+"/messages/"+multi.ID, bob.Token, nil, &bobView)
+	h.decode("GET", "/channels/"+channel.ID+"/messages/"+multi.ID, alice.Token, nil, &aliceView)
+	if len(bobView.Poll.Results.AnswerCounts) != 2 {
+		t.Fatalf("bob counts: %+v", bobView.Poll.Results.AnswerCounts)
+	}
+	for _, c := range bobView.Poll.Results.AnswerCounts {
+		if !c.MeVoted {
+			t.Fatalf("bob me_voted false for %d", c.ID)
+		}
+	}
+	if len(aliceView.Poll.Results.AnswerCounts) != 2 {
+		t.Fatalf("alice counts: %+v", aliceView.Poll.Results.AnswerCounts)
+	}
+	for _, c := range aliceView.Poll.Results.AnswerCounts {
+		if c.MeVoted {
+			t.Fatalf("alice me_voted true for %d", c.ID)
+		}
+	}
+	// The list route returns a bare array.
+	var listedArr []pollMessage
+	status, rawList := h.request("GET", "/channels/"+channel.ID+"/messages", bob.Token, nil)
+	if status != 200 {
+		t.Fatalf("list messages %d", status)
+	}
+	if err := json.Unmarshal(rawList, &listedArr); err != nil {
+		t.Fatalf("list decode: %v", err)
+	}
+	found := false
+	for _, m := range listedArr {
+		if m.ID == multi.ID {
+			found = true
+			if m.Poll == nil || len(m.Poll.Results.AnswerCounts) != 2 || !m.Poll.Results.AnswerCounts[0].MeVoted {
+				t.Fatalf("list me_voted: %+v", m.Poll)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("poll message missing from list")
+	}
+
+	// Expiry sweep finalizes the poll and pushes MESSAGE_UPDATE.
+	thirdBody := map[string]any{"poll": map[string]any{
+		"question": map[string]any{"text": "Sweep me"},
+		"answers":  []any{map[string]any{"poll_media": map[string]any{"text": "A"}}},
+		"duration": 1,
+	}}
+	var third pollMessage
+	h.decode("POST", "/channels/"+channel.ID+"/messages", alice.Token, thirdBody, &third)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	gw, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(h.server.URL, "http")+"/gateway", nil)
+	if err != nil {
+		t.Fatalf("dial gateway: %v", err)
+	}
+	defer gw.CloseNow()
+	gwDeadline := time.Now().Add(10 * time.Second)
+	readFrame(t, gw, gwDeadline)
+	writeFrame(t, gw, map[string]any{"op": 2, "d": map[string]any{"token": alice.Token, "intents": 0}})
+	readFrame(t, gw, gwDeadline)
+	writeFrame(t, gw, map[string]any{"op": 14, "d": map[string]any{"guild_id": guild.ID}})
+	time.Sleep(50 * time.Millisecond)
+
+	if _, err := h.store.DB.Exec(`UPDATE polls SET expiry = ? WHERE message_id = ?`,
+		time.Now().Add(-time.Second).UnixMilli(), third.ID); err != nil {
+		t.Fatalf("force expiry: %v", err)
+	}
+	ids := h.api.SweepExpiredPolls()
+	swept := false
+	for _, idv := range ids {
+		if idv == third.ID {
+			swept = true
+		}
+	}
+	if !swept {
+		t.Fatalf("sweep did not report the poll: %v", ids)
+	}
+	if again := h.api.SweepExpiredPolls(); len(again) != 0 {
+		t.Fatalf("second sweep re-finalized: %v", again)
+	}
+
+	var update pollMessage
+	gotUpdate := false
+	for i := 0; i < 20 && !gotUpdate; i++ {
+		f := readFrame(t, gw, time.Now().Add(10*time.Second))
+		if f["t"] != "MESSAGE_UPDATE" {
+			continue
+		}
+		d, _ := json.Marshal(f["d"])
+		var m pollMessage
+		if err := json.Unmarshal(d, &m); err != nil {
+			t.Fatalf("update decode: %v", err)
+		}
+		if m.ID == third.ID {
+			update = m
+			gotUpdate = true
+		}
+	}
+	if !gotUpdate {
+		t.Fatal("no MESSAGE_UPDATE for the expired poll")
+	}
+	if update.Poll == nil || update.Poll.Results == nil || !update.Poll.Results.IsFinalized {
+		t.Fatalf("update not finalized: %+v", update.Poll)
+	}
+	h.decode("GET", "/channels/"+channel.ID+"/messages/"+third.ID, alice.Token, nil, &got)
+	if got.Poll.Results == nil || !got.Poll.Results.IsFinalized {
+		t.Fatalf("read after sweep not finalized: %+v", got.Poll.Results)
 	}
 
 	// Deleting the message removes the poll rows with it.

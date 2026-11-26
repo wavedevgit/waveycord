@@ -25,6 +25,7 @@ import (
 type harness struct {
 	t      *testing.T
 	server *httptest.Server
+	api    *api.Server
 	store  *store.Store
 	hub    *gateway.Hub
 }
@@ -84,7 +85,7 @@ func newHarness(t *testing.T) *harness {
 		voiceServer.Close()
 		srv.Close()
 	})
-	return &harness{t: t, server: srv, store: st, hub: hub}
+	return &harness{t: t, server: srv, api: apiServer, store: st, hub: hub}
 }
 
 // truncateAll clears every table so one Postgres database can serve sequential

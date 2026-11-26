@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"strings"
+	"time"
 
 	"github.com/wavedevgit/waveycord/internal/model"
 	"github.com/wavedevgit/waveycord/internal/perm"
@@ -203,7 +205,7 @@ func (s *Server) handleExpirePoll(c *Ctx) {
 		return
 	}
 	s.dispatchPollUpdate(ch, messageID)
-	msg, err := s.Store.Message(messageID)
+	msg, err := s.Store.MessageFor(messageID, c.User.ID)
 	if err != nil {
 		fail(c, ErrUnknownMessage)
 		return
@@ -228,6 +230,45 @@ func (s *Server) dispatchPollUpdate(ch model.Channel, messageID string) {
 		s.Hub.DispatchUser(r.ID, "MESSAGE_UPDATE", msg)
 	}
 	s.Hub.DispatchUser(msg.Author.ID, "MESSAGE_UPDATE", msg)
+}
+
+// SweepExpiredPolls finalizes polls whose expiry has passed and dispatches a
+// MESSAGE_UPDATE for each. It returns the finalized message ids. main runs it on a
+// ticker; tests call it directly.
+func (s *Server) SweepExpiredPolls() []string {
+	expired, err := s.Store.FinalizeExpiredPolls(nowMillisFn(), 200)
+	if err != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(expired))
+	for _, e := range expired {
+		ch, err := s.Store.Channel(e.ChannelID)
+		if err != nil {
+			continue
+		}
+		s.dispatchPollUpdate(ch, e.MessageID)
+		ids = append(ids, e.MessageID)
+	}
+	return ids
+}
+
+// StartPollSweeper ticks the expiry sweep until ctx is done.
+func (s *Server) StartPollSweeper(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.SweepExpiredPolls()
+			}
+		}
+	}()
 }
 
 // atoiParam parses a non-negative integer path parameter.

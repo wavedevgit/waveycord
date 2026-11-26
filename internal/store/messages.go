@@ -65,7 +65,7 @@ func scanRawMessage(row rowScanner) (rawMessage, error) {
 
 // hydrate turns a row into the API object. depth bounds referenced-message
 // expansion so a reply chain cannot recurse without limit.
-func (s *Store) hydrate(r rawMessage, depth int) model.Message {
+func (s *Store) hydrate(r rawMessage, depth int, viewer string) model.Message {
 	m := model.Message{
 		ID:              r.ID,
 		ChannelID:       r.ChannelID,
@@ -117,13 +117,13 @@ func (s *Store) hydrate(r rawMessage, depth int) model.Message {
 		}
 	}
 	if r.Type == 32 {
-		if poll, err := s.Poll(r.ID); err == nil {
+		if poll, err := s.PollFor(r.ID, viewer); err == nil {
 			m.Poll = &poll
 		}
 	}
 	if r.Ref.Valid && depth > 0 {
 		if parent, err := scanRawMessage(s.DB.QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, r.Ref.String)); err == nil {
-			pm := s.hydrate(parent, depth-1)
+			pm := s.hydrate(parent, depth-1, viewer)
 			pm.Reactions, _ = s.MessageReactions(pm.ID)
 			m.ReferencedMessage = &pm
 		}
@@ -238,6 +238,11 @@ func (s *Store) indexMessage(messageID, guildID, channelID, authorID, content st
 
 // Message loads one message with reactions attached.
 func (s *Store) Message(idv string) (model.Message, error) {
+	return s.MessageFor(idv, "")
+}
+
+// MessageFor loads a message with poll results relative to one viewer.
+func (s *Store) MessageFor(idv, viewer string) (model.Message, error) {
 	var raw rawMessage
 	var err error
 	// The index makes an id-only read a single-partition lookup. Rows written
@@ -257,7 +262,7 @@ func (s *Store) Message(idv string) (model.Message, error) {
 	if err != nil {
 		return model.Message{}, mapErr(err)
 	}
-	m := s.hydrate(raw, 1)
+	m := s.hydrate(raw, 1, viewer)
 	m.Reactions, _ = s.MessageReactions(m.ID)
 	return m, nil
 }
@@ -271,6 +276,11 @@ func (s *Store) MessageChannel(messageID string) (string, error) {
 
 // MessagesPage implements before/after/around with newest-first output.
 func (s *Store) MessagesPage(channelID, before, after, around string, limit int) ([]model.Message, error) {
+	return s.MessagesPageFor(channelID, before, after, around, limit, "")
+}
+
+// MessagesPageFor is MessagesPage with poll results relative to one viewer.
+func (s *Store) MessagesPageFor(channelID, before, after, around string, limit int, viewer string) ([]model.Message, error) {
 	limit = clampLimit(limit)
 	// Rows must be fully read and closed before hydration: hydration issues its
 	// own queries, and the store runs on a single writer connection.
@@ -293,7 +303,7 @@ func (s *Store) MessagesPage(channelID, before, after, around string, limit int)
 	hydrateAll := func(raws []rawMessage) []model.Message {
 		out := make([]model.Message, 0, len(raws))
 		for _, raw := range raws {
-			m := s.hydrate(raw, 1)
+			m := s.hydrate(raw, 1, viewer)
 			m.Reactions, _ = s.MessageReactions(m.ID)
 			out = append(out, m)
 		}

@@ -335,7 +335,7 @@ func (s *Store) searchMessagesLike(guildID, content, authorID string, channels [
 	}
 	out := make([]model.Message, 0, len(raws))
 	for _, raw := range raws {
-		out = append(out, s.hydrate(raw, 0))
+		out = append(out, s.hydrate(raw, 0, ""))
 	}
 	return out, total, nil
 }

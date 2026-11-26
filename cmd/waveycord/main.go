@@ -185,6 +185,7 @@ func main() {
 
 	srv := api.New(st, hub, cfg)
 	srv.SetVoice(voice)
+	srv.StartPollSweeper(context.Background(), 30*time.Second)
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),
