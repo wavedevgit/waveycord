@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -127,9 +126,7 @@ func TestVoiceRTPFanout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("alice receive: %v", err)
 	}
-	if !bytes.Equal(buf[:n], packet) {
-		t.Fatalf("forwarded packet mismatch: %x vs %x", buf[:n], packet)
-	}
+	compareMedia(t, packet, buf[:n])
 
 	// The sender does not get its own packet back.
 	_ = bobRecv.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
@@ -197,9 +194,7 @@ func TestClusterVoiceRTPFanout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bob receive cross-instance: %v", err)
 	}
-	if !bytes.Equal(buf[:n], packet) {
-		t.Fatalf("cross-instance packet mismatch: %x vs %x", buf[:n], packet)
-	}
+	compareMedia(t, packet, buf[:n])
 	_ = bobReady
 	_ = bobVoice
 	_ = json.Marshal

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/curve25519"
 
 	"github.com/wavedevgit/waveycord/internal/store"
+	"github.com/wavedevgit/waveycord/internal/voicecodec"
 )
 
 // Voice gateway opcodes from the voice websocket protocol.
@@ -50,16 +51,18 @@ type VoiceServer struct {
 	store *store.Store
 	log   *slog.Logger
 
-	udp       *net.UDPConn
-	ip        string
-	port      int
-	mu        sync.Mutex
-	conns     map[*voiceConn]struct{}
-	session   atomic.Int64
-	rtp       atomic.Int64
-	speak     atomic.Int64
-	forwarded atomic.Int64
-	publish   func(name string, data any)
+	udp        *net.UDPConn
+	ip         string
+	port       int
+	mu         sync.Mutex
+	conns      map[*voiceConn]struct{}
+	session    atomic.Int64
+	rtp        atomic.Int64
+	speak      atomic.Int64
+	forwarded  atomic.Int64
+	transcodes atomic.Int64
+	publish    func(name string, data any)
+	codec      voicecodec.Codec
 }
 
 // VoiceOptions tunes the advertised address.
@@ -85,6 +88,14 @@ func NewVoiceServer(st *store.Store, opts VoiceOptions) (*VoiceServer, error) {
 	}
 	v := &VoiceServer{store: st, log: logger, udp: conn, ip: ip,
 		port: conn.LocalAddr().(*net.UDPAddr).Port, conns: map[*voiceConn]struct{}{}}
+	if voicecodec.Available() {
+		if c, err := voicecodec.New(); err == nil {
+			v.codec = c
+			logger.Info("voice opus codec enabled")
+		} else {
+			logger.Warn("voice opus codec unavailable", "err", err)
+		}
+	}
 	go v.readUDP()
 	return v, nil
 }
@@ -117,6 +128,54 @@ func (v *VoiceServer) DeliverSpeaking(channelID string, speaking, delay int, ssr
 
 // Forwarded counts RTP packets sent to other voice connections.
 func (v *VoiceServer) Forwarded() int64 { return v.forwarded.Load() }
+
+// Transcodes counts frames decoded/re-encoded by the Opus path.
+func (v *VoiceServer) Transcodes() int64 { return v.transcodes.Load() }
+
+// rtpPayloadOffset returns the RTP header length, or 0 when the packet is too
+// short to carry a payload.
+func rtpPayloadOffset(packet []byte) int {
+	if len(packet) < 12 {
+		return 0
+	}
+	offset := 12 + 4*int(packet[0]&0x0f)
+	if packet[0]&0x10 != 0 {
+		if len(packet) < offset+4 {
+			return 0
+		}
+		extWords := int(binary.BigEndian.Uint16(packet[offset+2 : offset+4]))
+		offset += 4 + 4*extWords
+	}
+	if offset >= len(packet) {
+		return 0
+	}
+	return offset
+}
+
+// transcode decodes an Opus payload and re-encodes it, leaving the RTP header
+// intact. Packets that fail to decode are forwarded unchanged.
+func (v *VoiceServer) transcode(packet []byte) []byte {
+	if v.codec == nil {
+		return packet
+	}
+	offset := rtpPayloadOffset(packet)
+	if offset == 0 {
+		return packet
+	}
+	pcm, err := v.codec.Decode(packet[offset:])
+	if err != nil || len(pcm) == 0 {
+		return packet
+	}
+	encoded, err := v.codec.Encode(pcm)
+	if err != nil || len(encoded) == 0 {
+		return packet
+	}
+	v.transcodes.Add(1)
+	out := make([]byte, offset+len(encoded))
+	copy(out, packet[:offset])
+	copy(out[offset:], encoded)
+	return out
+}
 
 // DeliverRTP forwards a packet received from another instance to local voice
 // connections in the channel.
@@ -152,6 +211,9 @@ func (v *VoiceServer) Stats() (sessions, rtpPackets, speaking int64) {
 func (v *VoiceServer) Close() {
 	if v.udp != nil {
 		_ = v.udp.Close()
+	}
+	if v.codec != nil {
+		v.codec.Close()
 	}
 	v.mu.Lock()
 	for c := range v.conns {
@@ -191,9 +253,10 @@ func (v *VoiceServer) forwardRTP(ssrc uint32, packet []byte, from *net.UDPAddr) 
 	if sender == nil {
 		return
 	}
+	out := v.transcode(packet)
 	for _, c := range targets {
 		if addr := c.udp(); addr != nil {
-			_, _ = v.udp.WriteToUDP(packet, addr)
+			_, _ = v.udp.WriteToUDP(out, addr)
 			v.forwarded.Add(1)
 		}
 	}
@@ -245,7 +308,7 @@ func (v *VoiceServer) forwardEncrypted(ssrc uint32, plaintext []byte) {
 			c.mu.Unlock()
 			addr := c.udp()
 			if addr != nil {
-				frame := encodeEnvelope(gcm, keyID, counter, ssrc, plaintext)
+				frame := encodeEnvelope(gcm, keyID, counter, ssrc, v.transcode(plaintext))
 				_, _ = v.udp.WriteToUDP(frame, addr)
 				v.forwarded.Add(1)
 			}

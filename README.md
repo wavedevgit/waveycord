@@ -20,6 +20,16 @@ go build ./...
 go test ./...
 ```
 
+Opus media transcoding is opt-in and requires libopus:
+
+```bash
+apt-get install libopus-dev libopusfile-dev
+CGO_ENABLED=1 go build -tags opus ./...
+CGO_ENABLED=1 go test -tags opus ./...
+```
+
+Without the tag the voice path forwards RTP payloads without decoding them.
+
 ## Quickstart (SQLite)
 
 ```bash

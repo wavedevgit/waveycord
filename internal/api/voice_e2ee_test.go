@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"bytes"
 	"encoding/base64"
 	"net"
 	"strconv"
@@ -71,9 +70,7 @@ func TestVoiceE2EEEnvelope(t *testing.T) {
 		t.Fatalf("bob receive: %v", err)
 	}
 	got := clientOpen(t, bobGCM, buf[:n])
-	if !bytes.Equal(got, inner) {
-		t.Fatalf("decrypted payload mismatch: %x vs %x", got, inner)
-	}
+	compareMedia(t, inner, got)
 
 	// Tampered ciphertext is dropped.
 	tampered := clientSeal(aliceGCM, aliceKeyID, 2, aliceSSRC, inner)
@@ -120,9 +117,7 @@ func TestVoiceE2EEEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post-rotation frame missing: %v", err)
 	}
-	if !bytes.Equal(clientOpen(t, bobGCM, buf[:n]), inner) {
-		t.Fatal("post-rotation payload mismatch")
-	}
+	compareMedia(t, inner, clientOpen(t, bobGCM, buf[:n]))
 
 	// Frames sealed with the retired key are rejected.
 	if _, err := sender.Write(clientSeal(aliceGCM, aliceKeyID, 4, aliceSSRC, inner)); err != nil {
