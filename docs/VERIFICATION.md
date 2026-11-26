@@ -23,6 +23,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Auto moderation keyword/regex/spam/profile/mention-raid | `TestAutoModeration*`, `TestAutoModSpamTrigger`, `TestAutoModMemberProfileTrigger` |
 | Search: tsvector/GIN and live OpenSearch guild-sharded indices | `TestPostgresFullTextSearch`, `TestESAdapter*`, `TestESRealCluster` |
 | Voice gateway, UDP discovery, RTP fanout, jitter/PLC, Opus mixing, AEAD, MLS-style epochs | `TestVoice*` |
+| Host-only voice endpoint advertised; root upgrade path connects | `TestVoiceHostOnlyEndpoint` |
 | MLS path secrets + Welcome (removal and add) | `TestPathUpdateAndWelcome`, `TestVoiceMLSSignedRosterCommit` |
 | MLS ciphersuite negotiation + proposal references | `TestCiphersuiteAndProposalRefs` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
@@ -56,7 +57,6 @@ change. Treat a single cluster-test failure as suspect until reproduced alone.
   member commit.
 - Group-E2EE frames bypass jitter/PLC and mixing (server cannot decode them).
 - Search is one ES cluster with bounded reindex, not multi-cell/PubSub/BFG.
-- Voice endpoint advertises `/voice`, not a host.
 - Some documented REST surfaces remain unregistered.
 
 These are recorded in `docs/COMPATIBILITY.md` as gaps rather than described as

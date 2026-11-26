@@ -29,7 +29,7 @@ func main() {
 	addr := env("WAVEYCORD_ADDR", "127.0.0.1:8080")
 	dsn := env("WAVEYCORD_DB", "./waveycord.db")
 	gatewayURL := env("WAVEYCORD_GATEWAY_URL", "ws://"+addr+"/gateway")
-	voiceEndpoint := env("WAVEYCORD_VOICE_ENDPOINT", "ws://"+addr+"/voice")
+	voiceEndpoint := env("WAVEYCORD_VOICE_ENDPOINT", "ws://"+addr)
 	cdnBase := env("WAVEYCORD_CDN_BASE", "http://"+addr)
 
 	handle, err := db.Open(dsn)

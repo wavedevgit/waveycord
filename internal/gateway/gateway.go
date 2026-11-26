@@ -114,6 +114,16 @@ func (h *Hub) OnCluster(fn func(name string, data json.RawMessage)) {
 	h.clusterFn = fn
 }
 
+// SetVoiceEndpoint updates the advertised voice endpoint.
+func (h *Hub) SetVoiceEndpoint(endpoint string) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.voiceEndpoint = endpoint
+	h.mu.Unlock()
+}
+
 // SetVoiceNotifier installs the membership-change callback used for E2EE rekey.
 func (h *Hub) SetVoiceNotifier(fn func(channelID, userID, reason string)) {
 	if h == nil {

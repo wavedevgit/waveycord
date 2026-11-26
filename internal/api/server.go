@@ -124,6 +124,17 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("/api/v10/gateway", s.gatewayHandler())
 	if s.voice != nil {
 		mux.Handle("/voice", s.voice.Handler())
+		// Discord advertises a host; the client appends "/?token=...". Accept that
+		// root upgrade without swallowing ordinary unmatched routes.
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") && r.URL.Query().Get("token") != "" {
+				s.voice.Handler().ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"code":0,"message":"404: Not Found"}`))
+		}))
 	}
 	mux.Handle("/cdn/", http.StripPrefix("/cdn", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		segs := splitPath(r.URL.Path)
