@@ -146,6 +146,115 @@ func (v *VoiceServer) DeliverRTP(channelID string, packet []byte) {
 	}
 }
 
+// publishE2EEKey announces a member's static media key to the channel and other
+// instances.
+func (v *VoiceServer) publishE2EEKey(userID string, pub [32]byte) {
+	channel := ""
+	v.mu.Lock()
+	var self *voiceConn
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.userID == userID {
+			self = c
+			channel = c.channel()
+		}
+	}
+	if channel != "" {
+		for c := range v.conns {
+			if c.userID != userID && c.channel() == channel {
+				targets = append(targets, c)
+			}
+		}
+	}
+	// Existing peers, so the publisher can wrap a group key immediately.
+	var peers []*voiceConn
+	if self != nil {
+		for c := range v.conns {
+			if c.userID != userID && c.channel() == channel && c.hasE2EE {
+				peers = append(peers, c)
+			}
+		}
+	}
+	v.mu.Unlock()
+	encoded := encodeKey(pub)
+	for _, c := range targets {
+		c.send(map[string]any{"op": 34, "d": map[string]any{
+			"user_id": userID, "public_key": encoded,
+		}})
+	}
+	for _, peer := range peers {
+		peer.mu.Lock()
+		peerPub, peerID := peer.e2eePub, peer.userID
+		peer.mu.Unlock()
+		self.send(map[string]any{"op": 34, "d": map[string]any{
+			"user_id": peerID, "public_key": encodeKey(peerPub),
+		}})
+	}
+	if v.publish != nil {
+		v.publish("VOICE_E2EE_PUBLISH", map[string]any{
+			"channel_id": channel, "user_id": userID, "public_key": encoded,
+		})
+	}
+}
+
+// DeliverE2EEKey publishes a member key announcement received from another
+// instance to local peers.
+func (v *VoiceServer) DeliverE2EEKey(channelID, userID, publicKey string) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID && c.userID != userID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": 34, "d": map[string]any{
+			"user_id": userID, "public_key": publicKey,
+		}})
+	}
+}
+
+// relayE2EEKey routes a wrapped group key to one member and other instances.
+func (v *VoiceServer) relayE2EEKey(channelID, fromUserID, toUserID string, keyID uint32, wrapped string) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, 1)
+	for c := range v.conns {
+		if c.channel() == channelID && c.userID == toUserID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": 35, "d": map[string]any{
+			"from_user_id": fromUserID, "key_id": keyID, "wrapped": wrapped,
+		}})
+	}
+	if v.publish != nil {
+		v.publish("VOICE_E2EE_KEY", map[string]any{
+			"channel_id": channelID, "from_user_id": fromUserID,
+			"to_user_id": toUserID, "key_id": keyID, "wrapped": wrapped,
+		})
+	}
+}
+
+// DeliverE2EEKeyRelay forwards a wrapped group key received from another instance.
+func (v *VoiceServer) DeliverE2EEKeyRelay(channelID, fromUserID, toUserID string, keyID uint32, wrapped string) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, 1)
+	for c := range v.conns {
+		if c.channel() == channelID && c.userID == toUserID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": 35, "d": map[string]any{
+			"from_user_id": fromUserID, "key_id": keyID, "wrapped": wrapped,
+		}})
+	}
+}
+
 // SetPublisher enables cross-instance speaking events.
 func (v *VoiceServer) SetPublisher(fn func(name string, data any)) {
 	if v == nil {
@@ -540,6 +649,22 @@ func (v *VoiceServer) readUDP() {
 			_, _ = v.udp.WriteToUDP(resp, from)
 			continue
 		}
+		// End-to-end group envelope ("WCE2"): forwarded untouched, never decrypted.
+		if n > 20 && string(buf[0:4]) == e2eeMagic {
+			packet := append([]byte(nil), buf[:n]...)
+			v.rtp.Add(1)
+			ssrc := binary.BigEndian.Uint32(packet[16:20])
+			if sender := v.findBySSRC(ssrc); sender != nil {
+				v.deliver(sender, packet)
+				if v.publish != nil {
+					v.publish("VOICE_RTP_E2EE", map[string]any{
+						"channel_id": sender.channel(),
+						"packet":     base64.StdEncoding.EncodeToString(packet),
+					})
+				}
+			}
+			continue
+		}
 		// Encrypted media envelope ("WCDF").
 		if n > 20 && string(buf[0:4]) == daveMagic {
 			packet := append([]byte(nil), buf[:n]...)
@@ -616,6 +741,8 @@ type voiceConn struct {
 	peerPub     [32]byte
 	codec       voicecodec.Codec
 	jitter      *jitterState
+	e2eePub     [32]byte
+	hasE2EE     bool
 	closed      bool
 	done        chan struct{}
 }
@@ -821,6 +948,43 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			c.send(map[string]any{"op": 31, "d": map[string]any{
 				"public_key": encodeKey(pub), "key_id": keyID, "rotation_seconds": 3600,
 			}})
+		case 34: // E2EE_PUBLISH: member static media key for pairwise wraps
+			var ex struct {
+				PublicKey string `json:"public_key"`
+			}
+			if err := json.Unmarshal(frame.D, &ex); err != nil {
+				c.close(voiceCloseUnknownOpcode, "Invalid e2ee key")
+				return
+			}
+			pub, err := decodeKey(ex.PublicKey)
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Invalid e2ee key")
+				return
+			}
+			c.mu.Lock()
+			c.e2eePub = pub
+			c.hasE2EE = true
+			userID := c.userID
+			c.mu.Unlock()
+			v.publishE2EEKey(userID, pub)
+		case 35: // E2EE_KEY: wrapped group key relayed between members
+			var ex struct {
+				RecipientUserID string `json:"recipient_user_id"`
+				KeyID           uint32 `json:"key_id"`
+				Wrapped         string `json:"wrapped"`
+			}
+			if err := json.Unmarshal(frame.D, &ex); err != nil || ex.RecipientUserID == "" || ex.Wrapped == "" {
+				c.close(voiceCloseUnknownOpcode, "Invalid e2ee key relay")
+				return
+			}
+			c.mu.Lock()
+			sender := c.userID
+			channel := c.channelID
+			c.mu.Unlock()
+			if channel == "" {
+				continue
+			}
+			v.relayE2EEKey(channel, sender, ex.RecipientUserID, ex.KeyID, ex.Wrapped)
 		case voiceOpHeartbeat:
 			c.send(map[string]any{"op": voiceOpHeartbeatAck, "d": map[string]any{"t": time.Now().UnixMilli()}})
 		case voiceOpSpeaking:

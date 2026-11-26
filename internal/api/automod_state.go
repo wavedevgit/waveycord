@@ -116,6 +116,36 @@ func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
 		if json.Unmarshal(data, &ev) == nil && ev.GuildID != "" {
 			s.raids.add(ev.GuildID, ev.Mentions)
 		}
+	case "VOICE_RTP_E2EE":
+		var ev struct {
+			ChannelID string `json:"channel_id"`
+			Packet    string `json:"packet"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			if packet, err := base64.StdEncoding.DecodeString(ev.Packet); err == nil {
+				s.voice.DeliverRTP(ev.ChannelID, packet)
+			}
+		}
+	case "VOICE_E2EE_PUBLISH":
+		var ev struct {
+			ChannelID string `json:"channel_id"`
+			UserID    string `json:"user_id"`
+			PublicKey string `json:"public_key"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			s.voice.DeliverE2EEKey(ev.ChannelID, ev.UserID, ev.PublicKey)
+		}
+	case "VOICE_E2EE_KEY":
+		var ev struct {
+			ChannelID  string `json:"channel_id"`
+			FromUserID string `json:"from_user_id"`
+			ToUserID   string `json:"to_user_id"`
+			KeyID      uint32 `json:"key_id"`
+			Wrapped    string `json:"wrapped"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			s.voice.DeliverE2EEKeyRelay(ev.ChannelID, ev.FromUserID, ev.ToUserID, ev.KeyID, ev.Wrapped)
+		}
 	case "VOICE_RTP":
 		var ev struct {
 			ChannelID string `json:"channel_id"`

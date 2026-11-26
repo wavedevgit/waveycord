@@ -24,6 +24,10 @@ import (
 
 const daveMagic = "WCDF"
 
+// e2eeMagic marks a member-encrypted group envelope the server forwards without
+// decrypting.
+const e2eeMagic = "WCE2"
+
 var errReplay = errors.New("voice: replayed counter")
 var errKeyMismatch = errors.New("voice: key id mismatch")
 var errTampered = errors.New("voice: frame authentication failed")
