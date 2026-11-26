@@ -81,6 +81,8 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "# TYPE waveycord_voice_rtp_packets_total counter\nwaveycord_voice_rtp_packets_total %d\n", rtp)
 		fmt.Fprintf(&b, "# HELP waveycord_voice_speaking_total Speaking events received.\n")
 		fmt.Fprintf(&b, "# TYPE waveycord_voice_speaking_total counter\nwaveycord_voice_speaking_total %d\n", speaking)
+		fmt.Fprintf(&b, "# HELP waveycord_voice_mixes_total Mixed 20 ms frames emitted.\n")
+		fmt.Fprintf(&b, "# TYPE waveycord_voice_mixes_total counter\nwaveycord_voice_mixes_total %d\n", s.voice.Mixes())
 		fmt.Fprintf(&b, "# HELP waveycord_voice_transcodes_total Opus frames decoded and re-encoded.\n")
 		fmt.Fprintf(&b, "# TYPE waveycord_voice_transcodes_total counter\nwaveycord_voice_transcodes_total %d\n", s.voice.Transcodes())
 		fmt.Fprintf(&b, "# HELP waveycord_voice_rtp_forwarded_total RTP packets forwarded to other connections.\n")

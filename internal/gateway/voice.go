@@ -65,6 +65,9 @@ type VoiceServer struct {
 	codecReady bool
 	done       chan struct{}
 	tick       *time.Ticker
+	mixMu      sync.Mutex
+	mixers     map[string]*channelMixer
+	mixes      atomic.Int64
 }
 
 // VoiceOptions tunes the advertised address.
@@ -96,6 +99,7 @@ func NewVoiceServer(st *store.Store, opts VoiceOptions) (*VoiceServer, error) {
 	}
 	go v.readUDP()
 	go v.jitterLoop()
+	go v.mixLoop()
 	return v, nil
 }
 
@@ -344,6 +348,9 @@ func (v *VoiceServer) Forwarded() int64 { return v.forwarded.Load() }
 // Transcodes counts frames decoded/re-encoded by the Opus path.
 func (v *VoiceServer) Transcodes() int64 { return v.transcodes.Load() }
 
+// Mixes counts mixed frames emitted by the channel mixer.
+func (v *VoiceServer) Mixes() int64 { return v.mixes.Load() }
+
 // rtpPayloadOffset returns the RTP header length, or 0 when the packet is too
 // short to carry a payload.
 func rtpPayloadOffset(packet []byte) int {
@@ -468,8 +475,18 @@ func (v *VoiceServer) ingestRTP(sender *voiceConn, packet []byte) {
 	}
 	seq := binary.BigEndian.Uint16(packet[2:4])
 	ts := binary.BigEndian.Uint32(packet[4:8])
+	ssrc := binary.BigEndian.Uint32(packet[8:12])
 	header := append([]byte(nil), packet[:offset]...)
 	payload := append([]byte(nil), packet[offset:]...)
+	if v.codecReady && sender.channel() != "" {
+		if codec := sender.ensureCodec(); codec != nil {
+			if pcm, err := codec.Decode(payload); err == nil && len(pcm) > 0 {
+				if v.feedMixer(sender.channel(), ssrc, pcm) {
+					return
+				}
+			}
+		}
+	}
 	sender.mu.Lock()
 	if sender.jitter == nil {
 		sender.jitter = &jitterState{buf: map[uint16]jitterFrame{}}
