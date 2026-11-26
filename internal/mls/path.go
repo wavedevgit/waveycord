@@ -270,8 +270,23 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 		path.Recipients = append(path.Recipients, PathRecipient{Node: committerNode, UserID: committerID, Envelope: selfEnv})
 	}
 
-	// Presence: occupied leaves plus persisted node keys. A resolved internal node
-	// is addressed by node key when its public is known.
+	// Presence: occupied leaves plus persisted node keys that are still usable. An
+	// internal node is dropped when a removed member sat under it, so a stale key the
+	// departed member still holds can never be addressed again, and when it no longer
+	// covers any current member.
+	removed := map[string]bool{}
+	for _, p := range proposals {
+		if p.Type == "remove" {
+			removed[p.UserID] = true
+		}
+	}
+	prevSlots := map[int]string{}
+	// Slot indices only compare when the tree did not grow in this commit.
+	if previous != nil && previous.Size == size {
+		for node, uid := range previous.SlotUsers() {
+			prevSlots[node] = uid
+		}
+	}
 	present := map[int]bool{}
 	slotUser := map[int]string{}
 	for i, l := range next {
@@ -280,6 +295,22 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 		slotUser[abs] = l.UserID
 	}
 	for n := range prevPublics {
+		if n >= size {
+			continue
+		}
+		stale := false
+		for _, uid := range membersUnder(n, size, prevSlots) {
+			if removed[uid] {
+				stale = true
+				break
+			}
+		}
+		if stale || len(membersUnder(n, size, slotUser)) == 0 {
+			// The key is no longer safe to use; drop it so later epochs rebuild it
+			// from a fresh path instead of reviving a removed member's key.
+			delete(treePublics, n)
+			continue
+		}
 		present[n] = true
 	}
 	node = committerNode

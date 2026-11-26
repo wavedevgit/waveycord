@@ -377,17 +377,14 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if slot := relayed.Tree.SlotFor(charlie.ID); slot != -1 {
 		t.Fatalf("removed member retained slot %d", slot)
 	}
-	nodeAddressed := 0
+	// The removed member's branch may not be addressed by its old node key.
 	for _, r := range relayed.Path.Recipients {
-		if r.TargetNode > 0 && r.UserID == "" {
-			nodeAddressed++
+		if r.TargetNode == 3 {
+			t.Fatalf("relayed commit addressed the removed member's stale node: %+v", r)
 		}
 	}
-	if nodeAddressed == 0 {
-		t.Fatalf("relayed commit has no node-addressed envelope: %+v", relayed.Path.Recipients)
-	}
-	if !strings.Contains(string(rawCommit), "target_node") {
-		t.Fatalf("node-addressed envelope missing from the wire: %s", rawCommit)
+	if _, stale := relayed.Tree.Publics[3]; stale {
+		t.Fatal("relayed tree kept the removed member's node key")
 	}
 	if !strings.Contains(string(rawCommit), "tree_publics") {
 		t.Fatalf("commit on the wire has no persisted tree keys: %s", rawCommit)

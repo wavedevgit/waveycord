@@ -307,3 +307,64 @@ func TestStableLeafSlotsAcrossRemoval(t *testing.T) {
 		t.Fatal("removed member derived the epoch-2 root")
 	}
 }
+
+// TestRemovedMemberBranchExcluded proves a node that covered a removed member stops
+// being addressable: no envelope targets its old key, a retained member under it gets
+// a leaf envelope instead, and the removed member cannot derive the new root even
+// with the node key it held before.
+func TestRemovedMemberBranchExcluded(t *testing.T) {
+	a := newMember(t, "xa")
+	b := newMember(t, "xb")
+	d := newMember(t, "xd")
+	e := newMember(t, "xe")
+	roster := []Leaf{a.leaf(), b.leaf(), d.leaf(), e.leaf()}
+	signKeys := map[string]ed25519.PublicKey{a.id: a.signK, b.id: b.signK, d.id: d.signK, e.id: e.signK}
+
+	// e commits epoch 1, so node 3 covers d (slot 2) and e (slot 3).
+	commit1, epoch1, err := NewEpochCommit(1, roster, nil, e.id, e.signP, e.priv)
+	if err != nil {
+		t.Fatalf("epoch1: %v", err)
+	}
+	dKeys := map[int][]byte{}
+	if _, dKeys, err = DerivePathRootWithKeys(commit1, d.id, d.priv, nil); err != nil {
+		t.Fatalf("d epoch1: %v", err)
+	}
+	if _, ok := dKeys[3]; !ok {
+		t.Fatal("d did not hold node 3")
+	}
+
+	// Remove d: node 3 still holds e but also covered the removed member, so its key
+	// must not be addressed or reused.
+	commit2, epoch2, err := NewEpochCommitWithState(2, roster,
+		[]Proposal{{Type: "remove", UserID: d.id}}, a.id, a.signP, a.priv, epoch1.Tree)
+	if err != nil {
+		t.Fatalf("epoch2: %v", err)
+	}
+	if err := VerifyEpochCommit(commit2, roster, signKeys); err != nil {
+		t.Fatalf("epoch2 verify: %v", err)
+	}
+	for _, r := range commit2.Path.Recipients {
+		if r.TargetNode == 3 {
+			t.Fatalf("stale node 3 was addressed: %+v", r)
+		}
+	}
+	if _, still := commit2.Tree.Publics[3]; still {
+		t.Fatal("node 3 key was retained after covering a removed member")
+	}
+	if slot := commit2.Tree.SlotFor(d.id); slot != -1 {
+		t.Fatalf("removed member retained slot %d", slot)
+	}
+	// The removed member cannot reach the new root even with its old node key.
+	if _, _, err := DerivePathRootWithKeys(commit2, d.id, d.priv, dKeys); err == nil {
+		t.Fatal("removed member derived the epoch-2 root with its stale node key")
+	}
+	// The retained member under the same node gets a leaf envelope and derives.
+	eRoot, _, err := DerivePathRootWithKeys(commit2, e.id, e.priv, nil)
+	if err != nil || !bytes.Equal(eRoot, epoch2.Root) {
+		t.Fatalf("e epoch2: %v", err)
+	}
+	aRoot, _, err := DerivePathRootWithKeys(commit2, a.id, a.priv, nil)
+	if err != nil || !bytes.Equal(aRoot, epoch2.Root) {
+		t.Fatalf("a epoch2: %v", err)
+	}
+}

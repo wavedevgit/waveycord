@@ -118,6 +118,7 @@ route is not registered yet.
 | TreeKEM resolution with blank/padding subtrees; per-node public keys persisted across epochs and covered by the commit signature | implemented + tested |
 | Stable leaf slots: `TreeState` carries size/users/positions, removal blanks a slot without shrinking, newcomers fill the lowest free slot | implemented + tested |
 | Node-addressed path envelopes: member node private keys persisted in epoch state, `DerivePathRootWithKeys` | implemented + tested (unit + two-instance) |
+| Removed-member branch exclusion: nodes covering a removed member are dropped from presence and public keys, never addressed again | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | implemented + tested (`-tags opus` for codec paths) |
 

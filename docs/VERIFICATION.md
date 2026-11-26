@@ -38,6 +38,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | TreeKEM resolution with blanks/padding, persisted tree keys across epochs, add/remove with carried tree | `TestResolutionWithBlanks`, `TestTreePublicsPersistAcrossEpochs`, `TestVoiceMLSSignedRosterCommit` |
 | Node-addressed envelope decryption via persisted node keys, non-member rejection, newcomer without node keys | `TestNodeAddressedEnvelope` |
 | Stable leaf slots across removal, node-addressed envelope on the op 38 wire, removed-slot exclusion | `TestStableLeafSlotsAcrossRemoval`, `TestVoiceMLSSignedRosterCommit` |
+| Removed-member branch exclusion: stale node not addressed, key dropped, removed member cannot derive | `TestRemovedMemberBranchExcluded`, `TestVoiceMLSSignedRosterCommit` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
