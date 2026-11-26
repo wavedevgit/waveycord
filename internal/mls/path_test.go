@@ -71,7 +71,7 @@ func TestPathUpdateAndWelcome(t *testing.T) {
 
 	// Epoch 3: add Dave; the Welcome lets him join and binds the commit hash.
 	commit3, epoch3, err := NewEpochCommit(3, commit2.Roster,
-		[]Proposal{{Type: "add", UserID: dave.id, Public: dave.pub}}, alice.id, alice.signP, alice.priv)
+		[]Proposal{addProposalFor(t, dave)}, alice.id, alice.signP, alice.priv)
 	if err != nil {
 		t.Fatalf("epoch3: %v", err)
 	}

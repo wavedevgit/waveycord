@@ -34,12 +34,16 @@ func groupContextBytesForCommit(c Commit) []byte {
 func encodeCommitProposal(w *tlsWriter, p Proposal, leaf int) error {
 	switch p.Type {
 	case "add":
+		if p.KeyPackage == nil {
+			return errTLS
+		}
 		w.u8(1)  // proposal by value
 		w.u16(1) // Add
-		if err := w.opaque16([]byte(p.UserID)); err != nil {
+		kp, err := EncodeKeyPackage(*p.KeyPackage)
+		if err != nil {
 			return err
 		}
-		return w.opaque16(p.Public[:])
+		return w.opaque16(kp)
 	case "remove":
 		w.u8(1)
 		w.u16(2) // Remove

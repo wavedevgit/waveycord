@@ -24,7 +24,7 @@ func TestMLSMessageRoundTrip(t *testing.T) {
 		t.Fatalf("base: %v", err)
 	}
 	commit, epoch, err := NewEpochCommitWithState(2, roster,
-		[]Proposal{{Type: "add", UserID: c.id, Public: c.pub}}, a.id, a.signP, a.priv, base.Tree)
+		[]Proposal{addProposalFor(t, c)}, a.id, a.signP, a.priv, base.Tree)
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}

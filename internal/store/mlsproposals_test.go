@@ -38,7 +38,13 @@ func TestMLSProposalSurvivesReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	roster := []mls.Leaf{{UserID: "a", Public: aPub}, {UserID: "b", Public: bPub}}
-	proposal := mls.Proposal{Type: "add", UserID: "c", Public: cPub}
+	cSignPub, cSignPriv, _ := ed25519.GenerateKey(rand.Reader)
+	_ = cSignPub
+	kp, err := mls.NewKeyPackageFor("c", cPub, cSignPriv, mls.SuiteX25519AES256GCM)
+	if err != nil {
+		t.Fatalf("key package: %v", err)
+	}
+	proposal := mls.Proposal{Type: "add", KeyPackage: &kp}
 	msg := mls.SignProposalMessage(proposal, "b", bSignPriv)
 	if err := st.SaveMLSProposal("chan-1", msg); err != nil {
 		t.Fatalf("save: %v", err)

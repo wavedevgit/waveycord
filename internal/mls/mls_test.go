@@ -90,7 +90,7 @@ func TestEpochCommitProposalsAndRemoval(t *testing.T) {
 	// Epoch 2: remove Charlie, add Dave. Charlie must get no envelope.
 	proposals := []Proposal{
 		{Type: "remove", UserID: charlie.id},
-		{Type: "add", UserID: dave.id, Public: dave.pub},
+		addProposalFor(t, dave),
 	}
 	commit2, _, err := NewCommit(2, commit1.Roster, proposals, bob.id, bob.signP)
 	if err != nil {
@@ -149,4 +149,14 @@ func TestEpochCommitProposalsAndRemoval(t *testing.T) {
 	if _, _, err := NewCommit(3, commit2.Roster, []Proposal{{Type: "remove", UserID: charlie.id}}, alice.id, alice.signP); err == nil {
 		t.Fatal("removing a non-member succeeded")
 	}
+}
+
+// addProposalFor builds a KeyPackage-backed Add proposal for a test member.
+func addProposalFor(t *testing.T, m member) Proposal {
+	t.Helper()
+	kp, err := NewKeyPackageFor(m.id, m.pub, m.signP, SuiteX25519AES256GCM)
+	if err != nil {
+		t.Fatalf("key package for %s: %v", m.id, err)
+	}
+	return Proposal{Type: "add", KeyPackage: &kp}
 }

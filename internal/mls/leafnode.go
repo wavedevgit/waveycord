@@ -2,6 +2,7 @@ package mls
 
 import (
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 
 	"fmt"
@@ -236,3 +237,29 @@ func LeafFromKeyPackage(k KeyPackage) (Leaf, error) {
 
 var _ = sha256.Sum256
 var _ = fmt.Sprintf
+
+// NewKeyPackageFor builds and signs a KeyPackage for a member, used by constructors and
+// tests that only hold an encryption public key and a signing key.
+func NewKeyPackageFor(userID string, encPub [32]byte, signPriv ed25519.PrivateKey, suite Ciphersuite) (KeyPackage, error) {
+	if len(signPriv) != ed25519.PrivateKeySize {
+		return KeyPackage{}, ErrVerification
+	}
+	signPub, ok := signPriv.Public().(ed25519.PublicKey)
+	if !ok {
+		return KeyPackage{}, ErrVerification
+	}
+	leaf := LeafNode{
+		EncryptionKey: encPub,
+		SignatureKey:  append(ed25519.PublicKey(nil), signPub...),
+		Credential:    Credential{Type: 1, Identity: []byte(userID)},
+		Source:        1,
+	}
+	leaf.Sign(signPriv)
+	var initKey [32]byte
+	if _, err := rand.Read(initKey[:]); err != nil {
+		return KeyPackage{}, err
+	}
+	kp := KeyPackage{Version: 1, CipherSuite: suite, Leaf: leaf, InitKey: initKey}
+	kp.Sign(signPriv)
+	return kp, nil
+}

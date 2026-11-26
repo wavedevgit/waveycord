@@ -62,7 +62,13 @@ func TestVoiceMLSCommitServerValidation(t *testing.T) {
 	readMLSCommit(t, bobVoice, time.Now().Add(20*time.Second))
 
 	// A proposal relayed on its own can later be referenced by ref in a commit.
-	addProposal := mls.Proposal{Type: "add", UserID: "charlie-external", Public: [32]byte{9, 8, 7}}
+	extSignPub, extSignPriv, _ := ed25519.GenerateKey(rand.Reader)
+	_ = extSignPub
+	extPackage, kperr := mls.NewKeyPackageFor("charlie-external", [32]byte{9, 8, 7}, extSignPriv, mls.SuiteX25519AES256GCM)
+	if kperr != nil {
+		t.Fatalf("key package: %v", kperr)
+	}
+	addProposal := mls.Proposal{Type: "add", KeyPackage: &extPackage}
 	extMsg := mls.SignProposalMessage(addProposal, bob.ID, bSignPriv)
 	encodedExt, err := mls.MarshalProposalMessage(extMsg)
 	if err != nil {

@@ -325,15 +325,15 @@ func ApplyProposals(roster []Leaf, proposals []Proposal) ([]Leaf, error) {
 	for _, p := range proposals {
 		switch p.Type {
 		case "add":
-			leaf := Leaf{UserID: p.UserID, Public: p.Public}
-			if p.KeyPackage != nil {
-				if err := VerifyKeyPackage(*p.KeyPackage); err != nil {
-					return nil, err
-				}
-				leaf = leafFromKeyPackage(*p.KeyPackage)
-				if p.UserID != "" && p.UserID != leaf.UserID {
-					return nil, fmt.Errorf("mls: key package credential does not match the proposal user")
-				}
+			if p.KeyPackage == nil {
+				return nil, fmt.Errorf("mls: add proposal requires a key package")
+			}
+			if err := VerifyKeyPackage(*p.KeyPackage); err != nil {
+				return nil, err
+			}
+			leaf := leafFromKeyPackage(*p.KeyPackage)
+			if p.UserID != "" && p.UserID != leaf.UserID {
+				return nil, fmt.Errorf("mls: key package credential does not match the proposal user")
 			}
 			if leaf.UserID == "" || leaf.Public == ([32]byte{}) {
 				return nil, fmt.Errorf("mls: add proposal missing user or key")

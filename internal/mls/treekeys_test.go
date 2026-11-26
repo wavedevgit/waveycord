@@ -72,7 +72,7 @@ func TestTreePublicsPersistAcrossEpochs(t *testing.T) {
 
 	// Epoch 2 adds Charlie while carrying epoch 1's node keys forward.
 	commit2, epoch2, err := NewEpochCommitWithTree(2, commit1.Roster,
-		[]Proposal{{Type: "add", UserID: charlie.id, Public: charlie.pub}},
+		[]Proposal{addProposalFor(t, charlie)},
 		bob.id, bob.signP, bob.priv, epoch1.TreePublics)
 	if err != nil {
 		t.Fatalf("epoch2: %v", err)
@@ -112,7 +112,7 @@ func TestTreePublicsPersistAcrossEpochs(t *testing.T) {
 	// Removing Bob and adding Dave in epoch 3 still lets the retained members and
 	// the newcomer agree, with the off-path keys kept across two updates.
 	commit3, epoch3, err := NewEpochCommitWithTree(3, commit2.Roster,
-		[]Proposal{{Type: "remove", UserID: bob.id}, {Type: "add", UserID: dave.id, Public: dave.pub}},
+		[]Proposal{{Type: "remove", UserID: bob.id}, addProposalFor(t, dave)},
 		alice.id, alice.signP, alice.priv, epoch2.TreePublics)
 	if err != nil {
 		t.Fatalf("epoch3: %v", err)
@@ -176,7 +176,7 @@ func TestNodeAddressedEnvelope(t *testing.T) {
 	// Epoch 2 adds d; a commits, and the sibling of node 2 is the present internal
 	// node 3, so that path secret must be node-addressed.
 	commit2, epoch2, err := NewEpochCommitWithTree(2, roster,
-		[]Proposal{{Type: "add", UserID: d.id, Public: d.pub}}, a.id, a.signP, a.priv,
+		[]Proposal{addProposalFor(t, d)}, a.id, a.signP, a.priv,
 		epoch1.TreePublics)
 	if err != nil {
 		t.Fatalf("epoch2: %v", err)
@@ -406,7 +406,7 @@ func TestWelcomeDeliversNodeKeys(t *testing.T) {
 		t.Fatalf("epoch1: %v", err)
 	}
 	commit2, epoch2, err := NewEpochCommitWithState(2, roster,
-		[]Proposal{{Type: "add", UserID: c.id, Public: c.pub}}, a.id, a.signP, a.priv, commit1.Tree)
+		[]Proposal{addProposalFor(t, c)}, a.id, a.signP, a.priv, commit1.Tree)
 	if err != nil {
 		t.Fatalf("epoch2: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestWelcomeGroupInfoFraming(t *testing.T) {
 		t.Fatalf("base: %v", err)
 	}
 	commit, epoch, err := NewEpochCommitWithState(2, roster,
-		[]Proposal{{Type: "add", UserID: c.id, Public: c.pub}}, a.id, a.signP, a.priv, base.Tree)
+		[]Proposal{addProposalFor(t, c)}, a.id, a.signP, a.priv, base.Tree)
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestWelcomeGroupInfoFraming(t *testing.T) {
 	// A group-info blob from another commit cannot be replayed.
 	d := newMember(t, "gd")
 	other, _, err := NewEpochCommitWithState(3, commit.Roster,
-		[]Proposal{{Type: "add", UserID: d.id, Public: d.pub}}, a.id, a.signP, a.priv, commit.Tree)
+		[]Proposal{addProposalFor(t, d)}, a.id, a.signP, a.priv, commit.Tree)
 	if err != nil {
 		t.Fatalf("other: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestNewcomerAncestorChainDerivation(t *testing.T) {
 		t.Fatalf("epoch2: %v", err)
 	}
 	commit, epoch, err := NewEpochCommitWithState(3, removed.Roster,
-		[]Proposal{{Type: "add", UserID: b.id, Public: b.pub}}, a.id, a.signP, a.priv, removed.Tree)
+		[]Proposal{addProposalFor(t, b)}, a.id, a.signP, a.priv, removed.Tree)
 	if err != nil {
 		t.Fatalf("epoch3: %v", err)
 	}

@@ -229,7 +229,7 @@ func TestExternalProposalReference(t *testing.T) {
 	roster := []Leaf{alice.leaf(), bob.leaf()}
 	signKeys := map[string]ed25519.PublicKey{alice.id: alice.signK, bob.id: bob.signK, charlie.id: charlie.signK}
 
-	add := Proposal{Type: "add", UserID: charlie.id, Public: charlie.pub}
+	add := addProposalFor(t, charlie)
 	ext := SignProposalMessage(add, bob.id, bob.signP)
 	commit, _, err := NewEpochCommitExternal(1, roster, []Proposal{add}, nil,
 		[]ProposalMessage{ext}, SuiteX25519AES256GCM, alice.id, alice.signP, alice.priv, nil)
