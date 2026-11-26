@@ -91,11 +91,7 @@ func TestCiphersuiteAndProposalRefs(t *testing.T) {
 		t.Fatal("proposer claim without the matching key accepted")
 	}
 	// A proposer outside the previous roster is rejected even with a valid signature.
-	outsider := ProposalMessage{
-		Proposal:  Proposal{Type: "remove", UserID: bob.id},
-		Proposer:  "stranger",
-		Signature: ed25519.Sign(strangerKey(t), proposalMessageCanonical(ProposalMessage{Proposal: Proposal{Type: "remove", UserID: bob.id}, Proposer: "stranger"})),
-	}
+	outsider := SignProposalMessage(Proposal{Type: "remove", UserID: bob.id}, "stranger", strangerKey(t))
 	badOutsider := Commit{Epoch: 1, CipherSuite: SuiteX25519AES256GCM, Roster: commit.Roster,
 		Proposals:        []Proposal{{Type: "remove", UserID: bob.id}},
 		ProposalMessages: []ProposalMessage{outsider},
@@ -162,5 +158,63 @@ func TestIndependentProposalAuthors(t *testing.T) {
 	}
 	if err := VerifyEpochCommit(bad2, roster, signKeys); err == nil {
 		t.Fatal("proposal from outside the roster accepted")
+	}
+}
+
+// TestProposalReferenceBinding proves each proposal carries its own reference, the
+// commit's list binds those references exactly, and forged/duplicate/reordered
+// references are rejected.
+func TestProposalReferenceBinding(t *testing.T) {
+	alice := newMember(t, "rba")
+	bob := newMember(t, "rbb")
+	charlie := newMember(t, "rbc")
+	roster := []Leaf{alice.leaf(), bob.leaf(), charlie.leaf()}
+	signKeys := map[string]ed25519.PublicKey{alice.id: alice.signK, bob.id: bob.signK, charlie.id: charlie.signK}
+
+	p1 := Proposal{Type: "remove", UserID: charlie.id}
+	p2 := Proposal{Type: "remove", UserID: bob.id}
+	m1 := SignProposalMessage(p1, bob.id, bob.signP)
+	m2 := SignProposalMessage(p2, alice.id, alice.signP)
+	if m1.Ref == "" || m1.Ref == m2.Ref {
+		t.Fatalf("proposal refs not unique: %q %q", m1.Ref, m2.Ref)
+	}
+	if m1.Ref != ProposalMessageRef(m1) {
+		t.Fatal("message ref is not derivable")
+	}
+	commit, _, err := NewEpochCommitWithMessages(1, roster,
+		[]Proposal{p1, p2}, []ProposalMessage{m1, m2}, alice.id, alice.signP, alice.priv, nil)
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if len(commit.ProposalRefs) != 2 || commit.ProposalRefs[0] != m1.Ref || commit.ProposalRefs[1] != m2.Ref {
+		t.Fatalf("commit refs = %v", commit.ProposalRefs)
+	}
+	if err := VerifyEpochCommit(commit, roster, signKeys); err != nil {
+		t.Fatalf("valid refs rejected: %v", err)
+	}
+
+	// A forged message Ref is rejected.
+	forged := commit
+	forged.ProposalMessages = append([]ProposalMessage(nil), commit.ProposalMessages...)
+	forged.ProposalMessages[0].Ref = "deadbeefdeadbeefdeadbeefdeadbeef"
+	forged.ProposalRefs = []string{forged.ProposalMessages[0].Ref, commit.ProposalRefs[1]}
+	if err := VerifyEpochCommit(forged, roster, signKeys); err == nil {
+		t.Fatal("forged proposal ref accepted")
+	}
+	// Reordered refs no longer match the message order.
+	reordered := commit
+	reordered.ProposalRefs = []string{commit.ProposalRefs[1], commit.ProposalRefs[0]}
+	if err := VerifyEpochCommit(reordered, roster, signKeys); err == nil {
+		t.Fatal("reordered proposal refs accepted")
+	}
+	// Duplicate references are rejected.
+	dupMsg := append([]ProposalMessage(nil), commit.ProposalMessages...)
+	dupMsg[1] = dupMsg[0]
+	dup := commit
+	dup.ProposalMessages = dupMsg
+	dup.Proposals = []Proposal{p1, p1}
+	dup.ProposalRefs = []string{m1.Ref, m1.Ref}
+	if err := VerifyEpochCommit(dup, roster, signKeys); err == nil {
+		t.Fatal("duplicate proposal refs accepted")
 	}
 }

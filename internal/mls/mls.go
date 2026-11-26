@@ -217,31 +217,51 @@ var ErrVerification = errors.New("mls: commit verification failed")
 // proposal as its own authenticated message; here the message is signed by the
 // committer that included it, which is the subset this implementation supports.
 type ProposalMessage struct {
-	Proposal  Proposal `json:"proposal"`
-	Proposer  string   `json:"proposer"`
-	Signature []byte   `json:"signature"`
+	Proposal Proposal `json:"proposal"`
+	Proposer string   `json:"proposer"`
+	// Ref is the proposal's own reference, derived from the body and proposer, and is
+	// what the commit's reference list binds. The signature covers it.
+	Ref       string `json:"ref"`
+	Signature []byte `json:"signature"`
 }
 
-// proposalMessageCanonical is the signed bytes for a proposal message.
-func proposalMessageCanonical(m ProposalMessage) []byte {
+// proposalBodyCanonical is the reference preimage: body and proposer only, so a
+// message's own Ref can be derived before signing.
+func proposalBodyCanonical(m ProposalMessage) []byte {
 	raw, _ := json.Marshal(struct {
 		Proposal Proposal `json:"proposal"`
 		Proposer string   `json:"proposer"`
 	}{m.Proposal, m.Proposer})
+	return append([]byte("proposal-body|"), raw...)
+}
+
+// proposalMessageCanonical is the signed bytes, including the message's Ref.
+func proposalMessageCanonical(m ProposalMessage) []byte {
+	raw, _ := json.Marshal(struct {
+		Proposal Proposal `json:"proposal"`
+		Proposer string   `json:"proposer"`
+		Ref      string   `json:"ref"`
+	}{m.Proposal, m.Proposer, m.Ref})
 	return append([]byte("proposal-message|"), raw...)
 }
 
-// SignProposalMessage signs one proposal so it can travel inside a commit.
+// SignProposalMessage derives the message reference and signs body, proposer and ref.
 func SignProposalMessage(p Proposal, proposer string, priv ed25519.PrivateKey) ProposalMessage {
 	m := ProposalMessage{Proposal: p, Proposer: proposer}
+	sum := sha256.Sum256(proposalBodyCanonical(m))
+	m.Ref = fmt.Sprintf("%x", sum[:16])
 	m.Signature = ed25519.Sign(priv, proposalMessageCanonical(m))
 	return m
 }
 
-// VerifyProposalMessage checks the proposer's signature over the wire message.
+// VerifyProposalMessage checks the reference derivation and the proposer's signature.
 func VerifyProposalMessage(m ProposalMessage, signKeys map[string]ed25519.PublicKey) error {
 	key, ok := signKeys[m.Proposer]
 	if !ok || len(m.Signature) == 0 {
+		return ErrVerification
+	}
+	sum := sha256.Sum256(proposalBodyCanonical(m))
+	if m.Ref == "" || m.Ref != fmt.Sprintf("%x", sum[:16]) {
 		return ErrVerification
 	}
 	if !ed25519.Verify(key, proposalMessageCanonical(m), m.Signature) {
@@ -250,10 +270,10 @@ func VerifyProposalMessage(m ProposalMessage, signKeys map[string]ed25519.Public
 	return nil
 }
 
-// ProposalMessageRef is the commit reference for a signed proposal message, so the
-// commit binds the exact wire message rather than only its proposal body.
+// ProposalMessageRef returns the message's bound reference, recomputing it so a
+// forged Ref cannot be used.
 func ProposalMessageRef(m ProposalMessage) string {
-	sum := sha256.Sum256(proposalMessageCanonical(m))
+	sum := sha256.Sum256(proposalBodyCanonical(m))
 	return fmt.Sprintf("%x", sum[:16])
 }
 
@@ -441,10 +461,15 @@ func VerifyWithSuite(c Commit, previous []Leaf, previousSuite Ciphersuite, signK
 	if len(refs) != len(c.ProposalRefs) {
 		return ErrVerification
 	}
+	seenRef := map[string]bool{}
 	for i := range refs {
-		if refs[i] != c.ProposalRefs[i] {
+		if refs[i] != c.ProposalRefs[i] || c.ProposalMessages[i].Ref != refs[i] {
 			return ErrVerification
 		}
+		if seenRef[refs[i]] {
+			return ErrVerification
+		}
+		seenRef[refs[i]] = true
 	}
 	expected, err := ApplyProposals(previous, c.Proposals)
 	if err != nil {

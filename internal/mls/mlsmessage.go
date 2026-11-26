@@ -220,6 +220,9 @@ func encodeEpochCommitBody(c EpochCommit) ([]byte, error) {
 		if err := w.opaque16([]byte(m.Proposer)); err != nil {
 			return err
 		}
+		if err := w.opaque16([]byte(m.Ref)); err != nil {
+			return err
+		}
 		return w.opaque16(m.Signature)
 	}); err != nil {
 		return nil, err
@@ -364,12 +367,16 @@ func decodeEpochCommitBody(body []byte) (EpochCommit, error) {
 		if err != nil {
 			return c, err
 		}
+		ref, err := r.opaque16()
+		if err != nil {
+			return c, err
+		}
 		sig, err := r.opaque16()
 		if err != nil {
 			return c, err
 		}
 		c.ProposalMessages = append(c.ProposalMessages, ProposalMessage{
-			Proposal: p, Proposer: string(prop), Signature: sig,
+			Proposal: p, Proposer: string(prop), Ref: string(ref), Signature: sig,
 		})
 	}
 	pn, err := r.vector16()
