@@ -163,11 +163,17 @@ func (s *Server) handleListScheduledEvents(c *Ctx) {
 		fail(c, err)
 		return
 	}
-	c.JSON(events)
+	visible := make([]store.ScheduledEvent, 0, len(events))
+	for _, event := range events {
+		if s.eventPermission(c.User.ID, event, "read") == nil {
+			visible = append(visible, event)
+		}
+	}
+	c.JSON(visible)
 }
 
 func (s *Server) handleCreateScheduledEvent(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageEvents)
+	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), 0)
 	if err != nil {
 		fail(c, err)
 		return
@@ -251,6 +257,14 @@ func (s *Server) handleCreateScheduledEvent(c *Ctx) {
 		}
 		privacy = *req.PrivacyLevel
 	}
+	if err := s.eventPermission(c.User.ID, store.ScheduledEvent{GuildID: g.ID, ChannelID: req.ChannelID, EntityType: req.EntityType}, "create"); err != nil {
+		fail(c, err)
+		return
+	}
+	if req.Description != nil && len([]rune(*req.Description)) > 1000 {
+		c.FailForm("description", "Must be at most 1000 characters")
+		return
+	}
 	event, err := s.Store.CreateScheduledEvent(g.ID, c.User.ID, store.CreateEventParams{
 		Name: name, Description: req.Description, ChannelID: req.ChannelID,
 		Start: req.Start, End: req.End, PrivacyLevel: privacy,
@@ -278,11 +292,15 @@ func (s *Server) handleGetScheduledEvent(c *Ctx) {
 		fail(c, NewError(404, 10000, "Unknown Guild Scheduled Event"))
 		return
 	}
+	if err := s.eventPermission(c.User.ID, event, "read"); err != nil {
+		fail(c, err)
+		return
+	}
 	c.JSON(event)
 }
 
 func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageEvents)
+	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), 0)
 	if err != nil {
 		fail(c, err)
 		return
@@ -301,6 +319,10 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 		Status         *int           `json:"status"`
 		PrivacyLevel   *int           `json:"privacy_level"`
 		EntityMetadata map[string]any `json:"entity_metadata"`
+	}
+	if err := s.eventPermission(c.User.ID, event, "update"); err != nil {
+		fail(c, err)
+		return
 	}
 	if err := c.Bind(&req); err != nil {
 		fail(c, ErrInvalidForm)
@@ -336,6 +358,46 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 		c.FailForm("status", "Invalid scheduled event status transition")
 		return
 	}
+	if req.PrivacyLevel != nil && *req.PrivacyLevel != 2 {
+		c.FailForm("privacy_level", "Only GUILD_ONLY (2) is accepted")
+		return
+	}
+	if req.Description != nil && len([]rune(*req.Description)) > 1000 {
+		c.FailForm("description", "Must be at most 1000 characters")
+		return
+	}
+	if req.ChannelID != nil {
+		ch, err := s.Store.Channel(*req.ChannelID)
+		want := store.ChannelVoice
+		if event.EntityType == 1 {
+			want = store.ChannelStage
+		}
+		if event.EntityType == 3 || err != nil || ch.GuildID == nil || *ch.GuildID != g.ID || ch.Type != want {
+			c.FailForm("channel_id", "Invalid event channel")
+			return
+		}
+		target := event
+		target.ChannelID = req.ChannelID
+		if err := s.eventPermission(c.User.ID, target, "update"); err != nil {
+			fail(c, err)
+			return
+		}
+	}
+	start, end := event.ScheduledStartTime, event.ScheduledEndTime
+	if req.Start != nil {
+		start = *req.Start
+	}
+	if req.End != nil {
+		end = req.End
+	}
+	if end != nil {
+		st, _ := parseEventTime(start)
+		en, ok := parseEventTime(*end)
+		if !ok || !en.After(st) {
+			c.FailForm("scheduled_end_time", "Must be after start time")
+			return
+		}
+	}
 	updated, err := s.Store.UpdateScheduledEvent(g.ID, event.ID, store.UpdateEventParams{
 		Name: req.Name, Description: req.Description, ChannelID: req.ChannelID,
 		Start: req.Start, End: req.End, Status: req.Status,
@@ -352,7 +414,7 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 }
 
 func (s *Server) handleDeleteScheduledEvent(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageEvents)
+	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), 0)
 	if err != nil {
 		fail(c, err)
 		return
@@ -360,6 +422,10 @@ func (s *Server) handleDeleteScheduledEvent(c *Ctx) {
 	event, err := s.Store.ScheduledEvent(c.Param("eventID"))
 	if err != nil || event.GuildID != g.ID {
 		fail(c, NewError(404, 10000, "Unknown Guild Scheduled Event"))
+		return
+	}
+	if err := s.eventPermission(c.User.ID, event, "update"); err != nil {
+		fail(c, err)
 		return
 	}
 	if err := s.Store.DeleteScheduledEvent(g.ID, event.ID); err != nil {
@@ -385,6 +451,10 @@ func (s *Server) handleEventUsers(c *Ctx) {
 		return
 	}
 	q := c.R.URL.Query()
+	if err := s.eventPermission(c.User.ID, event, "read"); err != nil {
+		fail(c, err)
+		return
+	}
 	limit := 100
 	if value := q.Get("limit"); value != "" {
 		n, err := strconv.Atoi(value)
@@ -414,6 +484,10 @@ func (s *Server) handleEventInterest(c *Ctx) {
 		return
 	}
 	interested := c.R.Method == http.MethodPut
+	if err := s.eventPermission(c.User.ID, event, "read"); err != nil {
+		fail(c, err)
+		return
+	}
 	changed, err := s.Store.SetEventInterest(event.ID, c.User.ID, interested)
 	if err != nil {
 		fail(c, err)

@@ -113,6 +113,15 @@ func TestScheduledEvents(t *testing.T) {
 	if external.EntityMetadata["location"] != "Town Hall" {
 		t.Fatalf("metadata = %+v", external.EntityMetadata)
 	}
+	for _, body := range []map[string]any{
+		{"privacy_level": 1},
+		{"channel_id": text.ID},
+		{"scheduled_end_time": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)},
+	} {
+		if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, body); status != 400 {
+			t.Fatalf("invalid event update %d %+v", status, body)
+		}
+	}
 
 	// Validation failures.
 	bad := []map[string]any{
