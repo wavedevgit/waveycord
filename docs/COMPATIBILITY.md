@@ -112,7 +112,7 @@ route is not registered yet.
 | Signed roster commit (op 38) + tree-derived epoch secret | implemented + tested |
 | `internal/mls`: HPKE envelopes, Add/Remove proposals, binary tree key schedule | implemented + tested (TreeKEM-style, not RFC 9420) |
 | Path secrets (per-divergence envelopes) + Welcome for added members | implemented + tested |
-| Ciphersuite negotiation (X25519/HKDF-SHA256/AES-256-GCM) + proposal references | implemented + tested |
+| Ciphersuite negotiation (X25519/HKDF-SHA256 with AES-256-GCM or AES-128-GCM) + proposal references | implemented + tested |
 | RFC-style `ExpandWithLabel` path KDF, resolution-driven envelopes, per-application key schedule | implemented + tested |
 | Signed Add/Remove proposal wire messages carried in the commit, signature and body validated on verify | implemented + tested |
 | Independent proposal authors: any previous-roster member may author/sign a proposal; proposer and signature validated on verify | implemented + tested |

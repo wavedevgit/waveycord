@@ -33,8 +33,21 @@ type Ciphersuite uint16
 // AES-256-GCM for AEAD.
 const SuiteX25519AES256GCM Ciphersuite = 0x0001
 
+// SuiteX25519AES128GCM is the same HPKE/KDF with a 128-bit application AEAD key.
+const SuiteX25519AES128GCM Ciphersuite = 0x0002
+
 // Supported reports whether the suite is implemented.
-func (c Ciphersuite) Supported() bool { return c == SuiteX25519AES256GCM }
+func (c Ciphersuite) Supported() bool {
+	return c == SuiteX25519AES256GCM || c == SuiteX25519AES128GCM
+}
+
+// KeySize is the application AEAD key length for the suite.
+func (c Ciphersuite) KeySize() int {
+	if c == SuiteX25519AES128GCM {
+		return 16
+	}
+	return 32
+}
 
 // Leaf is one roster member.
 type Leaf struct {
@@ -112,15 +125,21 @@ type ApplicationKeys struct {
 	Exporter  []byte
 }
 
-// DeriveApplicationKeys runs the application key schedule for one epoch.
+// DeriveApplicationKeys runs the application key schedule for the default suite.
 func DeriveApplicationKeys(epochSecret []byte, epoch uint32) ApplicationKeys {
+	return DeriveApplicationKeysFor(epochSecret, epoch, SuiteX25519AES256GCM)
+}
+
+// DeriveApplicationKeysFor runs the application key schedule for a negotiated suite,
+// so the AEAD key length follows the ciphersuite.
+func DeriveApplicationKeysFor(epochSecret []byte, epoch uint32, suite Ciphersuite) ApplicationKeys {
 	var ctx [4]byte
 	binary.BigEndian.PutUint32(ctx[:], epoch)
-	es := ExpandWithLabel(epochSecret, "epoch", ctx[:], 32)
+	es := ExpandWithLabel(epochSecret, "epoch", ctx[:], suite.KeySize())
 	return ApplicationKeys{
-		Key:       ExpandWithLabel(es, "key", nil, 32),
+		Key:       ExpandWithLabel(es, "key", nil, suite.KeySize()),
 		BaseNonce: ExpandWithLabel(es, "nonce", nil, 12),
-		Exporter:  ExpandWithLabel(es, "exporter", nil, 32),
+		Exporter:  ExpandWithLabel(es, "exporter", nil, suite.KeySize()),
 	}
 }
 

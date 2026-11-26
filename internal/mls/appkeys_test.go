@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"testing"
 )
 
@@ -73,5 +74,65 @@ func TestExpandWithLabelAndApplicationKeys(t *testing.T) {
 	otherGCM, _ := cipher.NewGCM(otherBlock)
 	if _, err := otherGCM.Open(nil, n1, sealed, header); err == nil {
 		t.Fatal("wrong epoch key opened the record")
+	}
+}
+
+// TestCiphersuiteNegotiation proves a second suite is selectable, that its key
+// schedule uses the matching key length, and that unsupported suites are refused.
+func TestCiphersuiteNegotiation(t *testing.T) {
+	alice := newMember(t, "nsa")
+	bob := newMember(t, "nsb")
+	roster := []Leaf{alice.leaf(), bob.leaf()}
+	signKeys := map[string]ed25519.PublicKey{alice.id: alice.signK, bob.id: bob.signK}
+
+	commit, epoch, err := NewEpochCommitWithSuite(1, roster, nil, nil, SuiteX25519AES128GCM,
+		alice.id, alice.signP, alice.priv, nil)
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if commit.CipherSuite != SuiteX25519AES128GCM || !commit.CipherSuite.Supported() {
+		t.Fatalf("suite = %#x", commit.CipherSuite)
+	}
+	if err := VerifyEpochCommit(commit, roster, signKeys); err != nil {
+		t.Fatalf("AES-128 commit rejected: %v", err)
+	}
+
+	secret := EpochSecret(epoch.Root, roster)
+	keys256 := DeriveApplicationKeysFor(secret, 1, SuiteX25519AES256GCM)
+	keys128 := DeriveApplicationKeysFor(secret, 1, SuiteX25519AES128GCM)
+	if len(keys128.Key) != 16 || len(keys128.BaseNonce) != 12 || len(keys128.Exporter) != 16 {
+		t.Fatalf("AES-128 sizes key=%d nonce=%d exporter=%d", len(keys128.Key), len(keys128.BaseNonce), len(keys128.Exporter))
+	}
+	if len(keys256.Key) != 32 {
+		t.Fatalf("AES-256 key size %d", len(keys256.Key))
+	}
+	if bytes.Equal(keys128.Key, keys256.Key[:16]) {
+		t.Fatal("suite is not bound into the key schedule")
+	}
+
+	block, err := aes.NewCipher(keys128.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := NonceFor(keys128.BaseNonce, 3)
+	sealed := gcm.Seal(nil, nonce, []byte("aes128"), []byte("hdr"))
+	if plain, err := gcm.Open(nil, nonce, sealed, []byte("hdr")); err != nil || string(plain) != "aes128" {
+		t.Fatalf("AES-128 round trip: %v", err)
+	}
+
+	if _, _, err := NewEpochCommitWithSuite(1, roster, nil, nil, Ciphersuite(0x0099),
+		alice.id, alice.signP, alice.priv, nil); err == nil {
+		t.Fatal("unsupported suite accepted at construction")
+	}
+
+	// A suite swapped after signing is rejected before signature checking.
+	bad := commit
+	bad.CipherSuite = Ciphersuite(0x0099)
+	if err := VerifyEpochCommit(bad, roster, signKeys); err == nil {
+		t.Fatal("unsupported negotiated suite accepted")
 	}
 }

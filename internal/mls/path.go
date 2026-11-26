@@ -185,6 +185,15 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 // messages. When messages is nil or shorter than proposals, the committer signs the
 // remaining proposals itself.
 func NewEpochCommitWithMessages(epoch uint32, roster []Leaf, proposals []Proposal, messages []ProposalMessage, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
+	return NewEpochCommitWithSuite(epoch, roster, proposals, messages, SuiteX25519AES256GCM,
+		committerID, committerSignPriv, committerLeafPriv, previous)
+}
+
+// NewEpochCommitWithSuite selects the negotiated ciphersuite for the commit.
+func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, messages []ProposalMessage, suite Ciphersuite, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
+	if !suite.Supported() {
+		return EpochCommit{}, nil, fmt.Errorf("mls: unsupported ciphersuite %#x", suite)
+	}
 	next, err := ApplyProposals(roster, proposals)
 	if err != nil {
 		return EpochCommit{}, nil, err
@@ -484,7 +493,7 @@ func NewEpochCommitWithMessages(epoch uint32, roster []Leaf, proposals []Proposa
 		}
 		signed = append(signed, SignProposalMessage(p, committerID, committerSignPriv))
 	}
-	commit := EpochCommit{Commit: Commit{Epoch: epoch, CipherSuite: SuiteX25519AES256GCM,
+	commit := EpochCommit{Commit: Commit{Epoch: epoch, CipherSuite: suite,
 		ProposalRefs: ProposalRefsFor(signed), ProposalMessages: signed,
 		Roster: next, Proposals: proposals,
 		Envelopes: map[string]Envelope{}, Committer: committerID}}

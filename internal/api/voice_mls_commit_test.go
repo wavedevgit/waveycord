@@ -472,14 +472,33 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	davePriv, davePub := clientKeypair(t)
 	daveSignPub, _, _ := ed25519.GenerateKey(rand.Reader)
 	signKeyMap[dave] = daveSignPub
-	commit3, epoch3State, err := mls.NewEpochCommitWithTree(3, commit2.Roster,
-		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}}, alice.ID, aliceSignPriv, alicePriv,
-		epoch2State.TreePublics)
+	// Epoch 3 negotiates the AES-128-GCM suite.
+	prevTree := epoch2State.Tree
+	commit3, epoch3State, err := mls.NewEpochCommitWithSuite(3, commit2.Roster,
+		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}}, nil,
+		mls.SuiteX25519AES128GCM, alice.ID, aliceSignPriv, alicePriv, prevTree)
 	if err != nil {
 		t.Fatalf("epoch3 commit: %v", err)
 	}
 	if err := mls.VerifyEpochCommit(commit3, commit2.Roster, signKeyMap); err != nil {
 		t.Fatalf("epoch3 verify: %v", err)
+	}
+	if commit3.CipherSuite != mls.SuiteX25519AES128GCM {
+		t.Fatalf("epoch3 suite = %#x", commit3.CipherSuite)
+	}
+	// Relay it through the server, which must accept the negotiated suite.
+	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit3})
+	rcf := readVoiceOp(t, bobVoice, 38, time.Now().Add(20*time.Second))
+	var relayed3 mls.EpochCommit
+	raw3, _ := jsonMarshal(rcf["d"].(map[string]any)["commit"])
+	if err := jsonUnmarshalBytes(raw3, &relayed3); err != nil {
+		t.Fatalf("decode epoch3: %v", err)
+	}
+	if relayed3.CipherSuite != mls.SuiteX25519AES128GCM {
+		t.Fatalf("relayed suite = %#x", relayed3.CipherSuite)
+	}
+	if err := mls.VerifyEpochCommit(relayed3, commit2.Roster, signKeyMap); err != nil {
+		t.Fatalf("relayed epoch3 verify: %v", err)
 	}
 	if len(commit3.ProposalMessages) != 1 || commit3.ProposalMessages[0].Proposal.Type != "add" ||
 		commit3.ProposalMessages[0].Proposal.UserID != dave {
@@ -551,8 +570,11 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if !bytes.Equal(daveEpochSecret, aliceEpochSecret) {
 		t.Fatal("newcomer epoch secret differs from the committer's")
 	}
-	daveApp := mls.DeriveApplicationKeys(daveEpochSecret, 3)
-	aliceApp := mls.DeriveApplicationKeys(aliceEpochSecret, 3)
+	daveApp := mls.DeriveApplicationKeysFor(daveEpochSecret, 3, mls.SuiteX25519AES128GCM)
+	aliceApp := mls.DeriveApplicationKeysFor(aliceEpochSecret, 3, mls.SuiteX25519AES128GCM)
+	if len(daveApp.Key) != 16 {
+		t.Fatalf("AES-128 key size %d", len(daveApp.Key))
+	}
 	if !bytes.Equal(daveApp.Key, aliceApp.Key) || !bytes.Equal(daveApp.BaseNonce, aliceApp.BaseNonce) ||
 		!bytes.Equal(daveApp.Exporter, aliceApp.Exporter) {
 		t.Fatal("application key schedule disagrees between members")
