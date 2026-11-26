@@ -46,12 +46,17 @@ func (s *Server) buildRoutes() []route {
 	// Auth.
 	r("POST", "/auth/register", false, s.handleRegister)
 	r("POST", "/auth/login", false, s.handleLogin)
+	r("POST", "/auth/mfa/totp", false, s.handleTOTPLogin)
 	r("POST", "/auth/logout", true, s.handleLogout)
 	r("GET", "/auth/sessions", true, s.handleListSessions)
 	r("POST", "/auth/sessions/logout", true, s.handleLogoutSessions)
 
 	// Users.
 	r("GET", "/users/@me", true, s.handleGetSelf)
+	r("POST", "/users/@me/mfa/totp/enable", true, s.handleEnableTOTP)
+	r("POST", "/users/@me/mfa/totp/disable", true, s.handleDisableTOTP)
+	r("GET", "/users/@me/mfa/codes", true, s.handleGetBackupCodes)
+	r("POST", "/users/@me/mfa/codes", true, s.handleGenerateBackupCodes)
 	r("PATCH", "/users/@me", true, s.handleUpdateSelf)
 	r("GET", "/users/@me/guilds", true, s.handleMyGuilds)
 	r("GET", "/users/@me/channels", true, s.handleMyChannels)

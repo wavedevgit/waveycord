@@ -24,7 +24,8 @@ route is not registered yet.
 | `POST /auth/logout` | implemented |
 | `GET /auth/sessions` | implemented |
 | `POST /auth/sessions/logout` | implemented |
-| MFA / WebAuthn / remote auth | TBD |
+| MFA: TOTP enroll/disable, backup codes, login gate (`/auth/mfa/totp`) | implemented + tested |
+| WebAuthn / remote auth / SMS MFA | TBD |
 
 ## Users
 
@@ -424,6 +425,29 @@ uniqueness across a message is not enforced; attachments referenced by file/medi
 components are not resolved or exposed, because the message attachment pipeline is
 separate; legacy action-row rules still reject premium button style 6 outside a
 section accessory.
+
+## MFA (TOTP)
+
+`POST /users/@me/mfa/totp/enable` takes `{secret, code, password}`, checks the
+password, requires a valid base32 secret and a code within one 30-second step,
+stores the secret, marks `mfa_enabled`, generates ten recovery codes and returns
+`{token, recovery_codes}` with a fresh session. `POST /users/@me/mfa/totp/disable`
+accepts a current TOTP code or an unused recovery code, clears the secret and
+deletes the codes, returning the user object.
+
+`GET /users/@me/mfa/codes` and `POST /users/@me/mfa/codes` require the password;
+the GET lists `{code, used}` entries and the POST replaces the set with ten new
+codes. `POST /auth/login` now returns `{mfa: true, totp: true, sms: false, ticket}`
+without a token when MFA is enabled; `POST /auth/mfa/totp` takes
+`{code, ticket, login, password}`, validates the unexpired ticket (5 minutes), a TOTP
+or unused backup code, consumes the ticket and returns `{token}`. A wrong code does
+not consume the ticket.
+
+Not 1:1: WebAuthn, SMS and remote-auth (QR) factors are not implemented; recovery
+codes are stored verbatim so the GET can list them, where Discord does not return
+them again; there is no rate limiting on code attempts, and no email/phone
+verification step. `mfa_enabled` is cleared on public user projections and exposed
+only to the account holder.
 
 ## Polls
 

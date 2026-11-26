@@ -25,7 +25,21 @@ CREATE TABLE IF NOT EXISTS users (
     locale             TEXT NOT NULL DEFAULT 'en-US',
     bio                TEXT NOT NULL DEFAULT '',
     avatar_decoration  TEXT,          -- JSON avatar_decoration_data
+    mfa_secret         TEXT,          -- base32 TOTP secret when MFA is enabled
     created_at         INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mfa_backup_codes (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code    TEXT NOT NULL,
+    used    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS mfa_tickets (
+    id      TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS users_username_discriminator

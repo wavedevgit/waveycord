@@ -205,6 +205,21 @@ func (s *Server) handleLogin(c *Ctx) {
 		c.JSONStatus(400, map[string]any{"code": 50035, "message": "Invalid Form Body"})
 		return
 	}
+	// With TOTP enabled the password only yields a ticket; a session token is
+	// issued after the second factor.
+	if _, enabled, err := s.Store.MFASecret(user.ID); err == nil && enabled {
+		ticket, err := NewToken()
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		if err := s.Store.CreateMFATicket(ticket, user.ID, nowMillisFn()+mfaTicketTTL); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(map[string]any{"mfa": true, "totp": true, "sms": false, "ticket": ticket})
+		return
+	}
 	token, err := NewToken()
 	if err != nil {
 		fail(c, err)
@@ -265,7 +280,7 @@ func (s *Server) handleLogoutSessions(c *Ctx) {
 // selfView is the private user projection.
 func (s *Server) selfView(u model.User) model.User {
 	v := u
-	v.MFAEnabled = false
+	// The authenticated caller sees their own MFA state; public user views clear it.
 	v.Email = u.Email
 	v.Verified = true
 	return v

@@ -23,7 +23,21 @@ CREATE TABLE IF NOT EXISTS users (
     locale             TEXT NOT NULL DEFAULT 'en-US',
     bio                TEXT NOT NULL DEFAULT '',
     avatar_decoration  TEXT,
+    mfa_secret         TEXT,
     created_at         BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mfa_backup_codes (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code    TEXT NOT NULL,
+    used    SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS mfa_tickets (
+    id      TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires BIGINT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS users_username_discriminator

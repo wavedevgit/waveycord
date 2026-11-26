@@ -34,6 +34,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
 | Polls: create, vote, retract, multiselect, expire, voters, validation | `TestPollsCreateVoteExpireAndVoters` |
 | Components v2 validation (flag, nesting, counts, text, media, edit rules) | `TestComponentsV2Validation`, `TestV2ValidationStrings` |
+| MFA TOTP enrollment, login gate, backup codes, disable | `TestTOTPEnrollmentLoginAndBackupCodes` |
 
 ## Not verifiable, therefore not claimed
 

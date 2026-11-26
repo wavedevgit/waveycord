@@ -92,9 +92,12 @@ func (s *Store) CreateUser(p CreateUserParams) (model.User, error) {
 	return s.PrivateUser(idv)
 }
 
-// UserByID returns the public projection of an account.
+// UserByID returns the public projection of an account. mfa_enabled is only
+// disclosed to the authenticated account itself (through PrivateUser), matching
+// Discord's user object.
 func (s *Store) UserByID(idv string) (model.User, error) {
 	u, err := scanUser(s.DB.QueryRow(`SELECT `+userColumns+` FROM users WHERE id = ?`, idv))
+	u.MFAEnabled = false
 	return u, mapErr(err)
 }
 
