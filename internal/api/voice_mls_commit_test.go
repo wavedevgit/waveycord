@@ -21,6 +21,8 @@ import (
 
 	"github.com/coder/websocket"
 	"golang.org/x/crypto/hkdf"
+
+	"github.com/wavedevgit/waveycord/internal/mls"
 )
 
 type mlsCommit struct {
@@ -314,25 +316,46 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	openMedia(bobRecv, bobKey1, "SIGNED-EPOCH1")
 	openMedia(charlieRecv, charlieKey1, "SIGNED-EPOCH1")
 
-	// Charlie leaves; Alice commits epoch 2 with the remaining roster.
+	// Charlie leaves; Alice commits epoch 2 with an MLS Remove proposal using the
+	// internal/mls key schedule, relayed to the other instance.
 	writeFrame(t, charlieMain, map[string]any{"op": 4, "d": map[string]any{"guild_id": guild.ID, "channel_id": nil}})
 	left := readVoiceOp(t, bobVoice, 36, time.Now().Add(10*time.Second))
 	roster2 := roster(left)
 	if len(roster2) != 2 {
 		t.Fatalf("epoch2 roster = %v", roster2)
 	}
-	_, _ = rand.Read(nonce)
-	commit2 := signCommit(aliceSignPriv, mlsCommit{
-		Epoch: 2, Roster: roster2, Nonce: hex.EncodeToString(nonce), Committer: alice.ID,
-	})
+	leaves1 := []mls.Leaf{
+		{UserID: alice.ID, Public: alicePub},
+		{UserID: bob.ID, Public: bobPub},
+		{UserID: charlie.ID, Public: charliePub},
+	}
+	signKeyMap := map[string]ed25519.PublicKey{
+		alice.ID: aliceSignPub, bob.ID: bobSignPub, charlie.ID: charlieSignPub,
+	}
+	commit2, epoch2State, err := mls.NewCommit(2, leaves1,
+		[]mls.Proposal{{Type: "remove", UserID: charlie.ID}}, alice.ID, aliceSignPriv)
+	if err != nil {
+		t.Fatalf("epoch2 commit: %v", err)
+	}
+	if err := mls.Verify(commit2, leaves1, signKeyMap); err != nil {
+		t.Fatalf("epoch2 verify: %v", err)
+	}
 	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit2})
-	_ = readVoiceOp(t, bobVoice, 38, time.Now().Add(10*time.Second))
-	sendContrib(alice.ID, []string{bob.ID}, 2)
-	sendContrib(bob.ID, []string{alice.ID}, 2)
-	aliceLeaves2 := collect(aliceVoice, alice.ID, 2, []string{bob.ID})
-	bobLeaves2 := collect(bobVoice, bob.ID, 2, []string{alice.ID})
-	aliceKey2 := gcmFromKey(t, treeMediaKey(treeRoot(aliceLeaves2, roster2), 2))
-	bobKey2 := gcmFromKey(t, treeMediaKey(treeRoot(bobLeaves2, roster2), 2))
+	cf := readVoiceOp(t, bobVoice, 38, time.Now().Add(10*time.Second))
+	var relayed mls.Commit
+	rawCommit, _ := jsonMarshal(cf["d"].(map[string]any)["commit"])
+	if err := jsonUnmarshalBytes(rawCommit, &relayed); err != nil {
+		t.Fatalf("decode epoch2 commit: %v", err)
+	}
+	if err := mls.Verify(relayed, leaves1, signKeyMap); err != nil {
+		t.Fatalf("relayed epoch2 verify: %v", err)
+	}
+	bobRoot, err := mls.DecryptRoot(relayed, bob.ID, bobPriv)
+	if err != nil {
+		t.Fatalf("bob decrypt epoch2 root: %v", err)
+	}
+	bobKey2 := gcmFromKey(t, mls.EpochSecret(bobRoot, relayed.Roster))
+	aliceKey2 := gcmFromKey(t, mls.EpochSecret(epoch2State.Root, commit2.Roster))
 	sendMedia(aliceKey2, 2, 2, "SIGNED-EPOCH2")
 	openMedia(bobRecv, bobKey2, "SIGNED-EPOCH2")
 
@@ -351,6 +374,11 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 				t.Fatal("departed member received an epoch-2 contribution")
 			}
 		}
+	}
+
+	// The removed member cannot decrypt the MLS epoch-2 root at all.
+	if _, err := mls.DecryptRoot(relayed, charlie.ID, charliePriv); err == nil {
+		t.Fatal("removed member decrypted the MLS epoch-2 envelope")
 	}
 
 	// Forged commits fail roster authentication.
