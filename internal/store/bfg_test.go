@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -17,15 +18,19 @@ import (
 type countingIndex struct {
 	mu   sync.Mutex
 	docs map[string]map[string]search.Doc
+	fail map[string]bool
 }
 
 func newCountingIndex() *countingIndex {
-	return &countingIndex{docs: map[string]map[string]search.Doc{}}
+	return &countingIndex{docs: map[string]map[string]search.Doc{}, fail: map[string]bool{}}
 }
 
 func (c *countingIndex) Index(_ context.Context, doc search.Doc) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.fail[doc.MessageID] {
+		return errInjected
+	}
 	if c.docs[doc.GuildID] == nil {
 		c.docs[doc.GuildID] = map[string]search.Doc{}
 	}
@@ -165,6 +170,8 @@ func TestBFGMaintainGuildRebuildsDriftedIndex(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+var errInjected = errors.New("injected index failure")
 
 // TestBFGWriteTrigger proves the opt-in write-triggered check rebuilds a drifted
 // guild in the background.

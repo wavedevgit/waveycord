@@ -144,6 +144,7 @@ synthesise and none is fabricated.
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | BFG reindex-on-threshold: drifted large guild reset and rebuilt alone (`WAVEYCORD_SEARCH_BFG_THRESHOLD`, `_DRIFT`, `_EVERY`) | implemented + tested |
+| Durable indexing queue: message writes enqueued, worker drains with retry (`WAVEYCORD_SEARCH_QUEUE=1`) | implemented + tested |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
 | Poll viewer-relative `me_voted`; expiry sweep finalizes, freezes the tally and pushes per-viewer `MESSAGE_UPDATE` | implemented + tested |
 | Components v2: container/section/text/media/file/separator validation under flag `1<<15` | implemented + tested |
@@ -415,9 +416,19 @@ Remaining differences from Discord's published design:
   `Store.BFGMaintainGuild`. Tested for under-threshold skip, under- and over-indexed
   drift, idempotent second pass, per-guild ES count/reset isolation and the async
   write trigger.
-- Still absent: PubSub-backed guaranteed indexing and index-size automation; the
-  rebuild is a bounded per-guild scan, not a distributed migration, and the trigger
-  samples writes rather than receiving a guaranteed queue.
+- Durable indexing queue: with `WAVEYCORD_SEARCH_QUEUE=1`, message create/edit/delete
+  append a row to `search_queue` instead of calling the index inline. Jobs collapse
+  to one per message, a worker drains them in id order and deletes a row only after
+  the index accepted it, and a failed call leaves the row with an incremented attempt
+  count so indexing is at-least-once. Postgres also emits `pg_notify` on enqueue as a
+  wake-up hint, but the durable table is the guarantee and the worker polls; the
+  delete path uses the same queue. Tested on SQLite and on an isolated Postgres schema
+  for inline-bypass, drain/ack, edit collapse, injected failure and retry, delete jobs
+  and the background runner.
+- Still absent: index-size automation, and the wake-up signal is not consumed with a
+  dedicated LISTEN connection (workers poll), so cross-instance wake-up latency is
+  bounded by the poll interval rather than immediate; the BFG rebuild remains a
+  bounded per-guild scan, not a distributed migration.
 
 ## Components v2
 

@@ -231,6 +231,9 @@ func (s *Store) indexMessage(messageID, guildID, channelID, authorID, content st
 	if s.Search == nil || guildID == "" {
 		return
 	}
+	if s.queueIndex(messageID, guildID, channelID, authorID, content, createdAt) {
+		return
+	}
 	_ = s.Search.Index(context.Background(), search.Doc{
 		MessageID: messageID, GuildID: guildID, ChannelID: channelID,
 		AuthorID: authorID, Content: content, CreatedAt: createdAt,
@@ -462,7 +465,7 @@ func (s *Store) DeleteMessage(idv string) (string, error) {
 	if err := tx.Commit(); err != nil {
 		return "", mapErr(err)
 	}
-	if s.Search != nil {
+	if s.Search != nil && !s.queueDelete(idv) {
 		_ = s.Search.Delete(context.Background(), idv)
 	}
 	s.refreshLastMessage(channelID)

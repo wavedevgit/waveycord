@@ -103,6 +103,11 @@ func main() {
 		st.SetBFGPolicy(search.BFGPolicy{Threshold: n, Drift: drift}, envInt("WAVEYCORD_SEARCH_BFG_EVERY", 250))
 		log.Info("search bfg enabled", "threshold", n, "drift", drift)
 	}
+	if os.Getenv("WAVEYCORD_SEARCH_QUEUE") == "1" {
+		st.SetDurableSearchQueue(true)
+		go st.RunSearchQueue(context.Background(), time.Second, 200)
+		log.Info("search indexing via durable queue")
+	}
 	if mode := os.Getenv("WAVEYCORD_SEARCH_REINDEX"); mode != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

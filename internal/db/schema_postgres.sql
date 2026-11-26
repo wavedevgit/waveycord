@@ -263,6 +263,19 @@ CREATE INDEX IF NOT EXISTS messages_channel ON messages (channel_id, id DESC);
 CREATE INDEX IF NOT EXISTS messages_guild ON messages (guild_id, id DESC);
 
 -- Direct id -> channel lookup, the analogue of Discord's separate message index.
+CREATE TABLE IF NOT EXISTS search_queue (
+    id         BIGSERIAL PRIMARY KEY,
+    op         TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    guild_id   TEXT NOT NULL DEFAULT '',
+    channel_id TEXT NOT NULL DEFAULT '',
+    author_id  TEXT NOT NULL DEFAULT '',
+    content    TEXT NOT NULL DEFAULT '',
+    created_at BIGINT NOT NULL,
+    attempts   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS search_queue_message ON search_queue (message_id);
+
 CREATE TABLE IF NOT EXISTS message_index (
     id         TEXT PRIMARY KEY,
     channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,

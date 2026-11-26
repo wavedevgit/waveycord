@@ -45,6 +45,9 @@ type Store struct {
 	bfgBusy   map[string]bool
 	bfgPolicy search.BFGPolicy
 	bfgEvery  int
+	// Durable queue state.
+	queueMu      sync.Mutex
+	durableQueue bool
 }
 
 // SetSearchIndex installs the search service.
