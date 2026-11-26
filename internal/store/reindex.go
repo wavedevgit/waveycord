@@ -171,12 +171,12 @@ func (s *Store) BFGMaintainGuild(ctx context.Context, guildID string, policy sea
 	if err != nil {
 		return false, 0, err
 	}
-	s.bfgMu.Lock()
-	lastSize := 0
-	if s.bfgLastSize != nil {
-		lastSize = s.bfgLastSize[guildID]
+	// The last rebuild size is persisted so the cycle survives restarts and is shared
+	// by every instance watching the same database.
+	lastSize, err := s.bfgLastRebuild(guildID)
+	if err != nil {
+		return false, 0, err
 	}
-	s.bfgMu.Unlock()
 	driftRebuild := policy.NeedsRebuild(rows, indexed)
 	sizeRebuild := policy.NeedsSizeRebuild(rows, lastSize)
 	if !driftRebuild && !sizeRebuild {
@@ -189,12 +189,7 @@ func (s *Store) BFGMaintainGuild(ctx context.Context, guildID string, policy sea
 	}
 	n, err := s.ReindexGuild(ctx, guildID, batch)
 	if err == nil {
-		s.bfgMu.Lock()
-		if s.bfgLastSize == nil {
-			s.bfgLastSize = map[string]int{}
-		}
-		s.bfgLastSize[guildID] = rows
-		s.bfgMu.Unlock()
+		_ = s.setBFGLastRebuild(guildID, rows)
 	}
 	return true, n, err
 }
@@ -245,4 +240,26 @@ func (s *Store) noteGuildWrite(guildID string) {
 		}()
 		_, _, _ = s.BFGMaintainGuild(context.Background(), guildID, policy, 500)
 	}()
+}
+
+// bfgLastRebuild reads the persisted row count captured at the guild's last rebuild.
+func (s *Store) bfgLastRebuild(guildID string) (int, error) {
+	var rows int
+	err := s.DB.QueryRow(`SELECT rows_at_rebuild FROM search_bfg_state WHERE guild_id = ?`, guildID).Scan(&rows)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
+		}
+		return 0, mapErr(err)
+	}
+	return rows, nil
+}
+
+// setBFGLastRebuild records the rebuild baseline.
+func (s *Store) setBFGLastRebuild(guildID string, rows int) error {
+	_, err := s.DB.Exec(`INSERT INTO search_bfg_state (guild_id, rows_at_rebuild, updated_at)
+		VALUES (?,?,?)
+		ON CONFLICT(guild_id) DO UPDATE SET rows_at_rebuild = excluded.rows_at_rebuild,
+			updated_at = excluded.updated_at`, guildID, rows, now())
+	return mapErr(err)
 }

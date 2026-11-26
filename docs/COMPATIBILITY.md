@@ -157,7 +157,7 @@ synthesise and none is fabricated.
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | BFG reindex-on-threshold: drifted large guild reset and rebuilt alone (`WAVEYCORD_SEARCH_BFG_THRESHOLD`, `_DRIFT`, `_EVERY`) | implemented + tested |
-| Index-size automation: guilds at `WAVEYCORD_SEARCH_BFG_MAX_DOCS` rebuild, then again after `_GROWTH` expansion since the last rebuild | implemented + tested |
+| Index-size automation: guilds at `WAVEYCORD_SEARCH_BFG_MAX_DOCS` rebuild, then again after `_GROWTH` expansion; baseline persisted in `search_bfg_state` | implemented + tested |
 | Durable indexing queue: message writes enqueued, worker drains with retry (`WAVEYCORD_SEARCH_QUEUE=1`) | implemented + tested |
 | Postgres `LISTEN` wake-up on a dedicated connection; poll interval as fallback | implemented + tested |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
@@ -451,10 +451,13 @@ Remaining differences from Discord's published design:
   below the target is untouched. Configured by `WAVEYCORD_SEARCH_BFG_MAX_DOCS` and
   `WAVEYCORD_SEARCH_BFG_GROWTH`, tested at the policy and store level (first crossing,
   below-growth no-op, growth rebuild, small guild inert).
-- Remaining size limitations: the last-rebuild size is tracked in memory per instance,
-  so a restart (or a second instance) performs one extra rebuild before re-arming; the
-  rebuild is still a bounded per-guild scan, not a distributed migration; the LISTEN
-  connection is per instance and payload-less.
+- The rebuild baseline (`rows_at_rebuild`) is persisted in `search_bfg_state` and read
+  by `BFGMaintainGuild`, so the cycle survives restarts and is shared by every instance
+  on the same database; tested by rebuilding, closing and reopening the store (no
+  immediate rebuild at an unchanged size) and then growing past the persisted baseline
+  to trigger the next rebuild. Remaining limitations: the rebuild itself is still a
+  bounded per-guild scan rather than a distributed migration, and the LISTEN connection
+  is per instance and payload-less.
 
 ## Components v2
 

@@ -448,6 +448,12 @@ CREATE TABLE IF NOT EXISTS bot_tokens (
 -- Direct id -> channel lookup, the analogue of Discord's separate message index:
 -- it lets an id-only request go straight to the owning channel partition instead
 -- of scanning every partition.
+CREATE TABLE IF NOT EXISTS search_bfg_state (
+    guild_id        TEXT PRIMARY KEY,
+    rows_at_rebuild INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS search_queue (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     op         TEXT NOT NULL,

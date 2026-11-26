@@ -40,12 +40,11 @@ type Store struct {
 	// Search is the message-search index; nil keeps the LIKE fallback.
 	Search search.Index
 	// BFG state: an opt-in per-guild reindex-on-threshold trigger.
-	bfgMu       sync.Mutex
-	bfgWrites   map[string]int
-	bfgBusy     map[string]bool
-	bfgPolicy   search.BFGPolicy
-	bfgEvery    int
-	bfgLastSize map[string]int
+	bfgMu     sync.Mutex
+	bfgWrites map[string]int
+	bfgBusy   map[string]bool
+	bfgPolicy search.BFGPolicy
+	bfgEvery  int
 	// Durable queue state.
 	queueMu      sync.Mutex
 	durableQueue bool

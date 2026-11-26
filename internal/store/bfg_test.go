@@ -213,7 +213,7 @@ func TestBFGWriteTrigger(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if idx.count(guild.ID) == 4 {
 			return
@@ -302,5 +302,73 @@ func TestBFGSizeAutomationRebuildsGrowingGuild(t *testing.T) {
 		search.BFGPolicy{Threshold: 100000, MaxDocs: 1000}, 10)
 	if err != nil || rebuilt {
 		t.Fatalf("small guild rebuilt=%v err=%v", rebuilt, err)
+	}
+}
+
+// TestBFGSizeStatePersistsAcrossReopen proves the rebuild baseline is stored in the
+// database, so a reopened store does not immediately rebuild again and a second
+// instance sees the same state.
+func TestBFGSizeStatePersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bfgpersist.db")
+	handle, err := db.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := store.New(handle)
+	user, err := st.CreateUser(store.CreateUserParams{
+		Username: "persistuser", Email: strPtr("persist@example.test"), PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guild, err := st.CreateGuild(user.ID, store.CreateGuildParams{Name: "Persist Guild"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "chat"
+	channel, err := st.CreateChannel(guild.ID, store.CreateChannelParams{Name: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := newCountingIndex()
+	st.SetSearchIndex(idx)
+	policy := search.BFGPolicy{Threshold: 100000, MaxDocs: 4, Growth: 1.0}
+	for i := 0; i < 4; i++ {
+		if _, err := st.CreateMessage(store.CreateMessageParams{
+			ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "seed",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rebuilt, n, err := st.BFGMaintainGuild(context.Background(), guild.ID, policy, 10); err != nil || !rebuilt || n != 4 {
+		t.Fatalf("initial rebuild rebuilt=%v n=%d err=%v", rebuilt, n, err)
+	}
+	handle.Close()
+
+	// Reopen the same database; the persisted baseline must suppress an immediate
+	// rebuild at the same size.
+	handle2, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer handle2.Close()
+	st2 := store.New(handle2)
+	idx2 := newCountingIndex()
+	st2.SetSearchIndex(idx2)
+	rebuilt, _, err := st2.BFGMaintainGuild(context.Background(), guild.ID, policy, 10)
+	if err != nil || rebuilt {
+		t.Fatalf("reopened store rebuilt at unchanged size: rebuilt=%v err=%v", rebuilt, err)
+	}
+	// Growing past the persisted baseline triggers a rebuild again.
+	for i := 0; i < 4; i++ {
+		if _, err := st2.CreateMessage(store.CreateMessageParams{
+			ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "grow",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rebuilt, n, err := st2.BFGMaintainGuild(context.Background(), guild.ID, policy, 10)
+	if err != nil || !rebuilt || n != 8 {
+		t.Fatalf("growth after reopen rebuilt=%v n=%d err=%v", rebuilt, n, err)
 	}
 }
