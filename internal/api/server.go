@@ -289,10 +289,13 @@ var (
 	ErrInvalidToken    = NewError(400, 40001, "Invalid Authorization")
 	// Poll failures. Discord's exact codes for these are not published; both use
 	// the generic form-body code, which is documented as the validation fallback.
-	ErrPollEnded          = NewError(400, 50035, "Poll has ended")
-	ErrPollAnswerNotFound = NewError(400, 50035, "Invalid Form Body")
-	ErrBotsCannotVote     = NewError(403, 50001, "Bots cannot vote on polls")
-	ErrUnknownCredential  = NewError(404, 10026, "Unknown WebAuthn Credential")
+	ErrPollEnded             = NewError(400, 50035, "Poll has ended")
+	ErrPollAnswerNotFound    = NewError(400, 50035, "Invalid Form Body")
+	ErrBotsCannotVote        = NewError(403, 50001, "Bots cannot vote on polls")
+	ErrUnknownCredential     = NewError(404, 10026, "Unknown WebAuthn Credential")
+	ErrUnknownRemoteAuth     = NewError(404, 10026, "Unknown Remote Auth Session")
+	ErrRemoteAuthExpired     = NewError(400, 60008, "Session expired")
+	ErrRemoteAuthNotApproved = NewError(400, 60008, "Remote auth session is not approved")
 )
 
 func fail(c *Ctx, err error) {

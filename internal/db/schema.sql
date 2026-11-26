@@ -62,6 +62,16 @@ CREATE TABLE IF NOT EXISTS webauthn_login_challenges (
     expires   INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS remote_auth_sessions (
+    ticket      TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    expires     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS remote_auth_status ON remote_auth_sessions (status, expires);
+
 CREATE TABLE IF NOT EXISTS mfa_tickets (
     id      TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

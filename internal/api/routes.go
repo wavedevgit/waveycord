@@ -59,6 +59,10 @@ func (s *Server) buildRoutes() []route {
 
 	// Users.
 	r("GET", "/users/@me", true, s.handleGetSelf)
+	r("POST", "/users/@me/remote-auth", true, s.handleRemoteAuthStart)
+	r("POST", "/users/@me/remote-auth/finish", true, s.handleRemoteAuthFinish)
+	r("POST", "/users/@me/remote-auth/cancel", true, s.handleRemoteAuthCancel)
+	r("POST", "/users/@me/remote-auth/login", false, s.handleRemoteAuthLogin)
 	r("POST", "/users/@me/mfa/totp/enable", true, s.handleEnableTOTP)
 	r("POST", "/users/@me/mfa/totp/disable", true, s.handleDisableTOTP)
 	r("GET", "/users/@me/mfa/webauthn/credentials", true, s.handleListWebAuthnCredentials)

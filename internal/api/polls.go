@@ -236,6 +236,8 @@ func (s *Server) dispatchPollUpdate(ch model.Channel, messageID string) {
 // MESSAGE_UPDATE for each. It returns the finalized message ids. main runs it on a
 // ticker; tests call it directly.
 func (s *Server) SweepExpiredPolls() []string {
+	// Stale remote-auth handshakes are removed on the same cadence.
+	_, _ = s.Store.ExpireRemoteAuthSessions(nowMillisFn())
 	expired, err := s.Store.FinalizeExpiredPolls(nowMillisFn(), 200)
 	if err != nil {
 		return nil

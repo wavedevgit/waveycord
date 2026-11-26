@@ -27,7 +27,8 @@ route is not registered yet.
 | MFA: TOTP enroll/disable, backup codes, login gate (`/auth/mfa/totp`) | implemented + tested |
 | WebAuthn (ES256) credential register/list/rename/delete and assertion login | implemented + tested |
 | Conditional (discoverable-credential) and passwordless WebAuthn sign-in | implemented + tested |
-| Remote auth (QR) / SMS MFA | TBD |
+| Remote auth (QR) handshake: start/approve/cancel and single-use redemption | implemented + tested |
+| SMS MFA | TBD |
 
 ## Users
 
@@ -492,6 +493,25 @@ challenge route is an extension: the client route table exposes only
 `/auth/mfa/:param`. The request bodies for the conditional/passwordless finish routes
 were not confirmed against a client build; only the start paths appear in the client
 route table.
+
+## Remote auth (QR)
+
+The signed-in client registers the fingerprint shown by the QR device with
+`POST /users/@me/remote-auth {fingerprint}` (32 hex-encoded bytes) and receives
+`{ticket, expires_at}`; handshakes live two minutes in `remote_auth_sessions`.
+`POST /users/@me/remote-auth/finish {ticket}` approves it (owner only, pending only),
+`POST /users/@me/remote-auth/cancel {ticket}` cancels it (owner only), and the
+unauthenticated `POST /users/@me/remote-auth/login {ticket, fingerprint}` redeems an
+approved handshake exactly once, returning `{token}` for the approving account. A
+wrong fingerprint cannot redeem, a redeemed ticket is deleted, and expired
+handshakes are refused on read and pruned by the periodic sweep alongside polls.
+
+Not 1:1: there is no QR websocket gateway and no key exchange, so the fingerprint is
+a claimed identifier rather than a cryptographic binding and the redeemed token is
+returned in plaintext to the redeemer instead of encrypted to the QR device's public
+key; the client route table also exposes `/users/@me/remote-auth/login`, which is
+implemented here, but the real transport delivers the token over the websocket
+instead of this HTTP response. SMS MFA is not implemented.
 
 ## Polls
 

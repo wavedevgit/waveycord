@@ -37,6 +37,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | MFA TOTP enrollment, login gate, backup codes, disable | `TestTOTPEnrollmentLoginAndBackupCodes` |
 | WebAuthn ES256 registration, assertion login, rename/delete, single-use challenge | `TestWebAuthnRegistrationAndLogin` (software authenticator) |
 | Conditional and passwordless WebAuthn start/finish, cross-user rejection | `TestConditionalAndPasswordlessWebAuthn` |
+| Remote auth start/approve/cancel/redeem, ownership, expiry, single use | `TestRemoteAuthHandoff` |
 
 ## Not verifiable, therefore not claimed
 
