@@ -56,6 +56,9 @@ route is not registered yet.
 | `GET/PATCH/DELETE /guilds/{guild.id}/members/{user.id}` | implemented |
 | `PUT/DELETE /guilds/{guild.id}/members/{user.id}/roles/{role.id}` | implemented |
 | `GET/POST /guilds/{guild.id}/roles` | implemented |
+| `GET /guilds/{guild.id}/roles/{role.id}` | implemented + tested |
+| `GET /channels/{channel.id}/permissions/member/{user.id}` | implemented + tested (MANAGE_ROLES) |
+| `GET /channels/{channel.id}/permissions/role/{role.id}` | implemented + tested (MANAGE_ROLES) |
 | `PATCH/DELETE /guilds/{guild.id}/roles/{role.id}` | implemented |
 | `GET /guilds/{guild.id}/bans` and `GET/PUT/DELETE .../bans/{user.id}` | implemented |
 | `GET /guilds/{guild.id}/invites` | implemented |
@@ -78,6 +81,7 @@ route is not registered yet.
 | --- | --- |
 | `GET/PATCH/DELETE /channels/{channel.id}` | implemented |
 | `PUT/DELETE /channels/{channel.id}/permissions/{overwrite.id}` | implemented |
+| `GET /channels/{channel.id}/permissions/member/{user.id}`, `.../role/{role.id}` | implemented + tested |
 | `GET/POST /channels/{channel.id}/invites` | implemented |
 | `POST /channels/{channel.id}/typing` | implemented |
 | `PUT/DELETE /channels/{channel.id}/recipients/{user.id}` | implemented |
@@ -376,6 +380,16 @@ Remaining differences from Discord's published design:
 - Still absent: multi-cluster cells, PubSub-backed guaranteed indexing, BFG
   reindex-on-threshold, and index-size automation. The reindex is a single bounded
   scan, not a distributed migration.
+
+## Permission inspection routes
+
+`GET /channels/{id}/permissions/member/{user.id}` returns the target member's
+effective channel permissions (role bits, @everyone overwrite, role overwrites,
+member overwrite, administrator short-circuit) and requires `MANAGE_ROLES`.
+`GET /channels/{id}/permissions/role/{role.id}` resolves a role's bits through the
+@everyone and role overwrites, ignoring member-specific entries. `GET
+/guilds/{id}/roles/{role.id}` returns a single role. All three are tested, including
+403 for non-managers, 404 for unknown roles/non-members and the administrator path.
 
 ## Stickers and widget
 
