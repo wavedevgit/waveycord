@@ -515,6 +515,24 @@ func (s *Store) AddMember(guildID, userID string) (model.Member, error) {
 }
 
 // IsMember reports membership.
+// GuildMemberIDs lists every member id of a guild, used for per-viewer fanout.
+func (s *Store) GuildMemberIDs(guildID string) ([]string, error) {
+	rows, err := s.DB.Query(`SELECT user_id FROM guild_members WHERE guild_id = ?`, guildID)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, mapErr(err)
+		}
+		out = append(out, uid)
+	}
+	return out, mapErr(rows.Err())
+}
+
 func (s *Store) IsMember(guildID, userID string) (bool, error) {
 	var one int
 	err := s.DB.QueryRow(`SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?`, guildID, userID).Scan(&one)

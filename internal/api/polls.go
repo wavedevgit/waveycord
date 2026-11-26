@@ -213,23 +213,50 @@ func (s *Server) handleExpirePoll(c *Ctx) {
 	c.JSON(msg)
 }
 
-// dispatchPollUpdate emits a MESSAGE_UPDATE with the refreshed poll.
+// dispatchPollUpdate emits a MESSAGE_UPDATE with the refreshed poll, serialized
+// per recipient so poll results carry the viewer's own me_voted flags. Guild fanout
+// is O(members) because a single shared payload cannot be viewer-aware; polls are
+// low-frequency, so this is preferred over shipping wrong per-user state.
 func (s *Server) dispatchPollUpdate(ch model.Channel, messageID string) {
 	if s.Hub == nil {
 		return
 	}
-	msg, err := s.Store.Message(messageID)
-	if err != nil {
-		return
+	sendTo := func(userID string) {
+		if userID == "" {
+			return
+		}
+		msg, err := s.Store.MessageFor(messageID, userID)
+		if err != nil {
+			return
+		}
+		s.Hub.DispatchUser(userID, "MESSAGE_UPDATE", msg)
 	}
 	if ch.GuildID != nil {
-		s.Hub.DispatchGuild(*ch.GuildID, "MESSAGE_UPDATE", msg)
+		ids, err := s.Store.GuildMemberIDs(*ch.GuildID)
+		if err != nil {
+			if msg, merr := s.Store.Message(messageID); merr == nil {
+				s.Hub.DispatchGuild(*ch.GuildID, "MESSAGE_UPDATE", msg)
+			}
+			return
+		}
+		for _, uid := range ids {
+			sendTo(uid)
+		}
 		return
 	}
 	for _, r := range ch.Recipients {
-		s.Hub.DispatchUser(r.ID, "MESSAGE_UPDATE", msg)
+		sendTo(r.ID)
 	}
-	s.Hub.DispatchUser(msg.Author.ID, "MESSAGE_UPDATE", msg)
+	sendTo(msgAuthorID(s, messageID))
+}
+
+// msgAuthorID resolves the author for DM fanout.
+func msgAuthorID(s *Server, messageID string) string {
+	msg, err := s.Store.Message(messageID)
+	if err != nil {
+		return ""
+	}
+	return msg.Author.ID
 }
 
 // SweepExpiredPolls finalizes polls whose expiry has passed and dispatches a

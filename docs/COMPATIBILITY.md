@@ -139,7 +139,7 @@ from other instances are delivered in bus order.
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
-| Poll viewer-relative `me_voted`; expiry sweep finalizes and pushes `MESSAGE_UPDATE` | implemented + tested |
+| Poll viewer-relative `me_voted`; expiry sweep finalizes and pushes per-viewer `MESSAGE_UPDATE` | implemented + tested |
 | Components v2: container/section/text/media/file/separator validation under flag `1<<15` | implemented + tested |
 
 ## Invites and webhooks
@@ -563,10 +563,16 @@ expired polls in a batch and dispatches `MESSAGE_UPDATE` for each, so clients se
 finalized state without another request. The sweep is idempotent: a poll already
 finalized by a read is not returned again.
 
-Not 1:1: gateway `MESSAGE_UPDATE` dispatches are channel broadcasts serialized without
-a viewer, so `me_voted` is `false` in a pushed poll update (the HTTP read carries the
-correct value per user). There is no separate final-tally job, so counts are exact at
-read time rather than Discord's approximate-live/accurate-finalized split.
+Poll updates are pushed per recipient rather than broadcast: guild fanout resolves the
+member list and serializes the message for each user id, and DM fanout does the same
+for recipients and the author, so `me_voted` is correct in the pushed
+`MESSAGE_UPDATE` as well as in HTTP reads. Each dispatch is a `DispatchUser`, which
+also crosses the cluster bus. Guild fanout is therefore O(members) per poll update,
+which is accepted because poll updates are low-frequency; when the member lookup
+fails the path falls back to a single guild broadcast with viewer-free results.
+
+Not 1:1: there is no separate final-tally job, so counts are exact at read time
+rather than Discord's approximate-live/accurate-finalized split.
 
 ## Permission inspection routes
 

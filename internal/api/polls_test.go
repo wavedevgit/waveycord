@@ -252,19 +252,37 @@ func TestPollsCreateVoteExpireAndVoters(t *testing.T) {
 	var third pollMessage
 	h.decode("POST", "/channels/"+channel.ID+"/messages", alice.Token, thirdBody, &third)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	gw, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(h.server.URL, "http")+"/gateway", nil)
-	if err != nil {
-		t.Fatalf("dial gateway: %v", err)
+	// Bob votes before expiry so the pushed update can prove per-viewer me_voted.
+	if status := vote(bob.Token, []int{1}); status == 204 {
+		// The vote above targets the expired poll; vote on the sweep poll instead.
+		t.Fatal("vote unexpectedly succeeded on the expired poll")
 	}
-	defer gw.CloseNow()
-	gwDeadline := time.Now().Add(10 * time.Second)
-	readFrame(t, gw, gwDeadline)
-	writeFrame(t, gw, map[string]any{"op": 2, "d": map[string]any{"token": alice.Token, "intents": 0}})
-	readFrame(t, gw, gwDeadline)
-	writeFrame(t, gw, map[string]any{"op": 14, "d": map[string]any{"guild_id": guild.ID}})
-	time.Sleep(50 * time.Millisecond)
+	status, _ = h.request("PUT", "/channels/"+channel.ID+"/polls/"+third.ID+"/answers/@me", bob.Token,
+		map[string]any{"answer_ids": []int{1}})
+	if status != 204 {
+		t.Fatalf("vote on sweep poll status %d", status)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	dial := func(token string) *websocket.Conn {
+		t.Helper()
+		conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(h.server.URL, "http")+"/gateway", nil)
+		if err != nil {
+			t.Fatalf("dial gateway: %v", err)
+		}
+		gwDeadline := time.Now().Add(10 * time.Second)
+		readFrame(t, conn, gwDeadline)
+		writeFrame(t, conn, map[string]any{"op": 2, "d": map[string]any{"token": token, "intents": 0}})
+		readFrame(t, conn, gwDeadline)
+		writeFrame(t, conn, map[string]any{"op": 14, "d": map[string]any{"guild_id": guild.ID}})
+		time.Sleep(50 * time.Millisecond)
+		return conn
+	}
+	aliceGw := dial(alice.Token)
+	defer aliceGw.CloseNow()
+	bobGw := dial(bob.Token)
+	defer bobGw.CloseNow()
 
 	if _, err := h.store.DB.Exec(`UPDATE polls SET expiry = ? WHERE message_id = ?`,
 		time.Now().Add(-time.Second).UnixMilli(), third.ID); err != nil {
@@ -284,28 +302,39 @@ func TestPollsCreateVoteExpireAndVoters(t *testing.T) {
 		t.Fatalf("second sweep re-finalized: %v", again)
 	}
 
-	var update pollMessage
-	gotUpdate := false
-	for i := 0; i < 20 && !gotUpdate; i++ {
-		f := readFrame(t, gw, time.Now().Add(10*time.Second))
-		if f["t"] != "MESSAGE_UPDATE" {
-			continue
+	// Each connected user must receive their own serialized poll state.
+	readUpdate := func(conn *websocket.Conn) pollMessage {
+		t.Helper()
+		for i := 0; i < 30; i++ {
+			f := readFrame(t, conn, time.Now().Add(10*time.Second))
+			if f["t"] != "MESSAGE_UPDATE" {
+				continue
+			}
+			d, _ := json.Marshal(f["d"])
+			var m pollMessage
+			if err := json.Unmarshal(d, &m); err != nil {
+				t.Fatalf("update decode: %v", err)
+			}
+			if m.ID == third.ID {
+				return m
+			}
 		}
-		d, _ := json.Marshal(f["d"])
-		var m pollMessage
-		if err := json.Unmarshal(d, &m); err != nil {
-			t.Fatalf("update decode: %v", err)
-		}
-		if m.ID == third.ID {
-			update = m
-			gotUpdate = true
-		}
-	}
-	if !gotUpdate {
 		t.Fatal("no MESSAGE_UPDATE for the expired poll")
+		return pollMessage{}
 	}
-	if update.Poll == nil || update.Poll.Results == nil || !update.Poll.Results.IsFinalized {
-		t.Fatalf("update not finalized: %+v", update.Poll)
+	bobUpdate := readUpdate(bobGw)
+	if bobUpdate.Poll == nil || bobUpdate.Poll.Results == nil || !bobUpdate.Poll.Results.IsFinalized {
+		t.Fatalf("bob update not finalized: %+v", bobUpdate.Poll)
+	}
+	if len(bobUpdate.Poll.Results.AnswerCounts) != 1 || !bobUpdate.Poll.Results.AnswerCounts[0].MeVoted {
+		t.Fatalf("bob pushed me_voted: %+v", bobUpdate.Poll.Results.AnswerCounts)
+	}
+	aliceUpdate := readUpdate(aliceGw)
+	if aliceUpdate.Poll == nil || aliceUpdate.Poll.Results == nil || !aliceUpdate.Poll.Results.IsFinalized {
+		t.Fatalf("alice update not finalized: %+v", aliceUpdate.Poll)
+	}
+	if len(aliceUpdate.Poll.Results.AnswerCounts) != 1 || aliceUpdate.Poll.Results.AnswerCounts[0].MeVoted {
+		t.Fatalf("alice pushed me_voted: %+v", aliceUpdate.Poll.Results.AnswerCounts)
 	}
 	h.decode("GET", "/channels/"+channel.ID+"/messages/"+third.ID, alice.Token, nil, &got)
 	if got.Poll.Results == nil || !got.Poll.Results.IsFinalized {
