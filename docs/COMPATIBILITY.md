@@ -119,7 +119,10 @@ route is not registered yet.
 | `POST /invites/{code}` (accept) | implemented |
 | `DELETE /invites/{code}` | implemented |
 | Webhook create/list/get/update/delete | implemented |
-| `POST /webhooks/{id}/{token}` (execute, `?wait=true`) | implemented |
+| `POST /webhooks/{id}/{token}` (execute, `?wait=true`) | implemented + tested |
+| `GET/PATCH/DELETE /webhooks/{id}/{token}` (token management) | implemented + tested |
+| `POST /webhooks/{id}/{token}/slack` | implemented + tested |
+| `POST /webhooks/{id}/{token}/github` | implemented + tested |
 
 ## Applications and bots
 
@@ -162,6 +165,8 @@ rejected.
 | `GET/PUT/POST /applications/{id}/commands` | implemented + tested |
 | `GET/PATCH/DELETE /applications/{id}/commands/{command.id}` | implemented + tested |
 | Guild command variants at `/applications/{id}/guilds/{guild.id}/commands` | implemented + tested |
+| `GET /applications/{app.id}/guilds/{guild.id}/commands/permissions` | implemented + tested |
+| `GET/PUT .../commands/{command.id}/permissions` | implemented + tested |
 | `verify_key` registration through `PATCH /applications/{id}` | implemented + tested |
 | Interaction type 3 (message component) callback + payload validation | implemented + tested |
 | Interaction type 5 (modal submit) callback + submitted-field parsing | implemented + tested |
@@ -197,6 +202,16 @@ PUT require an OAuth2 bearer token for that application carrying
 `role_connections.write`; user sessions, bot tokens, missing scope, and tokens
 issued for another application are rejected with `403`. Metadata keys are validated
 against the registered registry.
+
+Command permissions are stored per guild and command with role/user/channel
+overrides (types 1/2/3), validated against guild membership, and returned in the
+documented shape. They are not yet enforced during invocation dispatch; that is a
+recorded gap, not a claim.
+
+Slack delivery maps `text` to message content; GitHub delivery summarises
+`X-GitHub-Event` with action, repository and sender when present. Both support
+`?wait=true`. Webhook tokens can read, rename and delete the webhook without a
+session.
 
 Deliberate adaptations: the interactions endpoint is global, so the payload must
 carry `application_id` (Discord routes by per-application URL).
@@ -240,6 +255,19 @@ over the gateway bus, so a burst split across API instances still aggregates and
 trips the rule; the same applies to the SPAM window. Discord's production raid
 thresholds are unpublished, so the window and limit here are fixed and documented
 rather than tuned.
+
+## Onboarding and welcome screen
+
+| Route | Status |
+| --- | --- |
+| `GET/PUT /guilds/{guild.id}/onboarding` | implemented + tested |
+| `GET/PATCH /guilds/{guild.id}/welcome-screen` | implemented + tested |
+
+Onboarding validates prompt titles/option bounds, guild-owned channels and roles,
+default channel limits and mode (0/1); welcome screens bound the description to
+140 characters, limit to five unique guild channels and require a description when
+enabled. Both are stored and returned; they are not yet included in READY guild
+payloads.
 
 ## Guild templates
 

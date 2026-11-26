@@ -536,3 +536,28 @@ CREATE TABLE IF NOT EXISTS integrations (
     created_at           BIGINT NOT NULL,
     PRIMARY KEY (guild_id, id)
 );
+
+CREATE TABLE IF NOT EXISTS command_permissions (
+    application_id TEXT NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    guild_id       TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    command_id     TEXT NOT NULL,
+    target_id      TEXT NOT NULL,
+    type           INTEGER NOT NULL,
+    permission     SMALLINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (application_id, guild_id, command_id, target_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_onboarding (
+    guild_id            TEXT PRIMARY KEY REFERENCES guilds(id) ON DELETE CASCADE,
+    prompts             TEXT NOT NULL DEFAULT '[]',
+    default_channel_ids TEXT NOT NULL DEFAULT '[]',
+    enabled             SMALLINT NOT NULL DEFAULT 0,
+    mode                INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS welcome_screens (
+    guild_id         TEXT PRIMARY KEY REFERENCES guilds(id) ON DELETE CASCADE,
+    description      TEXT,
+    welcome_channels TEXT NOT NULL DEFAULT '[]',
+    enabled          SMALLINT NOT NULL DEFAULT 0
+);

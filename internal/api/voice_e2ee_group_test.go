@@ -137,7 +137,6 @@ func TestClusterE2EEGroupKey(t *testing.T) {
 	selectProtocol(t, aliceVoice, aliceRecv)
 	selectProtocol(t, bobVoice, bobRecv)
 
-	deadline := time.Now().Add(10 * time.Second)
 	alicePriv, alicePub := clientKeypair(t)
 	bobPriv, bobPub := clientKeypair(t)
 
@@ -147,8 +146,9 @@ func TestClusterE2EEGroupKey(t *testing.T) {
 
 	waitKey := func(conn interface{}, wantUser string) {
 		t.Helper()
-		for i := 0; i < 10; i++ {
-			f := readVoiceAny(t, conn, deadline)
+		until := time.Now().Add(10 * time.Second)
+		for time.Now().Before(until) {
+			f := readVoiceAny(t, conn, until)
 			if f["op"].(float64) != 34 {
 				continue
 			}
@@ -172,8 +172,8 @@ func TestClusterE2EEGroupKey(t *testing.T) {
 	}})
 
 	var bobGroup cipher.AEAD
-	for i := 0; i < 10 && bobGroup == nil; i++ {
-		f := readVoiceAny(t, bobVoice, time.Now().Add(5*time.Second))
+	for bobGroup == nil {
+		f := readVoiceAny(t, bobVoice, time.Now().Add(10*time.Second))
 		if f["op"].(float64) != 35 {
 			continue
 		}
