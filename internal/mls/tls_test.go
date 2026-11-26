@@ -35,12 +35,12 @@ func TestGroupInfoTLSRoundTrip(t *testing.T) {
 	if bytes.Contains(raw, []byte("alice")) == false {
 		t.Fatal("user id should be an opaque field in the encoding")
 	}
-	if bytes.Contains(raw, []byte(`"epoch"`)) || bytes.Contains(raw, []byte("{")) {
+	if bytes.Contains(raw, []byte(`"epoch"`)) || raw[0] == '{' {
 		t.Fatalf("payload is still JSON: %q", raw[:16])
 	}
-	// Network order epoch prefix.
-	if got := uint32(raw[0])<<24 | uint32(raw[1])<<16 | uint32(raw[2])<<8 | uint32(raw[3]); got != 7 {
-		t.Fatalf("epoch prefix = %d", got)
+	// RFC-shaped prefix: version then cipher suite, network order.
+	if got := uint16(raw[0])<<8 | uint16(raw[1]); got != 1 {
+		t.Fatalf("version prefix = %d", got)
 	}
 
 	back, err := DecodeGroupInfo(raw)
@@ -64,6 +64,22 @@ func TestGroupInfoTLSRoundTrip(t *testing.T) {
 	if _, err := DecodeGroupInfo(append(append([]byte(nil), raw...), 0)); err == nil {
 		t.Fatal("trailing byte accepted")
 	}
+	// A tampered confirmation tag or tree hash is rejected.
+	tamperedTag := append([]byte(nil), raw...)
+	tamperedTag[len(tamperedTag)-36] ^= 0xff
+	if _, err := DecodeGroupInfo(tamperedTag); err == nil {
+		t.Fatal("tampered confirmation tag accepted")
+	}
+	movedHash := append([]byte(nil), raw...)
+	// tree_hash sits after version(2)+suite(2)+group_id(2+0)+epoch(8)+len(2)
+	movedHash[16] ^= 0xff
+	if _, err := DecodeGroupInfo(movedHash); err == nil {
+		t.Fatal("tampered tree hash accepted")
+	}
+	if back.Suite != SuiteX25519AES256GCM || back.Version != 1 || len(back.Tag) != 32 {
+		t.Fatalf("group info metadata: v=%d suite=%#x tag=%d", back.Version, back.Suite, len(back.Tag))
+	}
+
 	// A wrong-sized root is rejected.
 	bad := g
 	bad.Root = []byte{1, 2, 3}

@@ -38,11 +38,18 @@ type PathRecipient struct {
 // as one blob (the Welcome's encrypted group info), rather than shipping the root and
 // node keys as separate envelopes.
 type GroupInfo struct {
-	Epoch    uint32         `json:"epoch"`
-	Roster   []Leaf         `json:"roster"`
-	Tree     *TreeState     `json:"tree"`
-	Root     []byte         `json:"root"`
-	NodeKeys map[int][]byte `json:"node_keys,omitempty"`
+	Version   uint16         `json:"version"`
+	Suite     Ciphersuite    `json:"cipher_suite"`
+	GroupID   []byte         `json:"group_id,omitempty"`
+	TreeHash  []byte         `json:"tree_hash,omitempty"`
+	Confirmed []byte         `json:"confirmed_transcript_hash,omitempty"`
+	Tag       []byte         `json:"confirmation_tag,omitempty"`
+	Signer    uint32         `json:"signer"`
+	Epoch     uint32         `json:"epoch"`
+	Roster    []Leaf         `json:"roster"`
+	Tree      *TreeState     `json:"tree"`
+	Root      []byte         `json:"root"`
+	NodeKeys  map[int][]byte `json:"node_keys,omitempty"`
 }
 
 // Welcome lets an added member join without the prior tree state. GroupInfo is the
@@ -546,7 +553,8 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 			continue
 		}
 		leaf := next[leafIndex(next, p.UserID)]
-		g := GroupInfo{Epoch: epoch, Roster: next, Tree: tree, Root: root, NodeKeys: newcomerSecrets[p.UserID]}
+		g := GroupInfo{Version: 1, Suite: suite, Epoch: epoch, Roster: next, Tree: tree,
+			Root: root, NodeKeys: newcomerSecrets[p.UserID]}
 		sealed, serr := sealGroupInfo(g, leaf, hex.EncodeToString(hash[:]))
 		if serr != nil {
 			return EpochCommit{}, nil, serr
