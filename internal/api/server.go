@@ -152,6 +152,8 @@ func (s *Server) Handler() http.Handler {
 		c := &Ctx{W: w, R: r, Srv: s, Params: map[string]string{"channelID": segs[1], "uploadID": segs[2]}}
 		s.handleCDN(c)
 	})))
+	mux.Handle("/portal", s.portalHandler())
+	mux.Handle("/portal/", s.portalHandler())
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

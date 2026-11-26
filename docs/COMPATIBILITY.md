@@ -588,6 +588,24 @@ key; the client route table also exposes `/users/@me/remote-auth/login`, which i
 implemented here, but the real transport delivers the token over the websocket
 instead of this HTTP response. SMS MFA is not implemented.
 
+## Developer portal
+
+The API server also serves a small server-rendered portal at `/portal`, separate from
+the REST surface: cookie-session login (`POST /portal/login`), an application dashboard
+for the signed-in account, application creation, a per-application page with bot token
+reset, command creation/listing and command-permission editing (`GET/POST
+/portal/applications/{id}/permissions`, backed by the same `command_permissions`
+store). Pages are `html/template` output, so values are auto-escaped; every page checks
+ownership and returns 404 for another account's application, and logout deletes the
+session. Tested end to end with a cookie-jar HTTP client: unauthenticated redirect,
+bad credentials, application creation/listing, command creation, permission write and
+read-back, one-time bot token display, foreign-application 404 and logout.
+
+Not 1:1: the portal is a minimal administrative UI, not Discord's developer portal —
+there are no OAuth2 redirect/client-secret pages, no team management, no
+interaction-endpoint editor, the session cookie is not marked `Secure` (development
+over plain HTTP), and there is no CSRF token on the forms.
+
 ## Polls
 
 A message created with a `poll` object becomes type 32. The request is validated

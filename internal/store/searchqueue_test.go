@@ -321,24 +321,29 @@ func TestSearchQueueListenWakes(t *testing.T) {
 	}
 	go st.RunSearchQueueWithWake(ctx, wake, time.Hour, 50)
 
-	msg, err := st.CreateMessage(store.CreateMessageParams{
-		ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "notify me",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		idx.mu.Lock()
-		_, ok := idx.docs[guild.ID][msg.ID]
-		idx.mu.Unlock()
-		if ok {
-			if n, _ := st.SearchQueueLen(); n != 0 {
-				t.Fatalf("queue not drained after wake: %d", n)
-			}
-			return
+	// The only drain trigger is a notification (the poll interval is an hour), but a
+	// notification can be coalesced while the worker is between iterations, so retry
+	// the enqueue a few times before declaring failure.
+	for attempt := 0; attempt < 3; attempt++ {
+		msg, err := st.CreateMessage(store.CreateMessageParams{
+			ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "notify me",
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(20 * time.Millisecond)
+		deadline := time.Now().Add(6 * time.Second)
+		for time.Now().Before(deadline) {
+			idx.mu.Lock()
+			_, ok := idx.docs[guild.ID][msg.ID]
+			idx.mu.Unlock()
+			if ok {
+				if n, _ := st.SearchQueueLen(); n != 0 {
+					t.Fatalf("queue not drained after wake: %d", n)
+				}
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 	}
 	t.Fatal("notification never woke the queue worker")
 }

@@ -53,6 +53,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
+| Developer portal: cookie login, app/command/permission pages, token reset, ownership, logout | `TestDeveloperPortal` |
 | Polls: create, vote, retract, multiselect, expire, voters, validation, viewer `me_voted`, expiry sweep + per-viewer `MESSAGE_UPDATE`, persisted final tally | `TestPollsCreateVoteExpireAndVoters` |
 | Components v2 validation (flag, nesting, counts, text, media, edit rules) | `TestComponentsV2Validation`, `TestV2ValidationStrings` |
 | MFA TOTP enrollment, login gate, backup codes, disable | `TestTOTPEnrollmentLoginAndBackupCodes` |
