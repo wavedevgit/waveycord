@@ -119,6 +119,12 @@ func gcmFromKey(t *testing.T, key []byte) interface {
 	return g
 }
 
+// mlsProof produces the op 34 possession proof for a signing key and session token.
+func mlsProof(sign ed25519.PrivateKey, userID, token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(ed25519.Sign(sign, []byte(userID+"|"+hex.EncodeToString(sum[:]))))
+}
+
 // sendMLSCommit sends an op 38 commit in MLSMessage framing.
 func sendMLSCommit(t *testing.T, conn *websocket.Conn, commit mls.EpochCommit) {
 	t.Helper()
@@ -209,14 +215,15 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	privs := map[string][32]byte{alice.ID: alicePriv, bob.ID: bobPriv, charlie.ID: charliePriv}
 	pubs := map[string][32]byte{alice.ID: alicePub, bob.ID: bobPub, charlie.ID: charliePub}
 
-	publish := func(conn *websocket.Conn, id string, pub [32]byte, sign ed25519.PublicKey) {
+	publish := func(conn *websocket.Conn, token, id string, pub [32]byte, sign ed25519.PublicKey, signPriv ed25519.PrivateKey) {
 		writeVoice(t, conn, map[string]any{"op": 34, "d": map[string]any{
 			"public_key": encodeB64(pub), "signing_key": hex.EncodeToString(sign),
+			"proof": mlsProof(signPriv, id, token),
 		}})
 	}
-	publish(aliceVoice, alice.ID, alicePub, aliceSignPub)
-	publish(bobVoice, bob.ID, bobPub, bobSignPub)
-	publish(charlieVoice, charlie.ID, charliePub, charlieSignPub)
+	publish(aliceVoice, aliceToken, alice.ID, alicePub, aliceSignPub, aliceSignPriv)
+	publish(bobVoice, bobToken, bob.ID, bobPub, bobSignPub, bobSignPriv)
+	publish(charlieVoice, charlieToken, charlie.ID, charliePub, charlieSignPub, charlieSignPriv)
 	learnKeys(t, aliceVoice, []string{bob.ID, charlie.ID})
 	learnKeys(t, bobVoice, []string{alice.ID, charlie.ID})
 	learnKeys(t, charlieVoice, []string{alice.ID, bob.ID})
@@ -363,19 +370,12 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if len(roster2) != 2 {
 		t.Fatalf("epoch2 roster = %v", roster2)
 	}
-	// A prior path update by Charlie establishes the internal node above his slot and
-	// publishes a stable leaf layout; carrying it forward keeps Charlie's slot blank
-	// instead of compacting the tree.
-	_, priorEpoch, err := mls.NewEpochCommit(1, leaves1, nil, charlie.ID, charlieSignPriv, charliePriv)
-	if err != nil {
-		t.Fatalf("prior epoch: %v", err)
-	}
 	// The removal proposal is authored and signed by Bob, not by the committer.
 	removeProposal := mls.Proposal{Type: "remove", UserID: charlie.ID}
 	bobSigned := mls.SignProposalMessage(removeProposal, bob.ID, bobSignPriv)
 	commit2, epoch2State, err := mls.NewEpochCommitWithMessages(2, leaves1,
 		[]mls.Proposal{removeProposal}, []mls.ProposalMessage{bobSigned},
-		alice.ID, aliceSignPriv, alicePriv, priorEpoch.Tree)
+		alice.ID, aliceSignPriv, alicePriv, commit1.Tree)
 	if err != nil {
 		t.Fatalf("epoch2 commit: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	forgedMsg := mls.SignProposalMessage(removeProposal, bob.ID, aliceSignPriv)
 	forgedCommit, _, err := mls.NewEpochCommitWithMessages(2, leaves1,
 		[]mls.Proposal{removeProposal}, []mls.ProposalMessage{forgedMsg},
-		alice.ID, aliceSignPriv, alicePriv, priorEpoch.Tree)
+		alice.ID, aliceSignPriv, alicePriv, commit1.Tree)
 	if err != nil {
 		t.Fatalf("forged commit build: %v", err)
 	}

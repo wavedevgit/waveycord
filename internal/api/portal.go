@@ -71,6 +71,7 @@ type portalPage struct {
 	Commands []store.ApplicationCommand
 	PermRows []portalPermRow
 	GuildID  string
+	Endpoint string
 	Flash    string
 	Error    string
 }
@@ -108,7 +109,7 @@ code{background:#2b2d31;padding:.1rem .3rem}.err{color:#f23f43}.ok{color:#3ba55d
 </form>{{template "foot" .}}{{end}}
 
 {{define "app"}}{{template "head" .}}
-<p>ID <code>{{.App.ID}}</code> · bot <code>{{.App.Bot.ID}}</code></p>
+<p>ID <code>{{.App.ID}}</code> · bot <code>{{.App.Bot.ID}}</code> · <a href="/portal/applications/{{.App.ID}}/settings">Settings</a></p>
 <form method="post" action="/portal/applications/{{.App.ID}}/token"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
 <p><button type="submit">Reset bot token</button></p></form>
 <h2>Commands</h2>
@@ -137,6 +138,20 @@ code{background:#2b2d31;padding:.1rem .3rem}.err{color:#f23f43}.ok{color:#3ba55d
 <p><label>Type (2=role, 3=user)<br><input name="type" value="2"></label></p>
 <p><label>Allowed (true/false)<br><input name="allow" value="true"></label></p>
 <p><button type="submit">Save permission</button></p>
+</form>{{template "foot" .}}{{end}}
+
+{{define "secret"}}{{template "head" .}}
+<p>Client secret (shown once):</p>
+<p><code id="client-secret">{{.Flash}}</code></p>
+<p><a href="/portal/applications/{{.App.ID}}">Open the application</a></p>{{template "foot" .}}{{end}}
+
+{{define "settings"}}{{template "head" .}}
+<form method="post" action="/portal/applications/{{.App.ID}}/settings"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
+<p><label>Name<br><input name="name" value="{{.App.Name}}" maxlength="64"></label></p>
+<p><label>Description<br><textarea name="description" rows="2">{{.App.Description}}</textarea></label></p>
+<p><label>OAuth2 redirect URIs (one per line)<br><textarea name="redirect_uris" rows="3">{{.App.RedirectURIs}}</textarea></label></p>
+<p><label>Interactions endpoint URL<br><input name="endpoint_url" value="{{.Endpoint}}"></label></p>
+<p><button type="submit">Save settings</button></p>
 </form>{{template "foot" .}}{{end}}
 
 {{define "token"}}{{template "head" .}}
@@ -241,7 +256,8 @@ func (s *Server) portalHandler() http.Handler {
 				s.portalError(w, err)
 				return
 			}
-			http.Redirect(w, r, "/portal/applications/"+app.ID, http.StatusFound)
+			s.renderPortal(w, "secret", portalPage{Title: app.Name, User: u, App: &app,
+				Flash: app.ClientSecret, CSRF: s.csrfToken(w, r)})
 		case strings.HasPrefix(path, "/applications/"):
 			s.portalApplication(w, r, strings.TrimPrefix(path, "/applications/"))
 		default:
@@ -287,6 +303,44 @@ func (s *Server) portalApplication(w http.ResponseWriter, r *http.Request, rest 
 			return
 		}
 		s.renderPortal(w, "token", portalPage{Title: "Bot token", User: u, App: &app, Flash: token, CSRF: s.csrfToken(w, r)})
+	case action == "settings" && r.Method == http.MethodGet:
+		endpoint := ""
+		if app.InteractionsEndpointURL != nil {
+			endpoint = *app.InteractionsEndpointURL
+		}
+		s.renderPortal(w, "settings", portalPage{Title: app.Name + " settings", User: u, App: &app,
+			Endpoint: endpoint, CSRF: s.csrfToken(w, r)})
+	case action == "settings" && r.Method == http.MethodPost:
+		if !s.checkCSRF(r) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
+		if err := r.ParseForm(); err != nil {
+			s.portalError(w, ErrInvalidForm)
+			return
+		}
+		name := strings.TrimSpace(r.FormValue("name"))
+		if name == "" || len([]rune(name)) > 64 {
+			s.portalError(w, ErrInvalidForm)
+			return
+		}
+		desc := strings.TrimSpace(r.FormValue("description"))
+		var uris []string
+		for _, line := range strings.Split(r.FormValue("redirect_uris"), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				uris = append(uris, line)
+			}
+		}
+		endpoint := strings.TrimSpace(r.FormValue("endpoint_url"))
+		var endpointPtr *string
+		if endpoint != "" {
+			endpointPtr = &endpoint
+		}
+		if _, err := s.Store.UpdateApplication(app.ID, u.ID, &name, &desc, &uris, nil, endpointPtr); err != nil {
+			s.portalError(w, err)
+			return
+		}
+		http.Redirect(w, r, "/portal/applications/"+app.ID, http.StatusFound)
 	case action == "commands" && r.Method == http.MethodPost:
 		if !s.checkCSRF(r) {
 			http.Error(w, "invalid csrf token", http.StatusForbidden)

@@ -26,7 +26,8 @@ func groupContextBytesForCommit(c Commit) []byte {
 	_ = w.opaque16(c.GroupID)
 	w.buf = binary.BigEndian.AppendUint64(w.buf, uint64(c.Epoch))
 	_ = w.opaque16(c.TreeHash[:])
-	_ = w.opaque16(c.ConfirmedHash[:])
+	// ConfirmedHash and InterimHash are transcript outputs, not inputs to the
+	// signature (the confirmed hash depends on this signature).
 	return w.buf
 }
 
@@ -180,6 +181,30 @@ func authContent(c Commit) []byte {
 	body, _ := encodeRFCCommitBody(c, leafOf)
 	return append(groupContextBytesForCommit(c), body...)
 }
+
+// TranscriptConfirmed derives the confirmed transcript hash from the previous
+// epoch's interim transcript and this commit's signature.
+func TranscriptConfirmed(prevInterim [32]byte, signature []byte) [32]byte {
+	h := sha256.New()
+	h.Write(prevInterim[:])
+	h.Write(signature)
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// TranscriptInterim derives the interim transcript hash carried into the next epoch.
+func TranscriptInterim(confirmed [32]byte, c Commit) [32]byte {
+	h := sha256.New()
+	h.Write(confirmed[:])
+	h.Write(authContent(c))
+	var out [32]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// AuthContent returns the signed byte string for external verifiers.
+func AuthContent(c Commit) []byte { return authContent(c) }
 
 // ChainedConfirmed exposes the transcript chain for verifiers: the confirmed hash of
 // an epoch must equal this function of the previous confirmed hash, the committed

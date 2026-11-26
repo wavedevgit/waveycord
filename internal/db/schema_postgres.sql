@@ -280,6 +280,12 @@ CREATE INDEX IF NOT EXISTS messages_channel ON messages (channel_id, id DESC);
 CREATE INDEX IF NOT EXISTS messages_guild ON messages (guild_id, id DESC);
 
 -- Direct id -> channel lookup, the analogue of Discord's separate message index.
+CREATE TABLE IF NOT EXISTS search_migration_state (
+    guild_id TEXT PRIMARY KEY,
+    migrated SMALLINT NOT NULL DEFAULT 0,
+    updated_at BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS search_bfg_state (
     guild_id        TEXT PRIMARY KEY,
     rows_at_rebuild BIGINT NOT NULL,

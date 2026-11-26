@@ -243,10 +243,16 @@ func TestCommitContextChaining(t *testing.T) {
 	if commit2.TreeHash != wantTree {
 		t.Fatalf("epoch2 tree hash mismatch")
 	}
-	if got := ChainedConfirmed(base.ConfirmedHash, commit2.TreeHash, 2); got != commit2.ConfirmedHash {
-		t.Fatalf("confirmed hash not chained: %x vs %x", got, commit2.ConfirmedHash)
+	if got := TranscriptConfirmed(base.InterimHash, commit2.Signature); got != commit2.ConfirmedHash {
+		t.Fatalf("confirmed transcript not chained from the interim hash and signature")
 	}
-	if ChainedConfirmed(base.ConfirmedHash, commit2.TreeHash, 3) == commit2.ConfirmedHash {
-		t.Fatal("epoch is not bound into the chain")
+	if commit2.InterimHash != TranscriptInterim(commit2.ConfirmedHash, commit2.Commit) {
+		t.Fatal("interim transcript hash not derived from the commit")
+	}
+	// The chain dies if the previous interim hash or the signature changes.
+	other := base.InterimHash
+	other[0] ^= 0xff
+	if TranscriptConfirmed(other, commit2.Signature) == commit2.ConfirmedHash {
+		t.Fatal("previous interim hash is not bound into the chain")
 	}
 }

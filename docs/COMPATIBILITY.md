@@ -115,7 +115,8 @@ route is not registered yet.
 | Ciphersuite negotiation via signed ciphersuite proposal (X25519/HKDF-SHA256 with AES-256-GCM or AES-128-GCM) + proposal references | implemented + tested |
 | RFC-style `ExpandWithLabel` path KDF, resolution-driven envelopes, per-application key schedule | implemented + tested |
 | Signed Add/Remove/ciphersuite proposal wire messages with per-message references bound into the commit | implemented + tested |
-| RFC-shaped commit authentication: signature over GroupContext || TLS Commit, group context with tree hash and chained confirmed transcript hash | implemented + tested |
+| RFC-shaped commit authentication: signature over GroupContext || TLS Commit; confirmed/interim transcript hashes chained over each commit's signature and authenticated content | implemented + tested |
+| Out-of-band credential possession: op 34 requires the signing key to sign the account id bound to the session token hash | implemented + tested |
 | RFC-shaped LeafNode/KeyPackage: every Add requires a verified package; membership and signature key come from the credential | implemented + tested (legacy package-less adds removed) |
 | External proposal references: commit may reference a previously relayed proposal by ref; server resolves it from a persisted proposal store | implemented + tested |
 | Independent proposal authors: any previous-roster member may author/sign a proposal; proposer and signature validated on verify | implemented + tested |
@@ -161,6 +162,7 @@ synthesise and none is fabricated.
 | BFG reindex-on-threshold: drifted large guild reset and rebuilt alone (`WAVEYCORD_SEARCH_BFG_THRESHOLD`, `_DRIFT`, `_EVERY`) | implemented + tested |
 | Index-size automation: guilds at `WAVEYCORD_SEARCH_BFG_MAX_DOCS` rebuild, then again after `_GROWTH` expansion; baseline persisted in `search_bfg_state` | implemented + tested |
 | Durable indexing queue: message writes enqueued, worker drains with retry (`WAVEYCORD_SEARCH_QUEUE=1`) | implemented + tested |
+| Resumable per-guild search migration with a persisted checkpoint (`WAVEYCORD_SEARCH_MIGRATE=1`) | implemented + tested |
 | Postgres `LISTEN` wake-up on a dedicated connection; poll interval as fallback | implemented + tested |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
 | Poll viewer-relative `me_voted`; expiry sweep finalizes, freezes the tally and pushes per-viewer `MESSAGE_UPDATE` | implemented + tested |

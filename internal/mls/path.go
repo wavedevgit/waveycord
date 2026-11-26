@@ -132,8 +132,9 @@ func resolutionUnder(node, size int, roster []Leaf) []string {
 // valid.
 type TreeState struct {
 	Size int `json:"size"`
-	// ConfirmedHash chains this epoch's transcript into the next.
+	// ConfirmedHash and InterimHash chain this epoch's transcript into the next.
 	ConfirmedHash [32]byte         `json:"confirmed_transcript_hash"`
+	InterimHash   [32]byte         `json:"interim_transcript_hash"`
 	Users         []string         `json:"users"`
 	Positions     []int            `json:"positions"`
 	Publics       map[int][32]byte `json:"publics"`
@@ -545,16 +546,17 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 		}
 		signed = append(signed, SignProposalMessage(p, committerID, committerSignPriv))
 	}
-	// RFC-style context: commit to the previous tree and chain the transcript.
-	var prevTreeHash, prevConfirmed [32]byte
+	// RFC-style context: commit to the previous tree; the transcript hashes are
+	// derived after signing and chained from the previous epoch's interim hash.
+	var prevTreeHash, prevInterim [32]byte
 	if previous != nil {
 		tw := &tlsWriter{}
 		if err := encodeTree(tw, previous); err == nil {
 			prevTreeHash = sha256.Sum256(tw.buf)
 		}
-		prevConfirmed = previous.ConfirmedHash
+		prevInterim = previous.InterimHash
 	}
-	ctxHash := nextContext(prevTreeHash, prevConfirmed, epoch)
+	ctxHash := nextContext(prevTreeHash, prevInterim, epoch)
 	tree.ConfirmedHash = ctxHash
 	commit := EpochCommit{Commit: Commit{Epoch: epoch, CipherSuite: suite,
 		TreeHash: prevTreeHash, ConfirmedHash: ctxHash,
@@ -568,6 +570,14 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 	// Existing members derive the root through the path; added members need a
 	// Welcome that binds the root to the commit hash.
 	commit.Signature = ed25519.Sign(committerSignPriv, canonical(commit.Commit))
+	// Transcript chain: confirmed commits to the previous interim hash and this
+	// signature; the interim hash carries both into the next epoch.
+	confirmed := TranscriptConfirmed(prevInterim, commit.Signature)
+	commit.ConfirmedHash = confirmed
+	commit.InterimHash = TranscriptInterim(confirmed, commit.Commit)
+	tree.ConfirmedHash = confirmed
+	tree.InterimHash = commit.InterimHash
+	commit.Tree = tree
 	hash := sha256.Sum256(canonical(commit.Commit))
 	for _, p := range proposals {
 		if p.Type != "add" {
@@ -583,7 +593,7 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 		}
 		leaf := next[idx]
 		g := GroupInfo{Version: 1, Suite: suite, Epoch: epoch, Roster: next, Tree: tree,
-			Root: root, NodeKeys: newcomerSecrets[uid]}
+			Root: root, NodeKeys: newcomerSecrets[uid], Signer: uint32(committerNode)}
 		sealed, serr := sealGroupInfo(g, leaf, hex.EncodeToString(hash[:]))
 		if serr != nil {
 			return EpochCommit{}, nil, serr

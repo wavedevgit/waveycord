@@ -93,6 +93,9 @@ func TestDeveloperPortal(t *testing.T) {
 	if status != 200 || !strings.Contains(body, "Portal App") {
 		t.Fatalf("create application %d", status)
 	}
+	if !strings.Contains(body, `id="client-secret"`) {
+		t.Fatalf("client secret page not rendered: %s", body)
+	}
 	match := regexp.MustCompile(`/portal/applications/([0-9]+)`).FindStringSubmatch(body)
 	if match == nil {
 		t.Fatalf("no application link in page: %s", body)
@@ -102,6 +105,27 @@ func TestDeveloperPortal(t *testing.T) {
 	if status, body := portalGet(t, c, base, "/portal"); status != 200 || !strings.Contains(body, "Portal App") {
 		t.Fatalf("dashboard listing %d", status)
 	}
+	// Settings page edits OAuth2 redirect URIs and the interactions endpoint.
+	if status, body := portalGet(t, c, base, "/portal/applications/"+appID+"/settings"); status != 200 ||
+		!strings.Contains(body, "OAuth2 redirect URIs") {
+		t.Fatalf("settings page %d", status)
+	}
+	settingsToken := portalCSRF(t, c, base, "/portal/applications/"+appID+"/settings")
+	if status, body := portalPost(t, c, base, "/portal/applications/"+appID+"/settings", url.Values{
+		"csrf_token":    {settingsToken},
+		"name":          {"Portal App Renamed"},
+		"description":   {"updated"},
+		"redirect_uris": {"https://example.test/cb\nhttps://example.test/cb2"},
+		"endpoint_url":  {"https://example.test/interactions"},
+	}); status != 200 || !strings.Contains(body, "Portal App Renamed") {
+		t.Fatalf("settings save %d", status)
+	}
+	app, err := h.store.Application(appID)
+	if err != nil || app.Name != "Portal App Renamed" || len(app.RedirectURIs) != 2 ||
+		app.InteractionsEndpointURL == nil || *app.InteractionsEndpointURL != "https://example.test/interactions" {
+		t.Fatalf("stored settings: %+v err=%v", app, err)
+	}
+
 	// Create a command.
 	cmdToken := portalCSRF(t, c, base, "/portal/applications/"+appID)
 	status, body = portalPost(t, c, base, "/portal/applications/"+appID+"/commands", url.Values{

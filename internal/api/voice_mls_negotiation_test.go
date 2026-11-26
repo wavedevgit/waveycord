@@ -35,12 +35,14 @@ func TestVoiceMLSCommitRejectsSilentSuiteChange(t *testing.T) {
 	aPriv, aPub := clientKeypair(t)
 	_, bPub := clientKeypair(t)
 	aSignPub, aSignPriv, _ := ed25519.GenerateKey(rand.Reader)
-	bSignPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	bSignPub, bSignPriv, _ := ed25519.GenerateKey(rand.Reader)
 	writeVoice(t, aliceVoice, map[string]any{"op": 34, "d": map[string]any{
 		"public_key": encodeB64(aPub), "signing_key": hex.EncodeToString(aSignPub),
+		"proof": mlsProof(aSignPriv, alice.ID, aliceToken),
 	}})
 	writeVoice(t, bobVoice, map[string]any{"op": 34, "d": map[string]any{
 		"public_key": encodeB64(bPub), "signing_key": hex.EncodeToString(bSignPub),
+		"proof": mlsProof(bSignPriv, bob.ID, bobToken),
 	}})
 	time.Sleep(100 * time.Millisecond)
 

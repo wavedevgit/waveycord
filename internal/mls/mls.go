@@ -82,6 +82,7 @@ type Commit struct {
 	GroupID          []byte              `json:"group_id,omitempty"`
 	TreeHash         [32]byte            `json:"tree_hash"`
 	ConfirmedHash    [32]byte            `json:"confirmed_transcript_hash"`
+	InterimHash      [32]byte            `json:"interim_transcript_hash"`
 	CipherSuite      Ciphersuite         `json:"cipher_suite"`
 	ProposalRefs     []string            `json:"proposal_refs"`
 	ProposalMessages []ProposalMessage   `json:"proposal_messages,omitempty"`

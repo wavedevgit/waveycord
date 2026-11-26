@@ -26,6 +26,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Multi-cell search routing and cell isolation | `TestMultiCellRouting` (two fake clusters) |
 | BFG drift policy, per-guild ES count/reset, background rebuild trigger | `TestBFGPolicy`, `TestESGuildCountAndReset`, `TestBFGMaintainGuildRebuildsDriftedIndex`, `TestBFGWriteTrigger` |
 | Index-size automation: MaxDocs crossing, growth-triggered rebuild, small guild inert | `TestBFGSizePolicy`, `TestBFGSizeAutomationRebuildsGrowingGuild` |
+| Resumable search migration checkpoint and idempotent rerun | `TestSearchMigrationCheckpoint` |
 | BFG baseline persisted across store reopen and shared via the database | `TestBFGSizeStatePersistsAcrossReopen` |
 | Durable search queue: enqueue-only writes, drain/ack, retry, deletes, runner (SQLite + Postgres) | `TestDurableSearchQueue`, `TestDurableSearchQueuePostgres` |
 | LISTEN wake-up (dedicated pgx connection), immediate drain, SQLite rejection; per-job acknowledgement check | `TestSearchQueueListenWakes`, `TestListenSearchQueueRejectsSQLite` |
@@ -38,7 +39,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | RFC-style path KDF, application key schedule, nonce ratchet | `TestExpandWithLabelAndApplicationKeys`, `TestVoiceMLSSignedRosterCommit` |
 | Signed proposal wire messages in commits, verify rejection paths | `TestCiphersuiteAndProposalRefs`, `TestVoiceMLSSignedRosterCommit` |
 | Per-proposal reference derivation and commit reference binding, forged/duplicate/reordered rejection | `TestProposalReferenceBinding` |
-| RFC-shaped commit authentication: GroupContext tree hash + chained confirmed hash | `TestCommitContextChaining`, `TestVoiceMLSSignedRosterCommit` |
+| RFC-shaped commit authentication: transcript chain over commit signature and authenticated content | `TestCommitContextChaining`, `TestVoiceMLSSignedRosterCommit` |
 | LeafNode/KeyPackage signatures, TLS round trip, credential-driven membership, package-less Add rejection, op 38 KeyPackage add | `TestKeyPackageLeaf`, `TestVoiceMLSSignedRosterCommit` |
 | External proposal references resolved from relayed proposals, missing/mismatched rejection | `TestExternalProposalReference`, `TestVoiceMLSCommitServerValidation` |
 | Proposal persistence across store reopen, channel scoping, idempotent save, referenced commit verifies after reload | `TestMLSProposalSurvivesReopen` |
@@ -59,7 +60,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
-| Developer portal: cookie login, app/command/permission pages, token reset, ownership, logout, CSRF rejection | `TestDeveloperPortal` |
+| Developer portal: cookie login, app/command/permission pages, settings (redirect URIs, endpoint), client secret, token reset, ownership, logout, CSRF rejection | `TestDeveloperPortal` |
 | Portal cookie attributes: HttpOnly/SameSite, Secure on TLS and when forced | `TestPortalCookieSecurity` |
 | Polls: create, vote, retract, multiselect, expire, voters, validation, viewer `me_voted`, expiry sweep + per-viewer `MESSAGE_UPDATE`, persisted final tally | `TestPollsCreateVoteExpireAndVoters` |
 | Components v2 validation (flag, nesting, counts, text, media, edit rules) | `TestComponentsV2Validation`, `TestV2ValidationStrings` |

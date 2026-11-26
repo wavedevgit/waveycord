@@ -164,9 +164,6 @@ func encodeTree(w *tlsWriter, t *TreeState) error {
 		return w.vector16(0, nil)
 	}
 	w.u32(uint32(t.Size))
-	if err := w.opaque16(t.ConfirmedHash[:]); err != nil {
-		return err
-	}
 	if err := w.vector16(len(t.Users), func(i int) error { return w.opaque16([]byte(t.Users[i])) }); err != nil {
 		return err
 	}
@@ -191,14 +188,6 @@ func decodeTree(r *tlsReader) (*TreeState, error) {
 		return nil, err
 	}
 	t := &TreeState{Size: int(size), Publics: map[int][32]byte{}}
-	ch, err := r.opaque16()
-	if err != nil {
-		return nil, err
-	}
-	if len(ch) != 32 {
-		return nil, errTLS
-	}
-	copy(t.ConfirmedHash[:], ch)
 	un, err := r.vector16()
 	if err != nil {
 		return nil, err

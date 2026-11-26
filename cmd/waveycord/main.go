@@ -122,6 +122,18 @@ func main() {
 			log.Info("search indexing via durable queue", "wake", "poll")
 		}
 	}
+	if os.Getenv("WAVEYCORD_SEARCH_MIGRATE") == "1" {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			n, err := st.MigrateSearchIndex(ctx, 500, 25*time.Minute)
+			if err != nil {
+				log.Warn("search migration", "err", err)
+				return
+			}
+			log.Info("search migration complete", "documents", n)
+		}()
+	}
 	if mode := os.Getenv("WAVEYCORD_SEARCH_REINDEX"); mode != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

@@ -40,13 +40,14 @@ func TestVoiceMLSCommitServerValidation(t *testing.T) {
 	aSignPub, aSignPriv, _ := ed25519.GenerateKey(rand.Reader)
 	bSignPub, bSignPriv, _ := ed25519.GenerateKey(rand.Reader)
 
-	publish := func(conn *websocket.Conn, pub [32]byte, sign ed25519.PublicKey) {
+	publish := func(conn *websocket.Conn, token, userID string, pub [32]byte, sign ed25519.PublicKey, priv ed25519.PrivateKey) {
 		writeVoice(t, conn, map[string]any{"op": 34, "d": map[string]any{
 			"public_key": encodeB64(pub), "signing_key": hex.EncodeToString(sign),
+			"proof": mlsProof(priv, userID, token),
 		}})
 	}
-	publish(aliceVoice, aPub, aSignPub)
-	publish(bobVoice, bPub, bSignPub)
+	publish(aliceVoice, aliceToken, alice.ID, aPub, aSignPub, aSignPriv)
+	publish(bobVoice, bobToken, bob.ID, bPub, bSignPub, bSignPriv)
 	// Let the server record both signing keys.
 	time.Sleep(100 * time.Millisecond)
 
