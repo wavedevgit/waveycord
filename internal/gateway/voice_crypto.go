@@ -200,8 +200,14 @@ func (c *voiceConn) openEscrowMedia(packet []byte) ([]byte, error) {
 		return nil, errKeyMismatch
 	}
 	counter := binary.BigEndian.Uint64(packet[8:16])
-	if counter <= c.escrowCounter {
+	if counter == 0 {
 		return nil, errReplay
+	}
+	if counter <= c.escrowCounter {
+		delta := c.escrowCounter - counter
+		if delta >= 64 || c.escrowSeen&(uint64(1)<<delta) != 0 {
+			return nil, errReplay
+		}
 	}
 	if binary.BigEndian.Uint32(packet[16:20]) != c.ssrc {
 		return nil, errTampered
@@ -211,6 +217,11 @@ func (c *voiceConn) openEscrowMedia(packet []byte) ([]byte, error) {
 		binary.BigEndian.Uint32(inner[8:12]) != c.ssrc {
 		return nil, errTampered
 	}
-	c.escrowCounter = counter
+	if counter > c.escrowCounter {
+		c.escrowSeen = c.escrowSeen<<(counter-c.escrowCounter) | 1
+		c.escrowCounter = counter
+	} else {
+		c.escrowSeen |= uint64(1) << (c.escrowCounter - counter)
+	}
 	return inner, nil
 }

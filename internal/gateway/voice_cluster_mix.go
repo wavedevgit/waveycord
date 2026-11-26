@@ -90,6 +90,12 @@ func (v *VoiceServer) publishPCM(channelID string, ssrc uint32, pcm []int16) {
 
 // DeliverMixPCM feeds PCM received from another instance into the local mixer.
 func (v *VoiceServer) DeliverMixPCM(channelID string, ssrc uint32, pcmB64 string) {
+	v.mu.Lock()
+	cluster, self := v.clusterMix, v.instanceID
+	v.mu.Unlock()
+	if cluster && v.mixerOwner(channelID) != self {
+		return
+	}
 	pcm := decodePCM(pcmB64)
 	if len(pcm) == 0 {
 		return

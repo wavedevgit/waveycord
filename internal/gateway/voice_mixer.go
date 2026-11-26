@@ -15,6 +15,7 @@ import (
 // result once and sends one mixed RTP stream to every member. Single-sender
 // channels keep the per-packet forwarding path (and its jitter buffer).
 type channelMixer struct {
+	mu       sync.Mutex
 	streams  map[uint32]*pcmStream
 	seq      uint16
 	ts       uint32
@@ -31,6 +32,11 @@ type pcmStream struct {
 func (v *VoiceServer) mixer(channelID string) *channelMixer {
 	v.mixMu.Lock()
 	defer v.mixMu.Unlock()
+	select {
+	case <-v.done:
+		return nil
+	default:
+	}
 	if v.mixers == nil {
 		v.mixers = map[string]*channelMixer{}
 	}
@@ -61,7 +67,17 @@ func (v *VoiceServer) feedMixer(channelID string, ssrc uint32, pcm []int16) bool
 		return false
 	}
 	m := v.mixer(channelID)
-	m.streams[ssrc] = &pcmStream{pcm: append(m.streams[ssrc].pcmOrNil(), pcm...), lastSeen: time.Now()}
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending := append(m.streams[ssrc].pcmOrNil(), pcm...)
+	const maxPending = voicecodec.FrameSize * 10
+	if len(pending) > maxPending {
+		pending = pending[len(pending)-maxPending:]
+	}
+	m.streams[ssrc] = &pcmStream{pcm: pending, lastSeen: time.Now()}
 	return m.recentSenders() >= 2
 }
 
@@ -85,6 +101,13 @@ func (m *channelMixer) recentSenders() int {
 
 // mixOnce emits one 20 ms mixed frame when at least two senders are active.
 func (v *VoiceServer) mixOnce(channelID string, m *channelMixer) ([]byte, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for ssrc, stream := range m.streams {
+		if time.Since(stream.lastSeen) > time.Second {
+			delete(m.streams, ssrc)
+		}
+	}
 	if m.codec == nil || m.recentSenders() < 2 {
 		return nil, false
 	}
@@ -154,9 +177,18 @@ func (v *VoiceServer) mixLoop() {
 			}
 			v.mixMu.Unlock()
 			for channelID, m := range mixers {
+				v.mu.Lock()
+				cluster, self := v.clusterMix, v.instanceID
+				v.mu.Unlock()
+				if cluster && v.mixerOwner(channelID) != self {
+					continue
+				}
 				packet, ok := v.mixOnce(channelID, m)
 				if !ok {
 					continue
+				}
+				if cluster {
+					v.publishMixed(channelID, packet)
 				}
 				v.mu.Lock()
 				targets := make([]*voiceConn, 0, len(v.conns))
@@ -175,5 +207,3 @@ func (v *VoiceServer) mixLoop() {
 		}
 	}
 }
-
-var _ = sync.Mutex{}

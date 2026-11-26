@@ -88,4 +88,19 @@ func TestEscrowMediaAuthentication(t *testing.T) {
 	if _, err := c.openEscrowMedia(frame(2, 42, inner)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := c.openEscrowMedia(frame(4, 42, inner)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.openEscrowMedia(frame(3, 42, inner)); err != nil {
+		t.Fatalf("reordered frame rejected: %v", err)
+	}
+	if _, err := c.openEscrowMedia(frame(3, 42, inner)); err != errReplay {
+		t.Fatalf("reordered replay: %v", err)
+	}
+	if _, err := c.openEscrowMedia(frame(100, 42, inner)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.openEscrowMedia(frame(5, 42, inner)); err != errReplay {
+		t.Fatalf("old-window replay: %v", err)
+	}
 }

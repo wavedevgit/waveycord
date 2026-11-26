@@ -154,5 +154,32 @@ func testClusterWideMixing(t *testing.T, escrow bool) {
 	if !mixed {
 		t.Fatal("listener on the other instance never received a mixed frame")
 	}
+	// One of these two sockets must be remote from the rendezvous owner.
+	// Both must receive the same mixed SSRC, not independent local mixes.
+	mixedSSRC := binary.BigEndian.Uint32(buf[8:12])
+	otherDecoder, err := opus.NewDecoder(48000, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteMixed := false
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = aliceRecv.SetReadDeadline(deadline)
+		n, _, err := aliceRecv.ReadFromUDP(buf)
+		if err != nil {
+			break
+		}
+		if n < 12 || binary.BigEndian.Uint32(buf[8:12]) != mixedSSRC {
+			continue
+		}
+		samples, err := otherDecoder.Decode(buf[12:n], pcm)
+		if err == nil && samples >= 480 && toneAmplitude(pcm[:samples], 440) > 250 && toneAmplitude(pcm[:samples], 880) > 250 {
+			remoteMixed = true
+			break
+		}
+	}
+	if !remoteMixed {
+		t.Fatal("same mixed stream did not reach both instances")
+	}
 	_ = bobReady
 }

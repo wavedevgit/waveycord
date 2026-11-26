@@ -68,7 +68,8 @@ type VoiceServer struct {
 	publish         func(name string, data any)
 	codecReady      bool
 	done            chan struct{}
-	tick            *time.Ticker
+	workers         sync.WaitGroup
+	closeOnce       sync.Once
 	mixMu           sync.Mutex
 	mixers          map[string]*channelMixer
 	mixes           atomic.Int64
@@ -122,9 +123,10 @@ func NewVoiceServer(st *store.Store, opts VoiceOptions) (*VoiceServer, error) {
 	if v.codecReady {
 		logger.Info("voice opus codec enabled")
 	}
-	go v.readUDP()
-	go v.jitterLoop()
-	go v.mixLoop()
+	v.workers.Add(3)
+	go func() { defer v.workers.Done(); v.readUDP() }()
+	go func() { defer v.workers.Done(); v.jitterLoop() }()
+	go func() { defer v.workers.Done(); v.mixLoop() }()
 	return v, nil
 }
 
@@ -138,24 +140,35 @@ func (v *VoiceServer) Stats() (sessions, rtpPackets, speaking int64) {
 
 // Close stops the UDP socket, the jitter loop and all clients.
 func (v *VoiceServer) Close() {
-	select {
-	case <-v.done:
-	default:
+	v.closeOnce.Do(func() {
 		close(v.done)
-	}
-	if v.udp != nil {
 		_ = v.udp.Close()
-	}
-	v.mu.Lock()
-	id := v.instanceID
-	cluster := v.clusterMix
-	for c := range v.conns {
-		c.close(1000, "server shutdown")
-	}
-	v.mu.Unlock()
-	if cluster && id != "" && v.store != nil {
-		_ = v.store.UnregisterInstance(id)
-	}
+		v.mu.Lock()
+		id, cluster := v.instanceID, v.clusterMix
+		conns := make([]*voiceConn, 0, len(v.conns))
+		for c := range v.conns {
+			conns = append(conns, c)
+		}
+		v.mu.Unlock()
+		for _, c := range conns {
+			c.close(1000, "server shutdown")
+		}
+		v.workers.Wait()
+		v.mixMu.Lock()
+		for channel, mixer := range v.mixers {
+			mixer.mu.Lock()
+			if mixer.codec != nil {
+				mixer.codec.Close()
+				mixer.codec = nil
+			}
+			mixer.mu.Unlock()
+			delete(v.mixers, channel)
+		}
+		v.mixMu.Unlock()
+		if cluster && id != "" && v.store != nil {
+			_ = v.store.UnregisterInstance(id)
+		}
+	})
 }
 
 // remoteOpaque is the reorder/dedupe state for opaque media that arrived from
@@ -633,6 +646,10 @@ func rtpPayloadOffset(packet []byte) int {
 // shared between speakers.
 func (c *voiceConn) ensureCodec() voicecodec.Codec {
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
 	if c.codec != nil || !c.server.codecReady {
 		codec := c.codec
 		c.mu.Unlock()
@@ -644,6 +661,11 @@ func (c *voiceConn) ensureCodec() voicecodec.Codec {
 		return nil
 	}
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		codec.Close()
+		return nil
+	}
 	if c.codec == nil {
 		c.codec = codec
 	} else {
@@ -706,7 +728,7 @@ const (
 
 func (v *VoiceServer) jitterLoop() {
 	ticker := time.NewTicker(10 * time.Millisecond)
-	v.tick = ticker
+	defer ticker.Stop()
 	for {
 		select {
 		case <-v.done:
@@ -743,28 +765,8 @@ func (v *VoiceServer) ingestRTP(sender *voiceConn, packet []byte) {
 	}
 	seq := binary.BigEndian.Uint16(packet[2:4])
 	ts := binary.BigEndian.Uint32(packet[4:8])
-	ssrc := binary.BigEndian.Uint32(packet[8:12])
 	header := append([]byte(nil), packet[:offset]...)
 	payload := append([]byte(nil), packet[offset:]...)
-	if v.codecReady && sender.channel() != "" {
-		if codec := sender.ensureCodec(); codec != nil {
-			if pcm, err := codec.Decode(payload); err == nil && len(pcm) > 0 {
-				channel := sender.channel()
-				v.mu.Lock()
-				cluster := v.clusterMix
-				v.mu.Unlock()
-				if cluster && v.mixerOwner(channel) != v.instanceID {
-					// Another instance mixes this channel: ship PCM and let the
-					// owner's mixed output come back over the bus.
-					v.publishPCM(channel, ssrc, pcm)
-					return
-				}
-				if v.feedMixer(channel, ssrc, pcm) {
-					return
-				}
-			}
-		}
-	}
 	sender.mu.Lock()
 	if sender.jitter == nil {
 		sender.jitter = &jitterState{buf: map[uint16]jitterFrame{}}
@@ -1063,6 +1065,8 @@ func (v *VoiceServer) deliverOpaque(sender *voiceConn, channel string, packet []
 
 // drainJitter emits contiguous frames, inserting PLC after the gap delay.
 func (v *VoiceServer) drainJitter(sender *voiceConn) {
+	sender.drainMu.Lock()
+	defer sender.drainMu.Unlock()
 	sender.mu.Lock()
 	j := sender.jitter
 	if j == nil || !j.started {
@@ -1148,7 +1152,17 @@ func plcHeader(last []byte, seq uint16, ts uint32) []byte {
 
 func (v *VoiceServer) emitFrame(sender *voiceConn, header, payload []byte) {
 	packet := append(append([]byte(nil), header...), payload...)
-	packet = sender.transcode(packet)
+	if codec := sender.ensureCodec(); codec != nil {
+		if pcm, err := codec.Decode(payload); err == nil && len(pcm) > 0 {
+			if v.routePCM(sender, binary.BigEndian.Uint32(header[8:12]), pcm) {
+				return
+			}
+			if encoded, err := codec.Encode(pcm); err == nil && len(encoded) > 0 {
+				packet = append(append([]byte(nil), header...), encoded...)
+				v.transcodes.Add(1)
+			}
+		}
+	}
 	v.deliver(sender, packet)
 	v.publishRTP(sender, packet)
 }
@@ -1163,6 +1177,9 @@ func (v *VoiceServer) emitPLC(sender *voiceConn, header []byte) {
 	if err != nil || n == 0 {
 		return
 	}
+	if v.routePCM(sender, binary.BigEndian.Uint32(header[8:12]), pcm[:n]) {
+		return
+	}
 	encoded, err := codec.Encode(pcm[:n])
 	if err != nil || len(encoded) == 0 {
 		return
@@ -1171,6 +1188,21 @@ func (v *VoiceServer) emitPLC(sender *voiceConn, header []byte) {
 	packet := append(append([]byte(nil), header...), encoded...)
 	v.deliver(sender, packet)
 	v.publishRTP(sender, packet)
+}
+
+func (v *VoiceServer) routePCM(sender *voiceConn, ssrc uint32, pcm []int16) bool {
+	channel := sender.channel()
+	if channel == "" {
+		return false
+	}
+	v.mu.Lock()
+	cluster, self := v.clusterMix, v.instanceID
+	v.mu.Unlock()
+	if cluster && v.mixerOwner(channel) != self {
+		v.publishPCM(channel, ssrc, pcm)
+		return true
+	}
+	return v.feedMixer(channel, ssrc, pcm)
 }
 
 // deliver sends a packet to the sender's channel peers.
@@ -1362,6 +1394,7 @@ type voiceConn struct {
 	token   string
 
 	mu              sync.Mutex
+	drainMu         sync.Mutex
 	writeMu         sync.Mutex
 	userID          string
 	guildID         string
@@ -1379,6 +1412,7 @@ type voiceConn struct {
 	escrow          cipher.AEAD
 	escrowKeyID     uint32
 	escrowCounter   uint64
+	escrowSeen      uint64
 	escrowInstalled bool
 	e2eePub         [32]byte
 	e2eeSign        string
@@ -1440,6 +1474,12 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				return
 			}
 			c.mu.Lock()
+			if c.ready {
+				c.mu.Unlock()
+				c.close(voiceCloseUnknownOpcode, "Already identified")
+				return
+			}
+			c.token = token
 			c.userID = state.UserID
 			c.guildID = state.GuildID
 			c.channelID = ""
@@ -1663,6 +1703,7 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				c.escrowInstalled = true
 				c.escrowKeyID = ex.EscrowKeyID
 				c.escrowCounter = 0
+				c.escrowSeen = 0
 			}
 			c.escrow = escrow
 			c.mu.Unlock()
@@ -1818,7 +1859,13 @@ func (c *voiceConn) close(code int, reason string) {
 		return
 	}
 	c.closed = true
+	codec := c.codec
+	c.codec = nil
+	c.escrow = nil
 	c.mu.Unlock()
+	if codec != nil {
+		codec.Close()
+	}
 	c.writeMu.Lock()
 	_ = c.ws.Close(websocket.StatusCode(code), reason)
 	c.writeMu.Unlock()

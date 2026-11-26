@@ -15,10 +15,12 @@ import "C"
 
 import (
 	"fmt"
+	"sync"
 	"unsafe"
 )
 
 type codec struct {
+	mu  sync.Mutex
 	enc *C.OpusEncoder
 	dec *C.OpusDecoder
 }
@@ -46,11 +48,18 @@ func New() (Codec, error) {
 }
 
 func (c *codec) Encode(pcm []int16) ([]byte, error) {
-	if len(pcm) < FrameSize {
-		return nil, fmt.Errorf("voicecodec: encode needs %d samples, got %d", FrameSize, len(pcm))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.enc == nil {
+		return nil, fmt.Errorf("voicecodec: closed")
+	}
+	switch len(pcm) {
+	case 120, 240, 480, 960, 1920, 2880:
+	default:
+		return nil, fmt.Errorf("voicecodec: unsupported frame size %d", len(pcm))
 	}
 	out := make([]byte, 4000)
-	n := C.opus_encode(c.enc, (*C.opus_int16)(unsafe.Pointer(&pcm[0])), C.int(FrameSize),
+	n := C.opus_encode(c.enc, (*C.opus_int16)(unsafe.Pointer(&pcm[0])), C.int(len(pcm)),
 		(*C.uchar)(unsafe.Pointer(&out[0])), C.opus_int32(len(out)))
 	if n < 0 {
 		return nil, fmt.Errorf("voicecodec: encode: %d", int(n))
@@ -59,12 +68,18 @@ func (c *codec) Encode(pcm []int16) ([]byte, error) {
 }
 
 func (c *codec) Decode(packet []byte) ([]int16, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dec == nil {
+		return nil, fmt.Errorf("voicecodec: closed")
+	}
 	if len(packet) == 0 {
 		return nil, fmt.Errorf("voicecodec: empty packet")
 	}
-	pcm := make([]int16, FrameSize)
+	const maxDecodeSamples = SampleRate * 120 / 1000
+	pcm := make([]int16, maxDecodeSamples)
 	n := C.opus_decode(c.dec, (*C.uchar)(unsafe.Pointer(&packet[0])), C.opus_int32(len(packet)),
-		(*C.opus_int16)(unsafe.Pointer(&pcm[0])), C.int(FrameSize), 0)
+		(*C.opus_int16)(unsafe.Pointer(&pcm[0])), C.int(maxDecodeSamples), 0)
 	if n < 0 {
 		return nil, fmt.Errorf("voicecodec: decode: %d", int(n))
 	}
@@ -73,6 +88,11 @@ func (c *codec) Decode(packet []byte) ([]int16, error) {
 
 // Conceal runs libopus packet-loss concealment on the decoder state.
 func (c *codec) Conceal(pcm []int16) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dec == nil {
+		return 0, fmt.Errorf("voicecodec: closed")
+	}
 	if len(pcm) < FrameSize {
 		return 0, fmt.Errorf("voicecodec: conceal buffer too small")
 	}
@@ -84,6 +104,8 @@ func (c *codec) Conceal(pcm []int16) (int, error) {
 }
 
 func (c *codec) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.enc != nil {
 		C.opus_encoder_destroy(c.enc)
 		c.enc = nil

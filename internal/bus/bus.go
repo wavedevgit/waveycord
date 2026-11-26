@@ -66,6 +66,7 @@ type Postgres struct {
 	cancel   context.CancelFunc
 	closed   atomic.Bool
 	notifyMu sync.Mutex
+	workers  sync.WaitGroup
 }
 
 // NewPostgres starts a listener on dsn. origin must be unique per instance.
@@ -91,13 +92,17 @@ func NewPostgres(ctx context.Context, dsn, origin string, h Handler, log *slog.L
 	p.conn = conn
 	listenCtx, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
-	go p.listen(listenCtx)
-	go p.cleanup(listenCtx)
+	p.workers.Add(2)
+	go func() { defer p.workers.Done(); p.listen(listenCtx) }()
+	go func() { defer p.workers.Done(); p.cleanup(listenCtx) }()
 	return p, nil
 }
 
 // Publish stores the event and notifies the cluster.
 func (p *Postgres) Publish(ctx context.Context, ev Event) error {
+	if p.closed.Load() {
+		return errors.New("bus: closed")
+	}
 	if ev.Origin == "" {
 		ev.Origin = p.origin
 	}
@@ -180,6 +185,7 @@ func (p *Postgres) Close() error {
 		return nil
 	}
 	p.cancel()
+	p.workers.Wait()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if p.conn != nil {
