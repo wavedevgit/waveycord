@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS mls_credentials (
     updated_at  INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS mls_proposals (
+    ref         TEXT PRIMARY KEY,
+    channel_id  TEXT NOT NULL,
+    proposer    TEXT NOT NULL,
+    proposal    TEXT NOT NULL,
+    signature   TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mls_proposals_channel ON mls_proposals (channel_id, created_at);
+
 CREATE TABLE IF NOT EXISTS mfa_tickets (
     id      TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

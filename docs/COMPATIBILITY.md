@@ -115,7 +115,7 @@ route is not registered yet.
 | Ciphersuite negotiation via signed ciphersuite proposal (X25519/HKDF-SHA256 with AES-256-GCM or AES-128-GCM) + proposal references | implemented + tested |
 | RFC-style `ExpandWithLabel` path KDF, resolution-driven envelopes, per-application key schedule | implemented + tested |
 | Signed Add/Remove/ciphersuite proposal wire messages with per-message references bound into the commit | implemented + tested |
-| External proposal references: commit may reference a previously relayed proposal by ref; server resolves it from validated relayed proposals | implemented + tested |
+| External proposal references: commit may reference a previously relayed proposal by ref; server resolves it from a persisted proposal store | implemented + tested |
 | Independent proposal authors: any previous-roster member may author/sign a proposal; proposer and signature validated on verify | implemented + tested |
 | Server-side op 38 commit validation before relaying (ciphersuite, proposals, roster transition, path shape) | implemented + tested |
 | MLSMessage framing on op 38: version + wire-format prefix, TLS-encoded commit body, decoded by server and clients | implemented + tested |
