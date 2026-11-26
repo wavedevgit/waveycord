@@ -255,6 +255,50 @@ func (v *VoiceServer) DeliverE2EEKeyRelay(channelID, fromUserID, toUserID string
 	}
 }
 
+// MemberChanged signals a voice channel membership change so members rotate the
+// group key (join: include the newcomer; leave: exclude the departed member).
+func (v *VoiceServer) MemberChanged(channelID, reason string) {
+	if channelID == "" {
+		return
+	}
+	epoch := time.Now().UnixMilli()
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": 36, "d": map[string]any{
+			"channel_id": channelID, "epoch": epoch, "reason": reason,
+		}})
+	}
+	if v.publish != nil {
+		v.publish("VOICE_E2EE_REKEY", map[string]any{
+			"channel_id": channelID, "epoch": epoch, "reason": reason,
+		})
+	}
+}
+
+// DeliverE2EERekey forwards a rekey signal received from another instance.
+func (v *VoiceServer) DeliverE2EERekey(channelID string, epoch int64, reason string) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": 36, "d": map[string]any{
+			"channel_id": channelID, "epoch": epoch, "reason": reason,
+		}})
+	}
+}
+
 // SetPublisher enables cross-instance speaking events.
 func (v *VoiceServer) SetPublisher(fn func(name string, data any)) {
 	if v == nil {

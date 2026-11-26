@@ -112,6 +112,7 @@ func (s *Server) SetVoice(v *gateway.VoiceServer) {
 	s.voice = v
 	if v != nil && s.Hub != nil {
 		v.SetPublisher(s.Hub.PublishCluster)
+		s.Hub.SetVoiceNotifier(v.MemberChanged)
 	}
 }
 
