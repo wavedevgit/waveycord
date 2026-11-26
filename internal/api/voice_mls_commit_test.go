@@ -344,8 +344,16 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	signKeyMap := map[string]ed25519.PublicKey{
 		alice.ID: aliceSignPub, bob.ID: bobSignPub, charlie.ID: charlieSignPub,
 	}
-	commit2, epoch2State, err := mls.NewEpochCommit(2, leaves1,
-		[]mls.Proposal{{Type: "remove", UserID: charlie.ID}}, alice.ID, aliceSignPriv, alicePriv)
+	// A prior path update by Charlie establishes the internal node above his slot and
+	// publishes a stable leaf layout; carrying it forward keeps Charlie's slot blank
+	// instead of compacting the tree.
+	_, priorEpoch, err := mls.NewEpochCommit(1, leaves1, nil, charlie.ID, charlieSignPriv, charliePriv)
+	if err != nil {
+		t.Fatalf("prior epoch: %v", err)
+	}
+	commit2, epoch2State, err := mls.NewEpochCommitWithState(2, leaves1,
+		[]mls.Proposal{{Type: "remove", UserID: charlie.ID}}, alice.ID, aliceSignPriv, alicePriv,
+		priorEpoch.Tree)
 	if err != nil {
 		t.Fatalf("epoch2 commit: %v", err)
 	}
@@ -363,6 +371,24 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		t.Fatalf("relayed epoch2 verify: %v", err)
 	}
 	// The proposal travels as a signed wire message, not only as a hash reference.
+	if relayed.Tree == nil || relayed.Tree.Size != 4 {
+		t.Fatalf("relayed tree layout: %+v", relayed.Tree)
+	}
+	if slot := relayed.Tree.SlotFor(charlie.ID); slot != -1 {
+		t.Fatalf("removed member retained slot %d", slot)
+	}
+	nodeAddressed := 0
+	for _, r := range relayed.Path.Recipients {
+		if r.TargetNode > 0 && r.UserID == "" {
+			nodeAddressed++
+		}
+	}
+	if nodeAddressed == 0 {
+		t.Fatalf("relayed commit has no node-addressed envelope: %+v", relayed.Path.Recipients)
+	}
+	if !strings.Contains(string(rawCommit), "target_node") {
+		t.Fatalf("node-addressed envelope missing from the wire: %s", rawCommit)
+	}
 	if !strings.Contains(string(rawCommit), "tree_publics") {
 		t.Fatalf("commit on the wire has no persisted tree keys: %s", rawCommit)
 	}

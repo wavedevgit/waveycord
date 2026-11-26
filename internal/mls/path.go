@@ -46,6 +46,7 @@ type EpochCommit struct {
 	Commit
 	Path    *PathChain         `json:"path,omitempty"`
 	Welcome map[string]Welcome `json:"welcome,omitempty"`
+	Tree    *TreeState         `json:"tree,omitempty"`
 }
 
 // Resolution returns the TreeKEM resolution of a node: the highest non-blank
@@ -106,14 +107,64 @@ func resolutionUnder(node, size int, roster []Leaf) []string {
 
 // NewEpochCommit creates a path-updated, signed epoch with Welcome messages for
 // members added by the commit's proposals.
-func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte) (EpochCommit, *Epoch, error) {
-	return NewEpochCommitWithTree(epoch, roster, proposals, committerID, committerSignPriv, committerLeafPriv, nil)
+// TreeState is the persisted leaf layout and node keys. Leaf positions are
+// indices (0 .. Size-1): removing a member blanks the index instead of compacting,
+// so a retained member keeps its slot and any persisted node key above it stays
+// valid.
+type TreeState struct {
+	Size      int              `json:"size"`
+	Users     []string         `json:"users"`
+	Positions []int            `json:"positions"`
+	Publics   map[int][32]byte `json:"publics"`
 }
 
-// NewEpochCommitWithTree carries the previous epoch's node public keys so nodes
-// outside this update's path keep their keys, which is what lets a later commit
-// address an ancestor node instead of every leaf beneath it.
+// SlotFor returns the leaf index for a user, or -1.
+func (t *TreeState) SlotFor(userID string) int {
+	for i, u := range t.Users {
+		if u == userID && i < len(t.Positions) {
+			return t.Positions[i]
+		}
+	}
+	return -1
+}
+
+// SlotUsers maps absolute leaf nodes to member ids.
+func (t *TreeState) SlotUsers() map[int]string {
+	out := map[int]string{}
+	for i, u := range t.Users {
+		if i < len(t.Positions) {
+			out[t.Size+t.Positions[i]] = u
+		}
+	}
+	return out
+}
+
+// NewEpochCommit keeps the dense layout (a fresh tree per commit).
+func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte) (EpochCommit, *Epoch, error) {
+	return NewEpochCommitWithState(epoch, roster, proposals, committerID, committerSignPriv, committerLeafPriv, nil)
+}
+
+// NewEpochCommitWithTree adapts a bare node-key map to a dense previous layout.
 func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previousTree map[int][32]byte) (EpochCommit, *Epoch, error) {
+	var prev *TreeState
+	if len(previousTree) > 0 {
+		size := TreeSize(len(roster))
+		if size < 2 {
+			size = 2
+		}
+		prev = &TreeState{Size: size, Publics: previousTree}
+		for i, l := range roster {
+			prev.Users = append(prev.Users, l.UserID)
+			prev.Positions = append(prev.Positions, i)
+		}
+	}
+	return NewEpochCommitWithState(epoch, roster, proposals, committerID, committerSignPriv, committerLeafPriv, prev)
+}
+
+// NewEpochCommitWithState creates a path-updated, signed epoch. When previous is
+// supplied, retained members keep their leaf slots, removed members leave blanks and
+// newcomers fill the lowest free slot, extending the tree if it is full.
+func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
 	next, err := ApplyProposals(roster, proposals)
 	if err != nil {
 		return EpochCommit{}, nil, err
@@ -121,20 +172,77 @@ func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, c
 	if len(next) == 0 {
 		return EpochCommit{}, nil, fmt.Errorf("mls: empty roster")
 	}
-	size := TreeSize(len(next))
+	size := 0
+	prevSlot := map[string]int{}
+	prevPublics := map[int][32]byte{}
+	if previous != nil {
+		size = previous.Size
+		for i, u := range previous.Users {
+			if i < len(previous.Positions) {
+				prevSlot[u] = previous.Positions[i]
+			}
+		}
+		for node, pub := range previous.Publics {
+			prevPublics[node] = pub
+		}
+	}
+	if need := TreeSize(len(next)); size < need {
+		size = need
+	}
 	if size < 2 {
 		size = 2
+	}
+	// Allocate slots: reuse retained members, give newcomers the lowest free index.
+	used := map[int]bool{}
+	positions := make([]int, len(next))
+	for i, l := range next {
+		if idx, ok := prevSlot[l.UserID]; ok && idx >= 0 && idx < size && !used[idx] {
+			positions[i] = idx
+			used[idx] = true
+		} else {
+			positions[i] = -1
+		}
+	}
+	for i := range positions {
+		if positions[i] >= 0 {
+			continue
+		}
+		idx := -1
+		for j := 0; j < size; j++ {
+			if !used[j] {
+				idx = j
+				break
+			}
+		}
+		if idx < 0 {
+			// Grow the tree and place the member in the first slot of the new half.
+			for j := 0; j < size; j++ {
+				used[j] = true
+			}
+			oldSize := size
+			size *= 2
+			idx = oldSize
+		}
+		positions[i] = idx
+		used[idx] = true
+	}
+	tree := &TreeState{Size: size, Publics: prevPublics}
+	for i, l := range next {
+		tree.Users = append(tree.Users, l.UserID)
+		tree.Positions = append(tree.Positions, positions[i])
 	}
 	ci := leafIndex(next, committerID)
 	if ci < 0 {
 		return EpochCommit{}, nil, fmt.Errorf("mls: committer not in roster")
 	}
+	committerNode := size + positions[ci]
+
 	// Fresh secret at the committer's leaf, then a hash chain to the root.
 	leafSecret := make([]byte, 32)
 	if _, err := rand.Read(leafSecret); err != nil {
 		return EpochCommit{}, nil, err
 	}
-	node := size + ci
+	node := committerNode
 	secrets := map[int][]byte{node: leafSecret}
 	publics := map[int][32]byte{}
 	for node > 1 {
@@ -148,39 +256,39 @@ func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, c
 			publics[idx] = clone32(priv.PublicKey().Bytes())
 		}
 	}
-	// Persisted node keys from earlier epochs survive this update off-path.
 	treePublics := map[int][32]byte{}
-	for node, pub := range previousTree {
-		treePublics[node] = pub
+	for n, pub := range prevPublics {
+		treePublics[n] = pub
 	}
-	for node, pub := range publics {
-		treePublics[node] = pub
+	for n, pub := range publics {
+		treePublics[n] = pub
 	}
-	path := &PathChain{CommitterLeaf: size + ci, Publics: publics}
+	tree.Publics = treePublics
+	path := &PathChain{CommitterLeaf: committerNode, Publics: publics}
 	// A self-envelope lets the committer replay its own chain uniformly.
 	if selfEnv, err := sealRoot(leafSecret, next[ci]); err == nil {
-		path.Recipients = append(path.Recipients, PathRecipient{Node: size + ci, UserID: committerID, Envelope: selfEnv})
+		path.Recipients = append(path.Recipients, PathRecipient{Node: committerNode, UserID: committerID, Envelope: selfEnv})
 	}
-	// Encrypt each path node's secret to the resolution of its sibling. Presence is
-	// the member leaves plus persisted node keys; a resolved internal node is
-	// expanded to the members beneath it because client-side node private keys are
-	// not persisted by this implementation.
+
+	// Presence: occupied leaves plus persisted node keys. A resolved internal node
+	// is addressed by node key when its public is known.
 	present := map[int]bool{}
-	for i := range next {
-		present[size+i] = true
+	slotUser := map[int]string{}
+	for i, l := range next {
+		abs := size + positions[i]
+		present[abs] = true
+		slotUser[abs] = l.UserID
 	}
-	for node := range previousTree {
-		present[node] = true
+	for n := range prevPublics {
+		present[n] = true
 	}
-	node = size + ci
+	node = committerNode
 	for node > 1 {
 		parent := node / 2
 		sibling := node ^ 1
 		secret := secrets[parent]
 		seen := map[string]bool{}
 		for _, resNode := range Resolution(sibling, size, present) {
-			// A present internal node is addressed directly when its public key is
-			// known; members beneath it persist the matching private key.
 			if resNode < size {
 				if pub, ok := treePublics[resNode]; ok {
 					env, err := sealNodeKey(secret, resNode, pub)
@@ -191,13 +299,13 @@ func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, c
 					continue
 				}
 			}
-			for _, uid := range resolutionUnder(resNode, size, next) {
+			for _, uid := range membersUnder(resNode, size, slotUser) {
 				if seen[uid] {
 					continue
 				}
 				seen[uid] = true
-				leaf := next[leafIndex(next, uid)]
-				env, err := sealRoot(secret, leaf)
+				i := leafIndex(next, uid)
+				env, err := sealRoot(secret, next[i])
 				if err != nil {
 					return EpochCommit{}, nil, err
 				}
@@ -217,6 +325,7 @@ func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, c
 		Envelopes: map[string]Envelope{}, Committer: committerID}}
 	commit.Path = path
 	commit.Welcome = map[string]Welcome{}
+	commit.Tree = tree
 	commit.TreePublics = treePublics
 	// Existing members derive the root through the path; added members need a
 	// Welcome that binds the root to the commit hash.
@@ -233,7 +342,25 @@ func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, c
 		}
 		commit.Welcome[p.UserID] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), Root: env}
 	}
-	return commit, &Epoch{Epoch: epoch, Root: root, Roster: next, TreePublics: treePublics}, nil
+	return commit, &Epoch{Epoch: epoch, Root: root, Roster: next, TreePublics: treePublics, Tree: tree}, nil
+}
+
+// membersUnder lists the members under an absolute node.
+func membersUnder(node, size int, slotUser map[int]string) []string {
+	var out []string
+	var walk func(int)
+	walk = func(n int) {
+		if n >= size {
+			if uid, ok := slotUser[n]; ok {
+				out = append(out, uid)
+			}
+			return
+		}
+		walk(2 * n)
+		walk(2*n + 1)
+	}
+	walk(node)
+	return out
 }
 
 func clone32(b []byte) (out [32]byte) { copy(out[:], b); return out }

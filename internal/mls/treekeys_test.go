@@ -231,3 +231,79 @@ func TestNodeAddressedEnvelope(t *testing.T) {
 		t.Fatal("newcomer without node keys opened a node-addressed envelope")
 	}
 }
+
+// TestStableLeafSlotsAcrossRemoval proves removal blanks a slot instead of
+// compacting: the tree size is unchanged, a retained member keeps its index and its
+// persisted node key still opens a node-addressed envelope, while the removed member
+// (under a different subtree) cannot derive the new root.
+func TestStableLeafSlotsAcrossRemoval(t *testing.T) {
+	a := newMember(t, "sa")
+	b := newMember(t, "sb")
+	c := newMember(t, "sc")
+	roster := []Leaf{a.leaf(), b.leaf(), c.leaf()}
+	signKeys := map[string]ed25519.PublicKey{a.id: a.signK, b.id: b.signK, c.id: c.signK}
+
+	commit1, epoch1, err := NewEpochCommit(1, roster, nil, c.id, c.signP, c.priv)
+	if err != nil {
+		t.Fatalf("epoch1: %v", err)
+	}
+	if commit1.Tree == nil || commit1.Tree.Size != 4 {
+		t.Fatalf("epoch1 tree: %+v", commit1.Tree)
+	}
+	_, bKeys, err := DerivePathRootWithKeys(commit1, b.id, b.priv, nil)
+	if err != nil {
+		t.Fatalf("b epoch1: %v", err)
+	}
+	cRoot, cKeys, err := DerivePathRootWithKeys(commit1, c.id, c.priv, nil)
+	if err != nil || !bytes.Equal(cRoot, epoch1.Root) {
+		t.Fatalf("c epoch1: root ok=%v err=%v", bytes.Equal(cRoot, epoch1.Root), err)
+	}
+	if _, ok := cKeys[3]; !ok {
+		t.Fatal("c did not persist node 3")
+	}
+
+	// Remove b; the tree must stay size 4 with c still in slot 2.
+	commit2, epoch2, err := NewEpochCommitWithState(2, roster,
+		[]Proposal{{Type: "remove", UserID: b.id}}, a.id, a.signP, a.priv, epoch1.Tree)
+	if err != nil {
+		t.Fatalf("epoch2: %v", err)
+	}
+	if err := VerifyEpochCommit(commit2, roster, signKeys); err != nil {
+		t.Fatalf("epoch2 verify: %v", err)
+	}
+	if commit2.Tree.Size != 4 {
+		t.Fatalf("tree shrank on removal: size %d", commit2.Tree.Size)
+	}
+	if slot := commit2.Tree.SlotFor(c.id); slot != 2 {
+		t.Fatalf("c slot = %d, want 2", slot)
+	}
+	if slot := commit2.Tree.SlotFor(b.id); slot != -1 {
+		t.Fatalf("removed member still has a slot: %d", slot)
+	}
+
+	nodeAddressed := 0
+	for _, r := range commit2.Path.Recipients {
+		if r.TargetNode == 3 && r.UserID == "" {
+			nodeAddressed++
+		}
+	}
+	if nodeAddressed == 0 {
+		t.Fatalf("no node-addressed envelope: %+v", commit2.Path.Recipients)
+	}
+
+	aRoot, _, err := DerivePathRootWithKeys(commit2, a.id, a.priv, nil)
+	if err != nil || !bytes.Equal(aRoot, epoch2.Root) {
+		t.Fatalf("a epoch2: %v", err)
+	}
+	cRoot2, cKeys2, err := DerivePathRootWithKeys(commit2, c.id, c.priv, cKeys)
+	if err != nil || !bytes.Equal(cRoot2, epoch2.Root) {
+		t.Fatalf("c epoch2 via persisted node key: %v", err)
+	}
+	if _, ok := cKeys2[1]; !ok {
+		t.Fatal("c did not learn the new root key")
+	}
+	// b sat under node 2, which is not node-addressed, and has no leaf envelope.
+	if _, _, err := DerivePathRootWithKeys(commit2, b.id, b.priv, bKeys); err == nil {
+		t.Fatal("removed member derived the epoch-2 root")
+	}
+}

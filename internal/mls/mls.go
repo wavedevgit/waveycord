@@ -63,6 +63,7 @@ type Commit struct {
 	ProposalRefs     []string            `json:"proposal_refs"`
 	ProposalMessages []ProposalMessage   `json:"proposal_messages,omitempty"`
 	TreePublics      map[int][32]byte    `json:"tree_publics,omitempty"`
+	Tree             *TreeState          `json:"tree,omitempty"`
 	Roster           []Leaf              `json:"roster"`
 	Proposals        []Proposal          `json:"proposals"`
 	Envelopes        map[string]Envelope `json:"envelopes"`
@@ -78,6 +79,8 @@ type Epoch struct {
 	// TreePublics carries node public keys across epochs so later path updates can
 	// address a node resolution instead of re-deriving every key.
 	TreePublics map[int][32]byte
+	// Tree is the persisted leaf layout for this epoch.
+	Tree *TreeState
 }
 
 const (
@@ -147,12 +150,13 @@ func canonical(c Commit) []byte {
 		ProposalRefs     []string            `json:"proposal_refs"`
 		ProposalMessages []ProposalMessage   `json:"proposal_messages,omitempty"`
 		TreePublics      map[int][32]byte    `json:"tree_publics,omitempty"`
+		Tree             *TreeState          `json:"tree,omitempty"`
 		Roster           []Leaf              `json:"roster"`
 		Proposals        []Proposal          `json:"proposals"`
 		Envelopes        map[string]Envelope `json:"envelopes"`
 		Committer        string              `json:"committer"`
 	}
-	raw, _ := json.Marshal(canon{c.Epoch, c.CipherSuite, c.ProposalRefs, c.ProposalMessages, c.TreePublics, c.Roster, c.Proposals, c.Envelopes, c.Committer})
+	raw, _ := json.Marshal(canon{c.Epoch, c.CipherSuite, c.ProposalRefs, c.ProposalMessages, c.TreePublics, c.Tree, c.Roster, c.Proposals, c.Envelopes, c.Committer})
 	return raw
 }
 
