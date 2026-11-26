@@ -285,6 +285,10 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 			publics[idx] = clone32(priv.PublicKey().Bytes())
 		}
 	}
+	committerPath := map[int]bool{}
+	for idx := range secrets {
+		committerPath[idx] = true
+	}
 	treePublics := map[int][32]byte{}
 	for n, pub := range prevPublics {
 		treePublics[n] = pub
@@ -352,6 +356,16 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 			}
 			n = parent
 		}
+		// The newcomer derives the root through the nearest committer-path ancestor:
+		// that secret is chained upward by KDF, so no root envelope is needed.
+		anchor := 1
+		for n := size + positions[i]; n > 1; n /= 2 {
+			if committerPath[n/2] {
+				anchor = n / 2
+				break
+			}
+		}
+		keys[anchor] = append([]byte(nil), secrets[anchor]...)
 		newcomerSecrets[uid] = keys
 	}
 
@@ -413,6 +427,13 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 			}
 			rekeyed[n] = true
 			tree.Publics = treePublics
+			anchor := 1
+			for x := n; x > 1; x /= 2 {
+				if committerPath[x/2] {
+					anchor = x / 2
+					break
+				}
+			}
 			for _, uid := range membersUnder(n, size, slotUser) {
 				i := leafIndex(next, uid)
 				env, err := sealRoot(fresh, next[i])
@@ -420,6 +441,13 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 					return EpochCommit{}, nil, err
 				}
 				path.Recipients = append(path.Recipients, PathRecipient{Node: n, UserID: uid, Envelope: env})
+				if anchor != n {
+					aenv, err := sealRoot(secrets[anchor], next[i])
+					if err != nil {
+						return EpochCommit{}, nil, err
+					}
+					path.Recipients = append(path.Recipients, PathRecipient{Node: anchor, UserID: uid, Envelope: aenv})
+				}
 			}
 		}
 		present[n] = true
@@ -457,18 +485,6 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 		node = parent
 	}
 	root := secrets[1]
-	// Members whose branch was rekeyed get the root directly as well: their fresh
-	// node secret does not chain into the committer's independently chosen ancestors.
-	for n := range rekeyed {
-		for _, uid := range membersUnder(n, size, slotUser) {
-			i := leafIndex(next, uid)
-			env, err := sealRoot(root, next[i])
-			if err != nil {
-				return EpochCommit{}, nil, err
-			}
-			path.Recipients = append(path.Recipients, PathRecipient{Node: 1, UserID: uid, Envelope: env})
-		}
-	}
 	// Re-seal any node-addressed envelope whose target was reissued above, so the
 	// fresh public key is the one on the wire.
 	for idx := range path.Recipients {
@@ -656,6 +672,19 @@ func DerivePathRootWithKeys(c EpochCommit, userID string, priv [32]byte, nodePri
 		if key, ok := keyFor(r.TargetNode); ok {
 			if secret, err := openNodeKey(r.Envelope, r.TargetNode, key); err == nil {
 				opened[r.Node] = secret
+			}
+		}
+	}
+	// Node keys the member already holds are usable only if they sit on its own
+	// ancestor chain, so a removed member's stale branch key cannot seed a derivation.
+	if c.Tree != nil && len(nodePrivs) > 0 {
+		if slot := c.Tree.SlotFor(userID); slot >= 0 {
+			for n := c.Tree.Size + slot; n > 0; n /= 2 {
+				if key, ok := nodePrivs[n]; ok {
+					if _, have := opened[n]; !have {
+						opened[n] = key
+					}
+				}
 			}
 		}
 	}

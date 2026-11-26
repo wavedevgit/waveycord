@@ -515,3 +515,62 @@ func TestWelcomeGroupInfoFraming(t *testing.T) {
 	}
 	_ = signKeys
 }
+
+// TestNewcomerAncestorChainDerivation proves a newcomer under the committer's subtree
+// receives the nearest committer-path ancestor secret and derives the root by KDF,
+// without a root secret in the Welcome.
+func TestNewcomerAncestorChainDerivation(t *testing.T) {
+	a := newMember(t, "cca")
+	b := newMember(t, "ccb")
+	x := newMember(t, "ccx")
+	y := newMember(t, "ccy")
+	roster := []Leaf{a.leaf(), x.leaf(), y.leaf()}
+	signKeys := map[string]ed25519.PublicKey{a.id: a.signK, b.id: b.signK, x.id: x.signK, y.id: y.signK}
+
+	base, _, err := NewEpochCommit(1, roster, nil, a.id, a.signP, a.priv)
+	if err != nil {
+		t.Fatalf("epoch1: %v", err)
+	}
+	// Free the slot beside a, then add b there so the newcomer's nearest
+	// committer-path ancestor is the internal node 2, not the root.
+	removed, _, err := NewEpochCommitWithState(2, roster,
+		[]Proposal{{Type: "remove", UserID: x.id}}, a.id, a.signP, a.priv, base.Tree)
+	if err != nil {
+		t.Fatalf("epoch2: %v", err)
+	}
+	commit, epoch, err := NewEpochCommitWithState(3, removed.Roster,
+		[]Proposal{{Type: "add", UserID: b.id, Public: b.pub}}, a.id, a.signP, a.priv, removed.Tree)
+	if err != nil {
+		t.Fatalf("epoch3: %v", err)
+	}
+	if err := VerifyEpochCommit(commit, removed.Roster, signKeys); err != nil {
+		t.Fatalf("epoch3 verify: %v", err)
+	}
+	root, keys, err := DecryptWelcomeTree(commit, b.id, b.priv)
+	if err != nil || !bytes.Equal(root, epoch.Root) {
+		t.Fatalf("welcome: %v", err)
+	}
+	// b sits beside a under node 2; its nearest committer-path ancestor is node 2.
+	if _, ok := keys[2]; !ok {
+		t.Fatalf("welcome did not carry the ancestor secret for node 2: %v", keys)
+	}
+	if _, ok := keys[1]; ok {
+		t.Fatal("welcome carried a root secret instead of the ancestor chain")
+	}
+	if bytes.Equal(keys[2], epoch.Root) {
+		t.Fatal("ancestor secret equals the root; no chain derivation happened")
+	}
+	// The root is the labeled child of the ancestor secret.
+	if !bytes.Equal(pathNodeSecret(keys[2]), epoch.Root) {
+		t.Fatal("root is not derived from the ancestor secret")
+	}
+	derived, _, err := DerivePathRootWithKeys(commit, b.id, b.priv, keys)
+	if err != nil || !bytes.Equal(derived, epoch.Root) {
+		t.Fatalf("chain derivation: %v", err)
+	}
+	// The newcomer also sits in the resolution of the committer's path, so a leaf
+	// envelope for the same ancestor secret is expected.
+	if _, _, err := DerivePathRootWithKeys(commit, b.id, b.priv, nil); err != nil {
+		t.Fatalf("leaf envelope for the newcomer: %v", err)
+	}
+}
