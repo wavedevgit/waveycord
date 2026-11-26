@@ -48,10 +48,15 @@ type Store struct {
 	// Durable queue state.
 	queueMu      sync.Mutex
 	durableQueue bool
+	// pgDSN is kept for the dedicated LISTEN connection; it is never logged.
+	pgDSN string
 }
 
 // SetSearchIndex installs the search service.
 func (s *Store) SetSearchIndex(ix search.Index) { s.Search = ix }
+
+// SetPostgresDSN records the DSN used for the dedicated LISTEN connection.
+func (s *Store) SetPostgresDSN(dsn string) { s.pgDSN = dsn }
 
 // SetReadReplica enables read/write splitting for message scans.
 func (s *Store) SetReadReplica(db *sqlx.DB) { s.ReadDB = db }

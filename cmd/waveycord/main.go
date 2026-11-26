@@ -105,8 +105,16 @@ func main() {
 	}
 	if os.Getenv("WAVEYCORD_SEARCH_QUEUE") == "1" {
 		st.SetDurableSearchQueue(true)
-		go st.RunSearchQueue(context.Background(), time.Second, 200)
-		log.Info("search indexing via durable queue")
+		st.SetPostgresDSN(dsn)
+		// Postgres gets an immediate wake-up over a dedicated LISTEN connection;
+		// other dialects fall back to polling.
+		if wake, err := st.ListenSearchQueue(context.Background()); err == nil {
+			go st.RunSearchQueueWithWake(context.Background(), wake, 30*time.Second, 200)
+			log.Info("search indexing via durable queue", "wake", "listen")
+		} else {
+			go st.RunSearchQueue(context.Background(), time.Second, 200)
+			log.Info("search indexing via durable queue", "wake", "poll")
+		}
 	}
 	if mode := os.Getenv("WAVEYCORD_SEARCH_REINDEX"); mode != "" {
 		go func() {

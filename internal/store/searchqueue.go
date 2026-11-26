@@ -5,7 +5,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/wavedevgit/waveycord/internal/search"
+	"github.com/wavedevgit/waveycord/internal/sqlx"
 )
 
 // Durable search indexing queue. Message writes append a row instead of calling the
@@ -184,4 +187,92 @@ func (s *Store) queueDelete(messageID string) bool {
 	}
 	_ = s.enqueueSearch(SearchJob{Op: SearchOpDelete, MessageID: messageID})
 	return true
+}
+
+// ErrListenUnsupported is returned when the wake-up listener is requested on a
+// non-Postgres handle.
+var ErrListenUnsupported = errors.New("store: LISTEN requires postgres")
+
+// ListenSearchQueue opens a dedicated connection, issues LISTEN, and signals the
+// returned channel on each notification. The connection is closed when ctx ends, so
+// the listener never shares the pooled writer. Notifications are hints only: the
+// durable queue row is the guarantee, and a missed notification costs one poll
+// interval.
+func (s *Store) ListenSearchQueue(ctx context.Context) (<-chan struct{}, error) {
+	if s.DB.Dialect != sqlx.Postgres {
+		return nil, ErrListenUnsupported
+	}
+	if s.pgDSN == "" {
+		return nil, errors.New("store: postgres dsn not set for LISTEN")
+	}
+	conn, err := pgx.Connect(ctx, s.pgDSN)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.Exec(ctx, `LISTEN waveycord_search`); err != nil {
+		_ = conn.Close(ctx)
+		return nil, err
+	}
+	ch := make(chan struct{}, 1)
+	go func() {
+		defer close(ch)
+		defer conn.Close(context.Background())
+		for {
+			if _, err := conn.WaitForNotification(ctx); err != nil {
+				return
+			}
+			select {
+			case ch <- struct{}{}:
+			default:
+				// A wake-up is already pending; coalescing is fine.
+			}
+		}
+	}()
+	return ch, nil
+}
+
+// RunSearchQueueWithWake drains the queue on every notification and on the poll
+// interval, whichever comes first.
+func (s *Store) RunSearchQueueWithWake(ctx context.Context, wake <-chan struct{}, interval time.Duration, batch int) {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	drain := func() bool {
+		if _, err := s.ProcessSearchQueue(ctx, batch); err != nil && ctx.Err() != nil {
+			return false
+		}
+		return true
+	}
+	if !drain() {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-wake:
+			if !ok {
+				// Listener stopped; fall back to polling until ctx ends.
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if !drain() {
+							return
+						}
+					}
+				}
+			}
+			if !drain() {
+				return
+			}
+		case <-ticker.C:
+			if !drain() {
+				return
+			}
+		}
+	}
 }

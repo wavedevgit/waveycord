@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,4 +243,102 @@ func TestDurableSearchQueuePostgres(t *testing.T) {
 	if got := idx.count(guild.ID); got != 0 {
 		t.Fatalf("delete left %d docs", got)
 	}
+}
+
+// TestListenSearchQueueRejectsSQLite proves the wake-up listener is Postgres-only.
+func TestListenSearchQueueRejectsSQLite(t *testing.T) {
+	handle, err := db.Open(filepath.Join(t.TempDir(), "listen.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Close()
+	st := store.New(handle)
+	if _, err := st.ListenSearchQueue(context.Background()); !errors.Is(err, store.ErrListenUnsupported) {
+		t.Fatalf("listen on sqlite err = %v", err)
+	}
+}
+
+// TestSearchQueueListenWakes proves a Postgres notification drains the queue without
+// waiting for the poll interval: the runner uses a one-hour tick and still indexes
+// the new message promptly.
+func TestSearchQueueListenWakes(t *testing.T) {
+	base := os.Getenv("WAVEYCORD_TEST_DSN")
+	if !strings.HasPrefix(base, "postgres") {
+		t.Skip("set WAVEYCORD_TEST_DSN to a postgres URL to run")
+	}
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatal(err)
+	}
+	schema := "wc_l_" + hex.EncodeToString(suffix)
+	admin, err := sql.Open("pgx", base)
+	if err != nil {
+		t.Fatalf("admin: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(`CREATE SCHEMA ` + schema); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	defer admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	scoped := base + sep + "search_path=" + schema
+	handle, err := db.Open(scoped)
+	if err != nil {
+		t.Fatalf("open scoped db: %v", err)
+	}
+	defer handle.Close()
+
+	st := store.New(handle)
+	st.SetPostgresDSN(scoped)
+	idx := newCountingIndex()
+	st.SetSearchIndex(idx)
+	st.SetDurableSearchQueue(true)
+
+	user, err := st.CreateUser(store.CreateUserParams{
+		Username: "listenuser", Email: strPtr("listen@example.test"), PasswordHash: "x",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guild, err := st.CreateGuild(user.ID, store.CreateGuildParams{Name: "Listen Guild"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "chat"
+	channel, err := st.CreateChannel(guild.ID, store.CreateChannelParams{Name: &name})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wake, err := st.ListenSearchQueue(ctx)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go st.RunSearchQueueWithWake(ctx, wake, time.Hour, 50)
+
+	msg, err := st.CreateMessage(store.CreateMessageParams{
+		ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "notify me",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		idx.mu.Lock()
+		_, ok := idx.docs[guild.ID][msg.ID]
+		idx.mu.Unlock()
+		if ok {
+			if n, _ := st.SearchQueueLen(); n != 0 {
+				t.Fatalf("queue not drained after wake: %d", n)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("notification never woke the queue worker")
 }

@@ -145,6 +145,7 @@ synthesise and none is fabricated.
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | BFG reindex-on-threshold: drifted large guild reset and rebuilt alone (`WAVEYCORD_SEARCH_BFG_THRESHOLD`, `_DRIFT`, `_EVERY`) | implemented + tested |
 | Durable indexing queue: message writes enqueued, worker drains with retry (`WAVEYCORD_SEARCH_QUEUE=1`) | implemented + tested |
+| Postgres `LISTEN` wake-up on a dedicated connection; poll interval as fallback | implemented + tested |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
 | Poll viewer-relative `me_voted`; expiry sweep finalizes, freezes the tally and pushes per-viewer `MESSAGE_UPDATE` | implemented + tested |
 | Components v2: container/section/text/media/file/separator validation under flag `1<<15` | implemented + tested |
@@ -424,11 +425,14 @@ Remaining differences from Discord's published design:
   wake-up hint, but the durable table is the guarantee and the worker polls; the
   delete path uses the same queue. Tested on SQLite and on an isolated Postgres schema
   for inline-bypass, drain/ack, edit collapse, injected failure and retry, delete jobs
-  and the background runner.
-- Still absent: index-size automation, and the wake-up signal is not consumed with a
-  dedicated LISTEN connection (workers poll), so cross-instance wake-up latency is
-  bounded by the poll interval rather than immediate; the BFG rebuild remains a
-  bounded per-guild scan, not a distributed migration.
+  and the background runner. On Postgres a dedicated `LISTEN waveycord_search`
+  connection (its own `pgx` connection, never a pooled writer) wakes the worker
+  immediately; the poll interval is the fallback and the durable row remains the
+  guarantee, so a missed notification costs one poll.
+- Still absent: index-size automation. The LISTEN connection is per instance and
+  carries no payload, so a wake-up is coalesced and only tells the worker to poll the
+  durable table; the BFG rebuild remains a bounded per-guild scan, not a distributed
+  migration.
 
 ## Components v2
 

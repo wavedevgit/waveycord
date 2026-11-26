@@ -26,6 +26,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Multi-cell search routing and cell isolation | `TestMultiCellRouting` (two fake clusters) |
 | BFG drift policy, per-guild ES count/reset, background rebuild trigger | `TestBFGPolicy`, `TestESGuildCountAndReset`, `TestBFGMaintainGuildRebuildsDriftedIndex`, `TestBFGWriteTrigger` |
 | Durable search queue: enqueue-only writes, drain/ack, retry, deletes, runner (SQLite + Postgres) | `TestDurableSearchQueue`, `TestDurableSearchQueuePostgres` |
+| LISTEN wake-up (dedicated pgx connection), immediate drain, SQLite rejection | `TestSearchQueueListenWakes`, `TestListenSearchQueueRejectsSQLite` |
 | Voice gateway, UDP discovery, RTP fanout, jitter/PLC, Opus mixing, AEAD, MLS-style epochs | `TestVoice*` |
 | Host-only voice endpoint advertised; root upgrade path connects | `TestVoiceHostOnlyEndpoint` |
 | Opaque group-media reorder, dedupe and gap release (local) | `TestVoiceOpaqueJitter` |
