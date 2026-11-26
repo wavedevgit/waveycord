@@ -152,7 +152,7 @@ func (v *VoiceServer) DeliverRTP(channelID string, packet []byte) {
 
 // publishE2EEKey announces a member's static media key to the channel and other
 // instances.
-func (v *VoiceServer) publishE2EEKey(userID string, pub [32]byte) {
+func (v *VoiceServer) publishE2EEKey(userID string, pub [32]byte, signingKey string) {
 	channel := ""
 	v.mu.Lock()
 	var self *voiceConn
@@ -183,27 +183,28 @@ func (v *VoiceServer) publishE2EEKey(userID string, pub [32]byte) {
 	encoded := encodeKey(pub)
 	for _, c := range targets {
 		c.send(map[string]any{"op": 34, "d": map[string]any{
-			"user_id": userID, "public_key": encoded,
+			"user_id": userID, "public_key": encoded, "signing_key": signingKey,
 		}})
 	}
 	for _, peer := range peers {
 		peer.mu.Lock()
-		peerPub, peerID := peer.e2eePub, peer.userID
+		peerPub, peerID, peerSign := peer.e2eePub, peer.userID, peer.e2eeSign
 		peer.mu.Unlock()
 		self.send(map[string]any{"op": 34, "d": map[string]any{
-			"user_id": peerID, "public_key": encodeKey(peerPub),
+			"user_id": peerID, "public_key": encodeKey(peerPub), "signing_key": peerSign,
 		}})
 	}
 	if v.publish != nil {
 		v.publish("VOICE_E2EE_PUBLISH", map[string]any{
 			"channel_id": channel, "user_id": userID, "public_key": encoded,
+			"signing_key": signingKey,
 		})
 	}
 }
 
 // DeliverE2EEKey publishes a member key announcement received from another
 // instance to local peers.
-func (v *VoiceServer) DeliverE2EEKey(channelID, userID, publicKey string) {
+func (v *VoiceServer) DeliverE2EEKey(channelID, userID, publicKey, signingKey string) {
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for c := range v.conns {
@@ -214,7 +215,7 @@ func (v *VoiceServer) DeliverE2EEKey(channelID, userID, publicKey string) {
 	v.mu.Unlock()
 	for _, c := range targets {
 		c.send(map[string]any{"op": 34, "d": map[string]any{
-			"user_id": userID, "public_key": publicKey,
+			"user_id": userID, "public_key": publicKey, "signing_key": signingKey,
 		}})
 	}
 }
@@ -287,20 +288,21 @@ func (v *VoiceServer) MemberChanged(channelID, userID, reason string) {
 	}
 	v.mu.Unlock()
 	epoch := time.Now().UnixMilli()
+	members := v.roster(channelID)
 	for _, c := range targets {
 		c.send(map[string]any{"op": 36, "d": map[string]any{
-			"channel_id": channelID, "epoch": epoch, "reason": reason,
+			"channel_id": channelID, "epoch": epoch, "reason": reason, "members": members,
 		}})
 	}
 	if v.publish != nil {
 		v.publish("VOICE_E2EE_REKEY", map[string]any{
-			"channel_id": channelID, "epoch": epoch, "reason": reason,
+			"channel_id": channelID, "epoch": epoch, "reason": reason, "members": members,
 		})
 	}
 }
 
 // DeliverE2EERekey forwards a rekey signal received from another instance.
-func (v *VoiceServer) DeliverE2EERekey(channelID string, epoch int64, reason string) {
+func (v *VoiceServer) DeliverE2EERekey(channelID string, epoch int64, reason string, members []string) {
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for c := range v.conns {
@@ -311,7 +313,67 @@ func (v *VoiceServer) DeliverE2EERekey(channelID string, epoch int64, reason str
 	v.mu.Unlock()
 	for _, c := range targets {
 		c.send(map[string]any{"op": 36, "d": map[string]any{
-			"channel_id": channelID, "epoch": epoch, "reason": reason,
+			"channel_id": channelID, "epoch": epoch, "reason": reason, "members": members,
+		}})
+	}
+}
+
+// roster lists the guild voice members in a channel from the shared database.
+func (v *VoiceServer) roster(channelID string) []string {
+	if v.store == nil {
+		return []string{}
+	}
+	states, err := v.store.VoiceStatesForChannel(channelID)
+	if err != nil {
+		return []string{}
+	}
+	ids := make([]string, 0, len(states))
+	for _, st := range states {
+		ids = append(ids, st.UserID)
+	}
+	for i := 1; i < len(ids); i++ {
+		for j := i; j > 0 && ids[j] < ids[j-1]; j-- {
+			ids[j], ids[j-1] = ids[j-1], ids[j]
+		}
+	}
+	return ids
+}
+
+// relayCommit broadcasts a signed MLS commit to channel peers and other instances.
+func (v *VoiceServer) relayCommit(channelID, sender string, commit json.RawMessage) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID && c.userID != sender {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": 38, "d": map[string]any{
+			"from_user_id": sender, "commit": commit,
+		}})
+	}
+	if v.publish != nil {
+		v.publish("VOICE_MLS_COMMIT", map[string]any{
+			"channel_id": channelID, "from_user_id": sender, "commit": commit,
+		})
+	}
+}
+
+// DeliverMLSCommit forwards a commit received from another instance.
+func (v *VoiceServer) DeliverMLSCommit(channelID, sender string, commit json.RawMessage) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID && c.userID != sender {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		c.send(map[string]any{"op": 38, "d": map[string]any{
+			"from_user_id": sender, "commit": commit,
 		}})
 	}
 }
@@ -816,6 +878,7 @@ type voiceConn struct {
 	codec       voicecodec.Codec
 	jitter      *jitterState
 	e2eePub     [32]byte
+	e2eeSign    string
 	hasE2EE     bool
 	closed      bool
 	done        chan struct{}
@@ -1024,7 +1087,8 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			}})
 		case 34: // E2EE_PUBLISH: member static media key for pairwise wraps
 			var ex struct {
-				PublicKey string `json:"public_key"`
+				PublicKey  string `json:"public_key"`
+				SigningKey string `json:"signing_key"`
 			}
 			if err := json.Unmarshal(frame.D, &ex); err != nil {
 				c.close(voiceCloseUnknownOpcode, "Invalid e2ee key")
@@ -1037,10 +1101,11 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			}
 			c.mu.Lock()
 			c.e2eePub = pub
+			c.e2eeSign = ex.SigningKey
 			c.hasE2EE = true
 			userID := c.userID
 			c.mu.Unlock()
-			v.publishE2EEKey(userID, pub)
+			v.publishE2EEKey(userID, pub, ex.SigningKey)
 		case 35: // E2EE_KEY: wrapped key or epoch contribution relayed between members
 			var ex struct {
 				RecipientUserID string `json:"recipient_user_id"`
@@ -1060,6 +1125,20 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				continue
 			}
 			v.relayE2EEKey(channel, sender, ex.RecipientUserID, ex.KeyID, ex.Wrapped, ex.Kind)
+		case 38: // MLS_COMMIT: signed roster commit relayed to channel members
+			var commit json.RawMessage
+			if len(frame.D) == 0 || json.Unmarshal(frame.D, &commit) != nil {
+				c.close(voiceCloseUnknownOpcode, "Invalid commit")
+				return
+			}
+			c.mu.Lock()
+			sender := c.userID
+			channel := c.channelID
+			c.mu.Unlock()
+			if channel == "" {
+				continue
+			}
+			v.relayCommit(channel, sender, commit)
 		case voiceOpHeartbeat:
 			c.send(map[string]any{"op": voiceOpHeartbeatAck, "d": map[string]any{"t": time.Now().UnixMilli()}})
 		case voiceOpSpeaking:

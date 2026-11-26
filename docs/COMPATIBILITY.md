@@ -94,6 +94,7 @@ route is not registered yet.
 | Epoch rekey signal on voice join/leave (op 36, local + cross-instance) | implemented + tested |
 | Epoch rotation excluding departed members; stale-epoch rejection | implemented + tested |
 | Joint epoch secret from per-member contributions (TreeKEM-style) | implemented + tested |
+| Signed roster commit (op 38) + tree-derived epoch secret | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
 

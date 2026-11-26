@@ -128,12 +128,13 @@ func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
 		}
 	case "VOICE_E2EE_PUBLISH":
 		var ev struct {
-			ChannelID string `json:"channel_id"`
-			UserID    string `json:"user_id"`
-			PublicKey string `json:"public_key"`
+			ChannelID  string `json:"channel_id"`
+			UserID     string `json:"user_id"`
+			PublicKey  string `json:"public_key"`
+			SigningKey string `json:"signing_key"`
 		}
 		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
-			s.voice.DeliverE2EEKey(ev.ChannelID, ev.UserID, ev.PublicKey)
+			s.voice.DeliverE2EEKey(ev.ChannelID, ev.UserID, ev.PublicKey, ev.SigningKey)
 		}
 	case "VOICE_E2EE_KEY":
 		var ev struct {
@@ -149,12 +150,22 @@ func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
 		}
 	case "VOICE_E2EE_REKEY":
 		var ev struct {
-			ChannelID string `json:"channel_id"`
-			Epoch     int64  `json:"epoch"`
-			Reason    string `json:"reason"`
+			ChannelID string   `json:"channel_id"`
+			Epoch     int64    `json:"epoch"`
+			Reason    string   `json:"reason"`
+			Members   []string `json:"members"`
 		}
 		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
-			s.voice.DeliverE2EERekey(ev.ChannelID, ev.Epoch, ev.Reason)
+			s.voice.DeliverE2EERekey(ev.ChannelID, ev.Epoch, ev.Reason, ev.Members)
+		}
+	case "VOICE_MLS_COMMIT":
+		var ev struct {
+			ChannelID  string          `json:"channel_id"`
+			FromUserID string          `json:"from_user_id"`
+			Commit     json.RawMessage `json:"commit"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			s.voice.DeliverMLSCommit(ev.ChannelID, ev.FromUserID, ev.Commit)
 		}
 	case "VOICE_RTP":
 		var ev struct {
