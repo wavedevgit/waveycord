@@ -167,6 +167,7 @@ rejected.
 | Guild command variants at `/applications/{id}/guilds/{guild.id}/commands` | implemented + tested |
 | `GET /applications/{app.id}/guilds/{guild.id}/commands/permissions` | implemented + tested |
 | `GET/PUT .../commands/{command.id}/permissions` | implemented + tested |
+| Command permission enforcement at interaction dispatch | implemented + tested |
 | `verify_key` registration through `PATCH /applications/{id}` | implemented + tested |
 | Interaction type 3 (message component) callback + payload validation | implemented + tested |
 | Interaction type 5 (modal submit) callback + submitted-field parsing | implemented + tested |
@@ -205,8 +206,13 @@ against the registered registry.
 
 Command permissions are stored per guild and command with role/user/channel
 overrides (types 1/2/3), validated against guild membership, and returned in the
-documented shape. They are not yet enforced during invocation dispatch; that is a
-recorded gap, not a claim.
+documented shape. They are enforced at dispatch: a user-specific overwrite wins
+outright; a matching channel or role deny blocks; otherwise a matching allow grants
+access; an allowlist with no match denies. With no overwrites,
+`default_member_permissions` is checked against guild permissions. Guild owners and
+administrators bypass overrides. Denials return an ephemeral type-4 callback
+(`flags: 64`). Tested across owner, role-holder, explicit user deny, no-match,
+channel deny and default-permission cases.
 
 Slack delivery maps `text` to message content; GitHub delivery summarises
 `X-GitHub-Event` with action, repository and sender when present. Both support

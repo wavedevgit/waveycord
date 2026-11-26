@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wavedevgit/waveycord/internal/perm"
 	"github.com/wavedevgit/waveycord/internal/store"
 )
 
@@ -22,7 +23,15 @@ type interactionPayload struct {
 	ApplicationID string  `json:"application_id"`
 	GuildID       *string `json:"guild_id"`
 	ChannelID     *string `json:"channel_id"`
-	Data          struct {
+	Member        *struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	} `json:"member"`
+	User *struct {
+		ID string `json:"id"`
+	} `json:"user"`
+	Data struct {
 		ID      string          `json:"id"`
 		Name    string          `json:"name"`
 		Type    int             `json:"type"`
@@ -208,11 +217,118 @@ func (s *Server) dispatchInteraction(c *Ctx, app store.Application, payload inte
 		c.JSONStatus(400, map[string]any{"code": 50035, "message": "Invalid Form Body"})
 		return
 	}
+	if !s.commandAllowed(cmd, app, payload) {
+		denied := interactionMessage("You do not have permission to use this command.")
+		denied.Data["flags"] = 64
+		c.JSON(denied)
+		return
+	}
 	options := payload.Data.Options
 	if len(options) == 0 {
 		options = cmd.Options
 	}
 	c.JSON(dispatchCommand(cmd, options))
+}
+
+// commandAllowed applies application command permissions and the command's
+// default_member_permissions. Guild owners and administrators bypass overrides.
+func (s *Server) commandAllowed(cmd store.ApplicationCommand, app store.Application, payload interactionPayload) bool {
+	guildID := ""
+	if payload.GuildID != nil {
+		guildID = *payload.GuildID
+	}
+	userID := ""
+	if payload.Member != nil {
+		userID = payload.Member.User.ID
+	} else if payload.User != nil {
+		userID = payload.User.ID
+	}
+	hasOverrides := false
+	if guildID != "" {
+		perms, err := s.Store.CommandPermissionsFor(app.ID, guildID, cmd.ID)
+		if err == nil && len(perms.Permissions) > 0 {
+			hasOverrides = true
+			if userID == "" {
+				return false
+			}
+			g, err := s.Store.Guild(guildID)
+			if err != nil {
+				return false
+			}
+			if g.OwnerID == userID {
+				return true
+			}
+			member, err := s.Store.Member(guildID, userID)
+			if err != nil {
+				return false
+			}
+			have, _ := s.Store.BasePermissions(guildID, userID)
+			if have&perm.Administrator != 0 {
+				return true
+			}
+			channelID := ""
+			if payload.ChannelID != nil {
+				channelID = *payload.ChannelID
+			}
+			// User-specific overwrites win outright.
+			for _, e := range perms.Permissions {
+				if e.Type == 2 && e.ID == userID {
+					return e.Permission
+				}
+			}
+			// A matching channel or role deny blocks the command.
+			for _, e := range perms.Permissions {
+				if e.Permission {
+					continue
+				}
+				if e.Type == 3 && e.ID == channelID {
+					return false
+				}
+				if e.Type == 1 && containsString(member.Roles, e.ID) {
+					return false
+				}
+			}
+			// Otherwise any matching allow grants access; an allowlist with no
+			// match denies.
+			for _, e := range perms.Permissions {
+				if !e.Permission {
+					continue
+				}
+				if e.Type == 3 && e.ID == channelID {
+					return true
+				}
+				if e.Type == 1 && containsString(member.Roles, e.ID) {
+					return true
+				}
+			}
+			if hasOverrides {
+				return false
+			}
+		}
+	}
+	// No overrides: fall back to default_member_permissions when present.
+	if cmd.DefaultMemberPermissions != nil && *cmd.DefaultMemberPermissions != "" && guildID != "" && userID != "" {
+		want, err := perm.Parse(*cmd.DefaultMemberPermissions)
+		if err == nil && want != 0 {
+			have, err := s.guildPermissions(userID, guildID)
+			if err != nil {
+				return false
+			}
+			if !perm.Has(have, want) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 func absDuration(d time.Duration) time.Duration {
