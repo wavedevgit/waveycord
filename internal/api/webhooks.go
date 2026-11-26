@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/wavedevgit/waveycord/internal/model"
 	"github.com/wavedevgit/waveycord/internal/perm"
@@ -160,6 +161,51 @@ func (s *Server) handleDeleteWebhook(c *Ctx) {
 	c.NoContent()
 }
 
+// webhookTarget resolves ?thread_id / ?thread_name for webhook execution. A thread
+// id must point at a thread whose parent is the webhook's channel; thread_name
+// creates a public thread in a forum/media channel.
+func (s *Server) webhookTarget(c *Ctx, w store.Webhook, base model.Channel) (model.Channel, bool) {
+	q := c.R.URL.Query()
+	if tid := q.Get("thread_id"); tid != "" {
+		thread, err := s.Store.Channel(tid)
+		if err != nil || thread.ParentID == nil || *thread.ParentID != base.ID {
+			c.FailForm("thread_id", "Must be a thread in the webhook's channel")
+			return model.Channel{}, false
+		}
+		switch thread.Type {
+		case store.ChannelPublicThread, store.ChannelPrivateThread, store.ChannelAnnouncementThread:
+		default:
+			c.FailForm("thread_id", "Channel is not a thread")
+			return model.Channel{}, false
+		}
+		return thread, true
+	}
+	if name := strings.TrimSpace(q.Get("thread_name")); name != "" {
+		if base.Type != store.ChannelForum && base.Type != store.ChannelMedia {
+			c.FailForm("thread_name", "Only forum and media channels accept thread_name")
+			return model.Channel{}, false
+		}
+		if len([]rune(name)) > 100 {
+			c.FailForm("thread_name", "Must be 100 characters or fewer")
+			return model.Channel{}, false
+		}
+		if base.GuildID == nil {
+			c.FailForm("thread_name", "Forum channel has no guild")
+			return model.Channel{}, false
+		}
+		owner := w.ID
+		thread, err := s.Store.CreateChannel(*base.GuildID, store.CreateChannelParams{
+			Type: store.ChannelPublicThread, Name: &name, ParentID: &base.ID, OwnerID: &owner,
+		})
+		if err != nil {
+			fail(c, err)
+			return model.Channel{}, false
+		}
+		return thread, true
+	}
+	return base, true
+}
+
 // handleExecuteWebhook posts a message as the webhook. No user auth: the token is
 // the credential.
 func (s *Server) handleExecuteWebhook(c *Ctx) {
@@ -176,6 +222,11 @@ func (s *Server) handleExecuteWebhook(c *Ctx) {
 	if err != nil {
 		fail(c, ErrUnknownChannel)
 		return
+	}
+	if target, ok := s.webhookTarget(c, w, ch); !ok {
+		return
+	} else {
+		ch = target
 	}
 	var req struct {
 		Content     string            `json:"content"`

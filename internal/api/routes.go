@@ -111,6 +111,7 @@ func (s *Server) buildRoutes() []route {
 	r("DELETE", "/guilds/{guildID}/scheduled-events/{eventID}", true, s.handleDeleteScheduledEvent)
 	r("GET", "/guilds/{guildID}/scheduled-events/{eventID}/users", true, s.handleEventUsers)
 	r("GET", "/guilds/{guildID}/integrations", true, s.handleListIntegrations)
+	r("POST", "/guilds/{guildID}/integrations", true, s.handleCreateIntegration)
 	r("GET", "/guilds/{guildID}/integrations/{integrationID}", true, s.handleGetIntegration)
 	r("PATCH", "/guilds/{guildID}/integrations/{integrationID}", true, s.handleUpdateIntegration)
 	r("DELETE", "/guilds/{guildID}/integrations/{integrationID}", true, s.handleDeleteIntegration)

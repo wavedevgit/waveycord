@@ -524,6 +524,53 @@ func (s *Server) handleListIntegrations(c *Ctx) {
 	c.JSON(list)
 }
 
+func (s *Server) handleCreateIntegration(c *Ctx) {
+	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageGuild)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	var req struct {
+		Type        int     `json:"type"`
+		Name        *string `json:"name"`
+		AccountID   string  `json:"account_id"`
+		AccountName *string `json:"account_name"`
+	}
+	if err := c.Bind(&req); err != nil {
+		fail(c, ErrInvalidForm)
+		return
+	}
+	if req.Type != 1 && req.Type != 2 {
+		c.FailForm("type", "Only Twitch (1) and YouTube (2) integrations can be created")
+		return
+	}
+	if strings.TrimSpace(req.AccountID) == "" {
+		c.FailForm("account_id", "This field is required")
+		return
+	}
+	name := "Twitch"
+	if req.Type == 2 {
+		name = "YouTube"
+	}
+	if req.Name != nil {
+		name = sanitizeName(*req.Name)
+		if len([]rune(name)) < 1 || len([]rune(name)) > 100 {
+			c.FailForm("name", "Must be between 1 and 100 characters")
+			return
+		}
+	}
+	accountName := req.AccountID
+	if req.AccountName != nil && *req.AccountName != "" {
+		accountName = *req.AccountName
+	}
+	in, err := s.Store.CreateIntegration(g.ID, req.Type, name, accountName, req.AccountID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSONStatus(201, in)
+}
+
 func (s *Server) handleGetIntegration(c *Ctx) {
 	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageGuild)
 	if err != nil {

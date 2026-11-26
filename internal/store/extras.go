@@ -548,6 +548,19 @@ func (s *Store) UpsertBotIntegration(guildID, appID, name, botUserID string) err
 	return mapErr(err)
 }
 
+// CreateIntegration adds a Twitch/YouTube style integration entry.
+func (s *Store) CreateIntegration(guildID string, typ int, name, accountName, accountID string) (Integration, error) {
+	id := s.NewID()
+	_, err := s.DB.Exec(`INSERT INTO integrations
+		(guild_id, id, name, type, enabled, syncing, account_name, account_id, created_at)
+		VALUES (?,?,?,?,1,0,?,?,?)`,
+		guildID, id, name, typ, accountName, accountID, now())
+	if err != nil {
+		return Integration{}, mapErr(err)
+	}
+	return s.Integration(guildID, id)
+}
+
 // Integrations lists a guild's integrations.
 func (s *Store) Integrations(guildID string) ([]Integration, error) {
 	rows, err := s.DB.Query(`SELECT id, name, type, enabled, syncing, role_id, enable_emoticons,

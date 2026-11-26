@@ -425,6 +425,11 @@ func (s *Server) handleSlackWebhook(c *Ctx) {
 	if !ok {
 		return
 	}
+	if target, tok := s.webhookTarget(c, w, ch); !tok {
+		return
+	} else {
+		ch = target
+	}
 	var req struct {
 		Text     string  `json:"text"`
 		Username *string `json:"username"`
@@ -449,6 +454,11 @@ func (s *Server) handleGithubWebhook(c *Ctx) {
 	w, ch, ok := s.tokenWebhook(c)
 	if !ok {
 		return
+	}
+	if target, tok := s.webhookTarget(c, w, ch); !tok {
+		return
+	} else {
+		ch = target
 	}
 	event := c.R.Header.Get("X-GitHub-Event")
 	if event == "" {

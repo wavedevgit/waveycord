@@ -125,6 +125,7 @@ route is not registered yet.
 | `GET/PATCH/DELETE /webhooks/{id}/{token}` (token management) | implemented + tested |
 | `POST /webhooks/{id}/{token}/slack` | implemented + tested |
 | `POST /webhooks/{id}/{token}/github` | implemented + tested |
+| `?thread_id` / `?thread_name` webhook execution (all variants) | implemented + tested |
 
 ## Applications and bots
 
@@ -216,7 +217,9 @@ administrators bypass overrides. Denials return an ephemeral type-4 callback
 (`flags: 64`). Tested across owner, role-holder, explicit user deny, no-match,
 channel deny and default-permission cases.
 
-Slack delivery maps `text` to message content; GitHub delivery summarises
+Execution accepts `?thread_id` (must be a thread whose parent is the webhook channel)
+and `?thread_name` (forum/media channels only; a public thread is created and the
+message posted there). Slack delivery maps `text` to message content; GitHub delivery summarises
 `X-GitHub-Event` with action, repository and sender when present. Both support
 `?wait=true`. Webhook tokens can read, rename and delete the webhook without a
 session.
@@ -274,8 +277,8 @@ rather than tuned.
 Onboarding validates prompt titles/option bounds, guild-owned channels and roles,
 default channel limits and mode (0/1); welcome screens bound the description to
 140 characters, limit to five unique guild channels and require a description when
-enabled. Both are stored and returned; they are not yet included in READY guild
-payloads.
+enabled. Both are stored and returned, and are now included in READY guild payloads
+as `onboarding` and `welcome_screen` (tested).
 
 ## Guild templates
 
