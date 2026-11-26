@@ -87,6 +87,13 @@ CREATE TABLE IF NOT EXISTS remote_auth_sessions (
 );
 CREATE INDEX IF NOT EXISTS remote_auth_status ON remote_auth_sessions (status, expires);
 
+CREATE TABLE IF NOT EXISTS mls_credentials (
+    user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    media_key   TEXT NOT NULL,
+    signing_key TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mfa_tickets (
     id      TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

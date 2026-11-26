@@ -239,6 +239,9 @@ func (v *VoiceServer) publishE2EEKey(userID string, pub [32]byte, signingKey str
 // DeliverE2EEKey publishes a member key announcement received from another
 // instance to local peers.
 func (v *VoiceServer) DeliverE2EEKey(channelID, userID, publicKey, signingKey string) {
+	if userID != "" && signingKey != "" {
+		_ = v.store.SetMLSCredential(userID, publicKey, signingKey)
+	}
 	if signingKey != "" {
 		if sk, err := hex.DecodeString(signingKey); err == nil && len(sk) == ed25519.PublicKeySize {
 			v.rememberMLSKey(channelID, userID, ed25519.PublicKey(sk))
@@ -407,22 +410,39 @@ func (v *VoiceServer) validateMLSCommit(channel string, raw json.RawMessage) err
 	if err := json.Unmarshal(raw, &ec); err != nil {
 		return err
 	}
-	v.mlsMu.Lock()
-	prev := v.mlsRoster[channel]
-	keys := map[string]ed25519.PublicKey{}
-	for uid, k := range v.mlsSign[channel] {
-		keys[uid] = k
+	// Signing keys come from the persisted directory, not from whatever arrived on
+	// the wire most recently.
+	rawKeys, err := v.store.MLSCredentials()
+	if err != nil {
+		return err
 	}
-	for uid, k := range v.mlsUserSign {
-		if _, ok := keys[uid]; !ok {
-			keys[uid] = k
+	keys := map[string]ed25519.PublicKey{}
+	for uid, hexKey := range rawKeys {
+		if sk, err := hex.DecodeString(hexKey); err == nil && len(sk) == ed25519.PublicKeySize {
+			keys[uid] = ed25519.PublicKey(sk)
 		}
 	}
+	v.mlsMu.Lock()
+	prev := v.mlsRoster[channel]
 	v.mlsMu.Unlock()
 
 	if len(prev) == 0 {
 		if len(ec.Proposals) != 0 {
 			return mls.ErrVerification
+		}
+		// No trust-on-first-use: every member of the first roster must currently be
+		// in the voice channel and have a registered credential.
+		members, err := v.store.ChannelVoiceUserIDs(channel)
+		if err != nil {
+			return err
+		}
+		for _, l := range ec.Roster {
+			if !members[l.UserID] {
+				return mls.ErrVerification
+			}
+			if _, ok := keys[l.UserID]; !ok {
+				return mls.ErrVerification
+			}
 		}
 		prev = ec.Roster
 	}
@@ -1504,6 +1524,9 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			userID := c.userID
 			channelID := c.channelID
 			c.mu.Unlock()
+			if userID != "" && ex.SigningKey != "" {
+				_ = v.store.SetMLSCredential(userID, ex.PublicKey, ex.SigningKey)
+			}
 			if ex.SigningKey != "" {
 				if sk, err := hex.DecodeString(ex.SigningKey); err == nil && len(sk) == ed25519.PublicKeySize {
 					// Recording by user as well as channel avoids losing the key when
