@@ -158,6 +158,25 @@ func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
 		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
 			s.voice.DeliverE2EERekey(ev.ChannelID, ev.Epoch, ev.Reason, ev.Members)
 		}
+	case "VOICE_MIX_PCM":
+		var ev struct {
+			ChannelID string `json:"channel_id"`
+			SSRC      uint32 `json:"ssrc"`
+			PCM       string `json:"pcm"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			s.voice.DeliverMixPCM(ev.ChannelID, ev.SSRC, ev.PCM)
+		}
+	case "VOICE_MIX_OUT":
+		var ev struct {
+			ChannelID string `json:"channel_id"`
+			Packet    string `json:"packet"`
+		}
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
+			if packet, err := base64.StdEncoding.DecodeString(ev.Packet); err == nil {
+				s.voice.DeliverMixed(ev.ChannelID, packet)
+			}
+		}
 	case "VOICE_MLS_COMMIT":
 		var ev struct {
 			ChannelID  string          `json:"channel_id"`

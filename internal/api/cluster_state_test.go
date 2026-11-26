@@ -71,6 +71,9 @@ func newPGCluster(t *testing.T) (*harness, *harness) {
 		if err != nil {
 			t.Fatalf("voice %s: %v", label, err)
 		}
+		if os.Getenv("WAVEYCORD_CLUSTER_MIX") == "1" {
+			voice.SetClusterIdentity("mix-"+label+"-"+origin, true)
+		}
 		server.SetVoice(voice)
 		httpSrv := httptest.NewServer(server.Handler())
 		t.Cleanup(func() {

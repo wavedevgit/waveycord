@@ -576,3 +576,8 @@ CREATE TABLE IF NOT EXISTS stickers (
     created_at  BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS stickers_guild ON stickers (guild_id);
+
+CREATE TABLE IF NOT EXISTS cluster_instances (
+    id        TEXT PRIMARY KEY,
+    last_seen BIGINT NOT NULL
+);

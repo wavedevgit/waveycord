@@ -31,11 +31,13 @@ func voiceEndpoint(t *testing.T, h *harness, token, userID string) (*websocket.C
 	writeVoice(t, conn, map[string]any{"op": 0, "d": map[string]any{
 		"user_id": userID, "token": token,
 	}})
-	ready := readVoice(t, conn, deadline)
-	if ready["op"].(float64) != 2 {
-		t.Fatalf("expected voice READY: %+v", ready)
+	// Rekey/roster events can arrive before READY; wait for op 2 explicitly.
+	for {
+		ready := readVoice(t, conn, deadline)
+		if ready["op"].(float64) == 2 {
+			return conn, ready["d"].(map[string]any)
+		}
 	}
-	return conn, ready["d"].(map[string]any)
 }
 
 func udpListener(t *testing.T) *net.UDPConn {

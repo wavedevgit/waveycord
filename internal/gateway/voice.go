@@ -68,6 +68,8 @@ type VoiceServer struct {
 	mixMu      sync.Mutex
 	mixers     map[string]*channelMixer
 	mixes      atomic.Int64
+	instanceID string
+	clusterMix bool
 }
 
 // VoiceOptions tunes the advertised address.
@@ -122,10 +124,15 @@ func (v *VoiceServer) Close() {
 		_ = v.udp.Close()
 	}
 	v.mu.Lock()
+	id := v.instanceID
+	cluster := v.clusterMix
 	for c := range v.conns {
 		c.close(1000, "server shutdown")
 	}
 	v.mu.Unlock()
+	if cluster && id != "" && v.store != nil {
+		_ = v.store.UnregisterInstance(id)
+	}
 }
 
 // DeliverRTP forwards a packet received from another instance to local voice
@@ -543,7 +550,17 @@ func (v *VoiceServer) ingestRTP(sender *voiceConn, packet []byte) {
 	if v.codecReady && sender.channel() != "" {
 		if codec := sender.ensureCodec(); codec != nil {
 			if pcm, err := codec.Decode(payload); err == nil && len(pcm) > 0 {
-				if v.feedMixer(sender.channel(), ssrc, pcm) {
+				channel := sender.channel()
+				v.mu.Lock()
+				cluster := v.clusterMix
+				v.mu.Unlock()
+				if cluster && v.mixerOwner(channel) != v.instanceID {
+					// Another instance mixes this channel: ship PCM and let the
+					// owner's mixed output come back over the bus.
+					v.publishPCM(channel, ssrc, pcm)
+					return
+				}
+				if v.feedMixer(channel, ssrc, pcm) {
 					return
 				}
 			}

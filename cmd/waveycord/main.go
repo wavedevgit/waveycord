@@ -115,6 +115,20 @@ func main() {
 		}
 	}
 
+	instanceID := fmt.Sprintf("%s-%d-%d", hostname(), os.Getpid(), time.Now().UnixNano())
+	_ = st.RegisterInstance(instanceID)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = st.RegisterInstance(instanceID)
+				st.PruneInstances(15 * time.Second)
+			}
+		}
+	}()
+
 	hub := gateway.NewHub(
 		func(token string) (string, bool) {
 			sess, user, err := st.SessionByToken(api.TokenHash(token))
@@ -131,6 +145,7 @@ func main() {
 
 	hub.SetStore(st, voiceEndpoint)
 	voice, err := gateway.NewVoiceServer(st, gateway.VoiceOptions{IP: env("WAVEYCORD_VOICE_IP", "127.0.0.1"), Log: log})
+	voice.SetClusterIdentity(instanceID, os.Getenv("WAVEYCORD_CLUSTER_MIX") == "1")
 	if err != nil {
 		log.Error("start voice gateway", "err", err)
 		os.Exit(1)
