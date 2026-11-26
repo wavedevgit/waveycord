@@ -53,6 +53,10 @@ func (c Ciphersuite) KeySize() int {
 type Leaf struct {
 	UserID string   `json:"user_id"`
 	Public [32]byte `json:"public"`
+	// SignatureKey and KeyPackage are present for leaves admitted with an RFC-shaped
+	// KeyPackage; legacy leaves leave them empty.
+	SignatureKey ed25519.PublicKey `json:"signature_key,omitempty"`
+	KeyPackage   []byte            `json:"key_package,omitempty"`
 }
 
 // Proposal is an Add or Remove operation inside a commit.
@@ -61,6 +65,8 @@ type Proposal struct {
 	UserID string      `json:"user_id,omitempty"`
 	Public [32]byte    `json:"public,omitempty"`
 	Suite  Ciphersuite `json:"cipher_suite,omitempty"`
+	// KeyPackage carries the RFC-shaped Add payload when present.
+	KeyPackage *KeyPackage `json:"key_package,omitempty"`
 }
 
 // Envelope is the HPKE-style recipient encryption of the epoch root.
@@ -319,13 +325,23 @@ func ApplyProposals(roster []Leaf, proposals []Proposal) ([]Leaf, error) {
 	for _, p := range proposals {
 		switch p.Type {
 		case "add":
-			if p.UserID == "" || p.Public == ([32]byte{}) {
+			leaf := Leaf{UserID: p.UserID, Public: p.Public}
+			if p.KeyPackage != nil {
+				if err := VerifyKeyPackage(*p.KeyPackage); err != nil {
+					return nil, err
+				}
+				leaf = leafFromKeyPackage(*p.KeyPackage)
+				if p.UserID != "" && p.UserID != leaf.UserID {
+					return nil, fmt.Errorf("mls: key package credential does not match the proposal user")
+				}
+			}
+			if leaf.UserID == "" || leaf.Public == ([32]byte{}) {
 				return nil, fmt.Errorf("mls: add proposal missing user or key")
 			}
-			if _, exists := byID[p.UserID]; exists {
-				return nil, fmt.Errorf("mls: cannot add existing member %s", p.UserID)
+			if _, exists := byID[leaf.UserID]; exists {
+				return nil, fmt.Errorf("mls: cannot add existing member %s", leaf.UserID)
 			}
-			byID[p.UserID] = Leaf{UserID: p.UserID, Public: p.Public}
+			byID[leaf.UserID] = leaf
 		case "remove":
 			if _, exists := byID[p.UserID]; !exists {
 				return nil, fmt.Errorf("mls: cannot remove unknown member %s", p.UserID)

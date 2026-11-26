@@ -116,6 +116,7 @@ route is not registered yet.
 | RFC-style `ExpandWithLabel` path KDF, resolution-driven envelopes, per-application key schedule | implemented + tested |
 | Signed Add/Remove/ciphersuite proposal wire messages with per-message references bound into the commit | implemented + tested |
 | RFC-shaped commit authentication: signature over GroupContext || TLS Commit, group context with tree hash and chained confirmed transcript hash | implemented + tested |
+| RFC-shaped LeafNode/KeyPackage: self-signed leaf with credential/signature key and signed Add payload; membership taken from the verified credential | implemented + tested |
 | External proposal references: commit may reference a previously relayed proposal by ref; server resolves it from a persisted proposal store | implemented + tested |
 | Independent proposal authors: any previous-roster member may author/sign a proposal; proposer and signature validated on verify | implemented + tested |
 | Server-side op 38 commit validation before relaying (ciphersuite, proposals, roster transition, path shape) | implemented + tested |

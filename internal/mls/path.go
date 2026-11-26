@@ -342,8 +342,15 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 	// the Welcome instead, which is what lets it open node-addressed envelopes.
 	added := map[string]bool{}
 	for _, p := range proposals {
-		if p.Type == "add" {
-			added[p.UserID] = true
+		if p.Type != "add" {
+			continue
+		}
+		uid := p.UserID
+		if p.KeyPackage != nil {
+			uid = string(p.KeyPackage.Leaf.Credential.Identity)
+		}
+		if uid != "" {
+			added[uid] = true
 		}
 	}
 	newcomerSecrets := map[string]map[int][]byte{}
@@ -566,14 +573,22 @@ func NewEpochCommitWithSuite(epoch uint32, roster []Leaf, proposals []Proposal, 
 		if p.Type != "add" {
 			continue
 		}
-		leaf := next[leafIndex(next, p.UserID)]
+		uid := p.UserID
+		if p.KeyPackage != nil {
+			uid = string(p.KeyPackage.Leaf.Credential.Identity)
+		}
+		idx := leafIndex(next, uid)
+		if idx < 0 {
+			continue
+		}
+		leaf := next[idx]
 		g := GroupInfo{Version: 1, Suite: suite, Epoch: epoch, Roster: next, Tree: tree,
-			Root: root, NodeKeys: newcomerSecrets[p.UserID]}
+			Root: root, NodeKeys: newcomerSecrets[uid]}
 		sealed, serr := sealGroupInfo(g, leaf, hex.EncodeToString(hash[:]))
 		if serr != nil {
 			return EpochCommit{}, nil, serr
 		}
-		commit.Welcome[p.UserID] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), GroupInfo: sealed}
+		commit.Welcome[uid] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), GroupInfo: sealed}
 	}
 	return commit, &Epoch{Epoch: epoch, Root: root, Roster: next, TreePublics: treePublics, Tree: tree}, nil
 }

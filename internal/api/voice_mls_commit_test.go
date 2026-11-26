@@ -478,12 +478,23 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	// Epoch 3 adds Dave, who joins from the Welcome and can decrypt media.
 	dave := "user-dave"
 	davePriv, davePub := clientKeypair(t)
-	daveSignPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	daveSignPub, daveSignPriv, _ := ed25519.GenerateKey(rand.Reader)
 	signKeyMap[dave] = daveSignPub
+	daveLeaf := mls.LeafNode{
+		EncryptionKey: davePub,
+		SignatureKey:  daveSignPub,
+		Credential:    mls.Credential{Type: 1, Identity: []byte(dave)},
+		Source:        1,
+	}
+	daveLeaf.Sign(daveSignPriv)
+	var daveInit [32]byte
+	_, _ = rand.Read(daveInit[:])
+	davePackage := mls.KeyPackage{Version: 1, CipherSuite: mls.SuiteX25519AES256GCM, Leaf: daveLeaf, InitKey: daveInit}
+	davePackage.Sign(daveSignPriv)
 	// Epoch 3 negotiates the AES-128-GCM suite.
 	prevTree := epoch2State.Tree
 	commit3, epoch3State, err := mls.NewEpochCommitNegotiating(3, commit2.Roster,
-		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}},
+		[]mls.Proposal{{Type: "add", KeyPackage: &davePackage}},
 		mls.SuiteX25519AES128GCM, alice.ID, aliceSignPriv, alicePriv, prevTree)
 	if err != nil {
 		t.Fatalf("epoch3 commit: %v", err)
@@ -503,6 +514,21 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if err := mls.VerifyEpochCommit(relayed3, commit2.Roster, signKeyMap); err != nil {
 		t.Fatalf("relayed epoch3 verify: %v", err)
 	}
+	foundDave := false
+	for _, l := range commit3.Roster {
+		if l.UserID == dave {
+			foundDave = true
+			if len(l.SignatureKey) != ed25519.PublicKeySize || string(l.SignatureKey) != string(daveSignPub) {
+				t.Fatalf("dave leaf signature key: %x", l.SignatureKey)
+			}
+			if l.Public != davePub {
+				t.Fatal("dave leaf encryption key mismatch")
+			}
+		}
+	}
+	if !foundDave {
+		t.Fatal("dave missing from the key-package roster")
+	}
 	if len(commit3.ProposalMessages) != 2 {
 		t.Fatalf("epoch3 proposal messages: %+v", commit3.ProposalMessages)
 	}
@@ -510,7 +536,8 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	for _, m := range commit3.ProposalMessages {
 		switch m.Proposal.Type {
 		case "add":
-			sawAdd = m.Proposal.UserID == dave
+			sawAdd = m.Proposal.UserID == dave ||
+				(m.Proposal.KeyPackage != nil && string(m.Proposal.KeyPackage.Leaf.Credential.Identity) == dave)
 		case "ciphersuite":
 			sawSuite = m.Proposal.Suite == mls.SuiteX25519AES128GCM
 		}

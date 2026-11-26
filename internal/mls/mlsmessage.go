@@ -69,7 +69,15 @@ func encodeProposal(w *tlsWriter, p Proposal) error {
 	if p.Type == "ciphersuite" {
 		w.u32(uint32(p.Suite))
 	}
-	return nil
+	var kp []byte
+	if p.KeyPackage != nil {
+		var err error
+		kp, err = EncodeKeyPackage(*p.KeyPackage)
+		if err != nil {
+			return err
+		}
+	}
+	return w.opaque16(kp)
 }
 
 func decodeProposal(r *tlsReader) (Proposal, error) {
@@ -106,6 +114,17 @@ func decodeProposal(r *tlsReader) (Proposal, error) {
 		return p, errTLS
 	}
 	copy(p.Public[:], pub)
+	kp, err := r.opaque16()
+	if err != nil {
+		return p, err
+	}
+	if len(kp) > 0 {
+		parsed, perr := DecodeKeyPackage(kp)
+		if perr != nil {
+			return p, perr
+		}
+		p.KeyPackage = &parsed
+	}
 	return p, nil
 }
 

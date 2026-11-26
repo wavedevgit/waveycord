@@ -1,6 +1,7 @@
 package mls
 
 import (
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -117,7 +118,13 @@ func encodeLeaf(w *tlsWriter, l Leaf) error {
 	if err := w.opaque16([]byte(l.UserID)); err != nil {
 		return err
 	}
-	return w.opaque16(l.Public[:])
+	if err := w.opaque16(l.Public[:]); err != nil {
+		return err
+	}
+	if err := w.opaque16(l.SignatureKey); err != nil {
+		return err
+	}
+	return w.opaque16(l.KeyPackage)
 }
 
 func decodeLeaf(r *tlsReader) (Leaf, error) {
@@ -135,6 +142,19 @@ func decodeLeaf(r *tlsReader) (Leaf, error) {
 	}
 	l.UserID = string(uid)
 	copy(l.Public[:], pub)
+	sigKey, err := r.opaque16()
+	if err != nil {
+		return l, err
+	}
+	if len(sigKey) != 0 && len(sigKey) != 32 {
+		return l, errTLS
+	}
+	l.SignatureKey = ed25519.PublicKey(sigKey)
+	pkg, err := r.opaque16()
+	if err != nil {
+		return l, err
+	}
+	l.KeyPackage = pkg
 	return l, nil
 }
 
