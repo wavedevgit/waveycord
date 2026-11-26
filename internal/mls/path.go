@@ -168,6 +168,13 @@ func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, c
 // supplied, retained members keep their leaf slots, removed members leave blanks and
 // newcomers fill the lowest free slot, extending the tree if it is full.
 func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
+	return NewEpochCommitWithMessages(epoch, roster, proposals, nil, committerID, committerSignPriv, committerLeafPriv, previous)
+}
+
+// NewEpochCommitWithMessages is NewEpochCommitWithState with pre-signed proposal
+// messages. When messages is nil or shorter than proposals, the committer signs the
+// remaining proposals itself.
+func NewEpochCommitWithMessages(epoch uint32, roster []Leaf, proposals []Proposal, messages []ProposalMessage, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
 	next, err := ApplyProposals(roster, proposals)
 	if err != nil {
 		return EpochCommit{}, nil, err
@@ -463,12 +470,16 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 			r.Envelope = env
 		}
 	}
-	messages := make([]ProposalMessage, 0, len(proposals))
-	for _, p := range proposals {
-		messages = append(messages, SignProposalMessage(p, committerID, committerSignPriv))
+	signed := make([]ProposalMessage, 0, len(proposals))
+	for i, p := range proposals {
+		if i < len(messages) && len(messages[i].Signature) > 0 {
+			signed = append(signed, messages[i])
+			continue
+		}
+		signed = append(signed, SignProposalMessage(p, committerID, committerSignPriv))
 	}
 	commit := EpochCommit{Commit: Commit{Epoch: epoch, CipherSuite: SuiteX25519AES256GCM,
-		ProposalRefs: ProposalRefsFor(messages), ProposalMessages: messages,
+		ProposalRefs: ProposalRefsFor(signed), ProposalMessages: signed,
 		Roster: next, Proposals: proposals,
 		Envelopes: map[string]Envelope{}, Committer: committerID}}
 	commit.Path = path

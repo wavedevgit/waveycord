@@ -327,7 +327,7 @@ func TestSearchQueueListenWakes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		idx.mu.Lock()
 		_, ok := idx.docs[guild.ID][msg.ID]

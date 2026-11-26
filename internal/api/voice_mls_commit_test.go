@@ -351,9 +351,12 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prior epoch: %v", err)
 	}
-	commit2, epoch2State, err := mls.NewEpochCommitWithState(2, leaves1,
-		[]mls.Proposal{{Type: "remove", UserID: charlie.ID}}, alice.ID, aliceSignPriv, alicePriv,
-		priorEpoch.Tree)
+	// The removal proposal is authored and signed by Bob, not by the committer.
+	removeProposal := mls.Proposal{Type: "remove", UserID: charlie.ID}
+	bobSigned := mls.SignProposalMessage(removeProposal, bob.ID, bobSignPriv)
+	commit2, epoch2State, err := mls.NewEpochCommitWithMessages(2, leaves1,
+		[]mls.Proposal{removeProposal}, []mls.ProposalMessage{bobSigned},
+		alice.ID, aliceSignPriv, alicePriv, priorEpoch.Tree)
 	if err != nil {
 		t.Fatalf("epoch2 commit: %v", err)
 	}
@@ -369,6 +372,20 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	}
 	if err := mls.VerifyEpochCommit(relayed, leaves1, signKeyMap); err != nil {
 		t.Fatalf("relayed epoch2 verify: %v", err)
+	}
+	if len(relayed.ProposalMessages) != 1 || relayed.ProposalMessages[0].Proposer != bob.ID {
+		t.Fatalf("relayed proposer: %+v", relayed.ProposalMessages)
+	}
+	// The committer signing the same proposal on Bob's behalf must fail verification.
+	forgedMsg := mls.SignProposalMessage(removeProposal, bob.ID, aliceSignPriv)
+	forgedCommit, _, err := mls.NewEpochCommitWithMessages(2, leaves1,
+		[]mls.Proposal{removeProposal}, []mls.ProposalMessage{forgedMsg},
+		alice.ID, aliceSignPriv, alicePriv, priorEpoch.Tree)
+	if err != nil {
+		t.Fatalf("forged commit build: %v", err)
+	}
+	if err := mls.VerifyEpochCommit(forgedCommit, leaves1, signKeyMap); err == nil {
+		t.Fatal("forged proposer signature accepted")
 	}
 	// The proposal travels as a signed wire message, not only as a hash reference.
 	if relayed.Tree == nil || relayed.Tree.Size != 4 {
@@ -399,7 +416,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		t.Fatalf("epoch2 proposal messages = %d", len(relayed.ProposalMessages))
 	}
 	pm := relayed.ProposalMessages[0]
-	if pm.Proposal.Type != "remove" || pm.Proposal.UserID != charlie.ID || pm.Proposer != alice.ID {
+	if pm.Proposal.Type != "remove" || pm.Proposal.UserID != charlie.ID || pm.Proposer != bob.ID {
 		t.Fatalf("epoch2 proposal message: %+v", pm)
 	}
 	if err := mls.VerifyProposalMessage(pm, signKeyMap); err != nil {

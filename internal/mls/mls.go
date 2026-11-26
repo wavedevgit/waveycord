@@ -349,7 +349,9 @@ func Verify(c Commit, previous []Leaf, signKeys map[string]ed25519.PublicKey) er
 		if string(body) != string(want) {
 			return ErrVerification
 		}
-		if m.Proposer != c.Committer {
+		// The proposer may be any member of the previous roster, not only the
+		// committer; the signature is checked against that member's signing key.
+		if leafIndex(previous, m.Proposer) < 0 {
 			return ErrVerification
 		}
 		if err := VerifyProposalMessage(m, signKeys); err != nil {
