@@ -58,14 +58,15 @@ type Envelope struct {
 
 // Commit is the signed epoch transition.
 type Commit struct {
-	Epoch        uint32              `json:"epoch"`
-	CipherSuite  Ciphersuite         `json:"cipher_suite"`
-	ProposalRefs []string            `json:"proposal_refs"`
-	Roster       []Leaf              `json:"roster"`
-	Proposals    []Proposal          `json:"proposals"`
-	Envelopes    map[string]Envelope `json:"envelopes"`
-	Committer    string              `json:"committer"`
-	Signature    []byte              `json:"signature"`
+	Epoch            uint32              `json:"epoch"`
+	CipherSuite      Ciphersuite         `json:"cipher_suite"`
+	ProposalRefs     []string            `json:"proposal_refs"`
+	ProposalMessages []ProposalMessage   `json:"proposal_messages,omitempty"`
+	Roster           []Leaf              `json:"roster"`
+	Proposals        []Proposal          `json:"proposals"`
+	Envelopes        map[string]Envelope `json:"envelopes"`
+	Committer        string              `json:"committer"`
+	Signature        []byte              `json:"signature"`
 }
 
 // Epoch is a committed key schedule.
@@ -137,20 +138,74 @@ func hkdfBytes(secret []byte, salt, info string, n int) []byte {
 
 func canonical(c Commit) []byte {
 	type canon struct {
-		Epoch        uint32              `json:"epoch"`
-		CipherSuite  Ciphersuite         `json:"cipher_suite"`
-		ProposalRefs []string            `json:"proposal_refs"`
-		Roster       []Leaf              `json:"roster"`
-		Proposals    []Proposal          `json:"proposals"`
-		Envelopes    map[string]Envelope `json:"envelopes"`
-		Committer    string              `json:"committer"`
+		Epoch            uint32              `json:"epoch"`
+		CipherSuite      Ciphersuite         `json:"cipher_suite"`
+		ProposalRefs     []string            `json:"proposal_refs"`
+		ProposalMessages []ProposalMessage   `json:"proposal_messages,omitempty"`
+		Roster           []Leaf              `json:"roster"`
+		Proposals        []Proposal          `json:"proposals"`
+		Envelopes        map[string]Envelope `json:"envelopes"`
+		Committer        string              `json:"committer"`
 	}
-	raw, _ := json.Marshal(canon{c.Epoch, c.CipherSuite, c.ProposalRefs, c.Roster, c.Proposals, c.Envelopes, c.Committer})
+	raw, _ := json.Marshal(canon{c.Epoch, c.CipherSuite, c.ProposalRefs, c.ProposalMessages, c.Roster, c.Proposals, c.Envelopes, c.Committer})
 	return raw
 }
 
 // CommitError marks verification failures.
 var ErrVerification = errors.New("mls: commit verification failed")
+
+// ProposalMessage is the signed wire framing for one proposal. The RFC carries each
+// proposal as its own authenticated message; here the message is signed by the
+// committer that included it, which is the subset this implementation supports.
+type ProposalMessage struct {
+	Proposal  Proposal `json:"proposal"`
+	Proposer  string   `json:"proposer"`
+	Signature []byte   `json:"signature"`
+}
+
+// proposalMessageCanonical is the signed bytes for a proposal message.
+func proposalMessageCanonical(m ProposalMessage) []byte {
+	raw, _ := json.Marshal(struct {
+		Proposal Proposal `json:"proposal"`
+		Proposer string   `json:"proposer"`
+	}{m.Proposal, m.Proposer})
+	return append([]byte("proposal-message|"), raw...)
+}
+
+// SignProposalMessage signs one proposal so it can travel inside a commit.
+func SignProposalMessage(p Proposal, proposer string, priv ed25519.PrivateKey) ProposalMessage {
+	m := ProposalMessage{Proposal: p, Proposer: proposer}
+	m.Signature = ed25519.Sign(priv, proposalMessageCanonical(m))
+	return m
+}
+
+// VerifyProposalMessage checks the proposer's signature over the wire message.
+func VerifyProposalMessage(m ProposalMessage, signKeys map[string]ed25519.PublicKey) error {
+	key, ok := signKeys[m.Proposer]
+	if !ok || len(m.Signature) == 0 {
+		return ErrVerification
+	}
+	if !ed25519.Verify(key, proposalMessageCanonical(m), m.Signature) {
+		return ErrVerification
+	}
+	return nil
+}
+
+// ProposalMessageRef is the commit reference for a signed proposal message, so the
+// commit binds the exact wire message rather than only its proposal body.
+func ProposalMessageRef(m ProposalMessage) string {
+	sum := sha256.Sum256(proposalMessageCanonical(m))
+	return fmt.Sprintf("%x", sum[:16])
+}
+
+// ProposalRefsFor computes the reference list for signed messages.
+func ProposalRefsFor(messages []ProposalMessage) []string {
+	out := make([]string, 0, len(messages))
+	for _, m := range messages {
+		out = append(out, ProposalMessageRef(m))
+	}
+	return out
+}
 
 // ProposalRef is the commit reference for one proposal.
 func ProposalRef(p Proposal) string {
@@ -218,8 +273,13 @@ func NewCommit(epoch uint32, roster []Leaf, proposals []Proposal, committerID st
 	if _, err := rand.Read(root); err != nil {
 		return Commit{}, nil, err
 	}
+	messages := make([]ProposalMessage, 0, len(proposals))
+	for _, p := range proposals {
+		messages = append(messages, SignProposalMessage(p, committerID, committerPriv))
+	}
 	commit := Commit{Epoch: epoch, CipherSuite: SuiteX25519AES256GCM,
-		ProposalRefs: ProposalRefs(proposals), Roster: next, Proposals: proposals,
+		ProposalRefs: ProposalRefsFor(messages), ProposalMessages: messages,
+		Roster: next, Proposals: proposals,
 		Envelopes: map[string]Envelope{}, Committer: committerID}
 	for _, leaf := range next {
 		env, err := sealRoot(root, leaf)
@@ -269,7 +329,25 @@ func Verify(c Commit, previous []Leaf, signKeys map[string]ed25519.PublicKey) er
 	if !c.CipherSuite.Supported() {
 		return ErrVerification
 	}
-	refs := ProposalRefs(c.Proposals)
+	// Every proposal travels as a signed wire message, and the commit references the
+	// exact message, so neither the body nor the signature can be swapped.
+	if len(c.ProposalMessages) != len(c.Proposals) {
+		return ErrVerification
+	}
+	for i, m := range c.ProposalMessages {
+		body, _ := json.Marshal(m.Proposal)
+		want, _ := json.Marshal(c.Proposals[i])
+		if string(body) != string(want) {
+			return ErrVerification
+		}
+		if m.Proposer != c.Committer {
+			return ErrVerification
+		}
+		if err := VerifyProposalMessage(m, signKeys); err != nil {
+			return err
+		}
+	}
+	refs := ProposalRefsFor(c.ProposalMessages)
 	if len(refs) != len(c.ProposalRefs) {
 		return ErrVerification
 	}

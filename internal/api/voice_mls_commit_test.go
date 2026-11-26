@@ -362,6 +362,29 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if err := mls.VerifyEpochCommit(relayed, leaves1, signKeyMap); err != nil {
 		t.Fatalf("relayed epoch2 verify: %v", err)
 	}
+	// The proposal travels as a signed wire message, not only as a hash reference.
+	if !strings.Contains(string(rawCommit), "proposal_messages") {
+		t.Fatalf("commit on the wire has no proposal messages: %s", rawCommit)
+	}
+	if len(relayed.ProposalMessages) != 1 {
+		t.Fatalf("epoch2 proposal messages = %d", len(relayed.ProposalMessages))
+	}
+	pm := relayed.ProposalMessages[0]
+	if pm.Proposal.Type != "remove" || pm.Proposal.UserID != charlie.ID || pm.Proposer != alice.ID {
+		t.Fatalf("epoch2 proposal message: %+v", pm)
+	}
+	if err := mls.VerifyProposalMessage(pm, signKeyMap); err != nil {
+		t.Fatalf("epoch2 proposal signature: %v", err)
+	}
+	if refs := mls.ProposalRefsFor(relayed.ProposalMessages); len(refs) != 1 || refs[0] != relayed.ProposalRefs[0] {
+		t.Fatalf("commit refs %v do not bind the wire message %v", relayed.ProposalRefs, refs)
+	}
+	tamperedMsg := relayed
+	tamperedMsg.ProposalMessages = []mls.ProposalMessage{pm}
+	tamperedMsg.ProposalMessages[0].Proposal.UserID = bob.ID
+	if err := mls.VerifyEpochCommit(tamperedMsg, leaves1, signKeyMap); err == nil {
+		t.Fatal("tampered proposal message verified")
+	}
 	bobRoot, err := mls.DerivePathRoot(relayed, bob.ID, bobPriv)
 	if err != nil {
 		t.Fatalf("bob decrypt epoch2 root: %v", err)
@@ -400,6 +423,19 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	}
 	if err := mls.VerifyEpochCommit(commit3, commit2.Roster, signKeyMap); err != nil {
 		t.Fatalf("epoch3 verify: %v", err)
+	}
+	if len(commit3.ProposalMessages) != 1 || commit3.ProposalMessages[0].Proposal.Type != "add" ||
+		commit3.ProposalMessages[0].Proposal.UserID != dave {
+		t.Fatalf("epoch3 add proposal message: %+v", commit3.ProposalMessages)
+	}
+	if err := mls.VerifyProposalMessage(commit3.ProposalMessages[0], signKeyMap); err != nil {
+		t.Fatalf("epoch3 proposal signature: %v", err)
+	}
+	badAdd := commit3
+	badAdd.ProposalMessages = []mls.ProposalMessage{commit3.ProposalMessages[0]}
+	badAdd.ProposalMessages[0].Signature = []byte{9, 9, 9}
+	if err := mls.VerifyEpochCommit(badAdd, commit2.Roster, signKeyMap); err == nil {
+		t.Fatal("tampered add proposal signature verified")
 	}
 	daveRoot, err := mls.DecryptWelcome(commit3, dave, davePriv)
 	if err != nil {

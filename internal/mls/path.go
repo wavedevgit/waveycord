@@ -143,8 +143,13 @@ func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committer
 		node = parent
 	}
 	root := secrets[1]
+	messages := make([]ProposalMessage, 0, len(proposals))
+	for _, p := range proposals {
+		messages = append(messages, SignProposalMessage(p, committerID, committerSignPriv))
+	}
 	commit := EpochCommit{Commit: Commit{Epoch: epoch, CipherSuite: SuiteX25519AES256GCM,
-		ProposalRefs: ProposalRefs(proposals), Roster: next, Proposals: proposals,
+		ProposalRefs: ProposalRefsFor(messages), ProposalMessages: messages,
+		Roster: next, Proposals: proposals,
 		Envelopes: map[string]Envelope{}, Committer: committerID}}
 	commit.Path = path
 	commit.Welcome = map[string]Welcome{}
