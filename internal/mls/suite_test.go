@@ -218,3 +218,59 @@ func TestProposalReferenceBinding(t *testing.T) {
 		t.Fatal("duplicate proposal refs accepted")
 	}
 }
+
+// TestExternalProposalReference proves a commit can reference a previously relayed
+// proposal by ref, that the reference binds the exact signed message, and that a
+// missing or mismatched referenced message fails verification.
+func TestExternalProposalReference(t *testing.T) {
+	alice := newMember(t, "epa")
+	bob := newMember(t, "epb")
+	charlie := newMember(t, "epc")
+	roster := []Leaf{alice.leaf(), bob.leaf()}
+	signKeys := map[string]ed25519.PublicKey{alice.id: alice.signK, bob.id: bob.signK, charlie.id: charlie.signK}
+
+	add := Proposal{Type: "add", UserID: charlie.id, Public: charlie.pub}
+	ext := SignProposalMessage(add, bob.id, bob.signP)
+	commit, _, err := NewEpochCommitExternal(1, roster, []Proposal{add}, nil,
+		[]ProposalMessage{ext}, SuiteX25519AES256GCM, alice.id, alice.signP, alice.priv, nil)
+	if err != nil {
+		t.Fatalf("external commit: %v", err)
+	}
+	if len(commit.ProposalMessages) != 0 || len(commit.ProposalRefs) != 1 || commit.ProposalRefs[0] != ext.Ref {
+		t.Fatalf("external framing: messages=%d refs=%v", len(commit.ProposalMessages), commit.ProposalRefs)
+	}
+	external := map[string]ProposalMessage{ext.Ref: ext}
+	if err := VerifyEpochCommitWithProposals(commit, roster, 0, external, signKeys); err != nil {
+		t.Fatalf("external reference rejected: %v", err)
+	}
+	found := false
+	for _, l := range commit.Roster {
+		if l.UserID == charlie.id {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("referenced proposal was not applied to the roster")
+	}
+	// Without the referenced message the commit cannot be verified.
+	if err := VerifyEpochCommit(commit, roster, signKeys); err == nil {
+		t.Fatal("commit verified without the referenced proposal")
+	}
+	// A different message under the same ref is rejected.
+	wrong := SignProposalMessage(Proposal{Type: "remove", UserID: bob.id}, bob.id, bob.signP)
+	if err := VerifyEpochCommitWithProposals(commit, roster, 0,
+		map[string]ProposalMessage{ext.Ref: wrong}, signKeys); err == nil {
+		t.Fatal("mismatched external message accepted")
+	}
+	// A commit whose ref list does not match the applied proposal order fails.
+	misordered, _, err := NewEpochCommitExternal(1, roster, []Proposal{add}, nil,
+		[]ProposalMessage{ext}, SuiteX25519AES256GCM, alice.id, alice.signP, alice.priv, nil)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	misordered.Proposals = []Proposal{{Type: "remove", UserID: bob.id}}
+	misordered.Signature = ed25519.Sign(alice.signP, canonical(misordered.Commit))
+	if err := VerifyEpochCommitWithProposals(misordered, roster, 0, external, signKeys); err == nil {
+		t.Fatal("proposal body/ref mismatch accepted")
+	}
+}

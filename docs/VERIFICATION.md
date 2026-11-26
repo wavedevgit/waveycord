@@ -37,6 +37,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | RFC-style path KDF, application key schedule, nonce ratchet | `TestExpandWithLabelAndApplicationKeys`, `TestVoiceMLSSignedRosterCommit` |
 | Signed proposal wire messages in commits, verify rejection paths | `TestCiphersuiteAndProposalRefs`, `TestVoiceMLSSignedRosterCommit` |
 | Per-proposal reference derivation and commit reference binding, forged/duplicate/reordered rejection | `TestProposalReferenceBinding` |
+| External proposal references resolved from relayed proposals, missing/mismatched rejection | `TestExternalProposalReference`, `TestVoiceMLSCommitServerValidation` |
 | Independent proposal authors: member-authored acceptance, forged signature and outsider rejection | `TestIndependentProposalAuthors`, `TestVoiceMLSSignedRosterCommit` |
 | Server rejects invalid op 38 commits before relaying, closes sender; valid commit relays | `TestVoiceMLSCommitServerValidation`, `TestVoiceMLSSignedRosterCommit` |
 | Credential directory persistence/upsert and validation against it | `TestMLSCredentialDirectory` |

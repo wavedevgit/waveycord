@@ -10,8 +10,9 @@ import (
 // language encoded EpochCommit. Base64 is only the transport encoding inside JSON.
 
 const (
-	mlsProtocolVersion  uint16 = 1
-	mlsWireFormatCommit uint16 = 1
+	mlsProtocolVersion    uint16 = 1
+	mlsWireFormatCommit   uint16 = 1
+	mlsWireFormatProposal uint16 = 2
 )
 
 // Envelope TLS encoding (also used by Commit/Path/Welcome structures).
@@ -578,6 +579,81 @@ func MarshalMLSMessage(c EpochCommit) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(w.buf), nil
+}
+
+// MarshalProposalMessage frames one proposal message for relaying before a commit.
+func MarshalProposalMessage(m ProposalMessage) (string, error) {
+	w := &tlsWriter{}
+	w.buf = append(w.buf, byte(mlsProtocolVersion>>8), byte(mlsProtocolVersion))
+	w.buf = append(w.buf, byte(mlsWireFormatProposal>>8), byte(mlsWireFormatProposal))
+	body := &tlsWriter{}
+	if err := encodeProposal(body, m.Proposal); err != nil {
+		return "", err
+	}
+	if err := body.opaque16([]byte(m.Proposer)); err != nil {
+		return "", err
+	}
+	if err := body.opaque16([]byte(m.Ref)); err != nil {
+		return "", err
+	}
+	if err := body.opaque16(m.Signature); err != nil {
+		return "", err
+	}
+	if err := w.opaque16(body.buf); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(w.buf), nil
+}
+
+// UnmarshalProposalMessage decodes a framed proposal message.
+func UnmarshalProposalMessage(encoded string) (ProposalMessage, error) {
+	var m ProposalMessage
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(raw) < 4 {
+		return m, errTLS
+	}
+	if uint16(raw[0])<<8|uint16(raw[1]) != mlsProtocolVersion ||
+		uint16(raw[2])<<8|uint16(raw[3]) != mlsWireFormatProposal {
+		return m, errTLS
+	}
+	r := &tlsReader{data: raw, off: 4}
+	body, err := r.opaque16()
+	if err != nil || r.remaining() != 0 {
+		return m, errTLS
+	}
+	br := &tlsReader{data: body}
+	p, err := decodeProposal(br)
+	if err != nil {
+		return m, err
+	}
+	prop, err := br.opaque16()
+	if err != nil {
+		return m, err
+	}
+	ref, err := br.opaque16()
+	if err != nil {
+		return m, err
+	}
+	sig, err := br.opaque16()
+	if err != nil {
+		return m, err
+	}
+	if br.remaining() != 0 {
+		return m, errTLS
+	}
+	return ProposalMessage{Proposal: p, Proposer: string(prop), Ref: string(ref), Signature: sig}, nil
+}
+
+// MLSMessageFormat returns the wire format of a framed message.
+func MLSMessageFormat(encoded string) (uint16, error) {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(raw) < 4 {
+		return 0, errTLS
+	}
+	if uint16(raw[0])<<8|uint16(raw[1]) != mlsProtocolVersion {
+		return 0, errTLS
+	}
+	return uint16(raw[2])<<8 | uint16(raw[3]), nil
 }
 
 // UnmarshalMLSMessage decodes a base64 MLSMessage into an EpochCommit.

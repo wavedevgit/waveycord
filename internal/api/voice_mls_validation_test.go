@@ -38,7 +38,7 @@ func TestVoiceMLSCommitServerValidation(t *testing.T) {
 	aPriv, aPub := clientKeypair(t)
 	_, bPub := clientKeypair(t)
 	aSignPub, aSignPriv, _ := ed25519.GenerateKey(rand.Reader)
-	bSignPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	bSignPub, bSignPriv, _ := ed25519.GenerateKey(rand.Reader)
 
 	publish := func(conn *websocket.Conn, pub [32]byte, sign ed25519.PublicKey) {
 		writeVoice(t, conn, map[string]any{"op": 34, "d": map[string]any{
@@ -60,6 +60,31 @@ func TestVoiceMLSCommitServerValidation(t *testing.T) {
 	}
 	sendMLSCommit(t, aliceVoice, commit)
 	readMLSCommit(t, bobVoice, time.Now().Add(20*time.Second))
+
+	// A proposal relayed on its own can later be referenced by ref in a commit.
+	addProposal := mls.Proposal{Type: "add", UserID: "charlie-external", Public: [32]byte{9, 8, 7}}
+	extMsg := mls.SignProposalMessage(addProposal, bob.ID, bSignPriv)
+	encodedExt, err := mls.MarshalProposalMessage(extMsg)
+	if err != nil {
+		t.Fatalf("marshal proposal: %v", err)
+	}
+	writeVoice(t, bobVoice, map[string]any{"op": 38, "d": map[string]any{"mls_message": encodedExt}})
+	if f := readVoiceOp(t, aliceVoice, 38, time.Now().Add(20*time.Second)); f["op"].(float64) != 38 {
+		t.Fatalf("proposal not relayed: %+v", f)
+	}
+	externalCommit, _, err := mls.NewEpochCommitExternal(2, leaves,
+		[]mls.Proposal{addProposal}, nil, []mls.ProposalMessage{extMsg},
+		mls.SuiteX25519AES256GCM, alice.ID, aSignPriv, aPriv, commit.Tree)
+	if err != nil {
+		t.Fatalf("external commit: %v", err)
+	}
+	sendMLSCommit(t, aliceVoice, externalCommit)
+	relayedExt := readMLSCommit(t, bobVoice, time.Now().Add(20*time.Second))
+	if err := mls.VerifyEpochCommitWithProposals(relayedExt, leaves, mls.SuiteX25519AES256GCM,
+		map[string]mls.ProposalMessage{extMsg.Ref: extMsg},
+		map[string]ed25519.PublicKey{alice.ID: aSignPub, bob.ID: bSignPub}); err != nil {
+		t.Fatalf("relayed external commit: %v", err)
+	}
 
 	// A tampered signature must be rejected and the sender disconnected without a
 	// second relay.

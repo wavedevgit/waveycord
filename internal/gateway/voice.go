@@ -54,34 +54,35 @@ type VoiceServer struct {
 	store *store.Store
 	log   *slog.Logger
 
-	udp         *net.UDPConn
-	ip          string
-	port        int
-	mu          sync.Mutex
-	conns       map[*voiceConn]struct{}
-	session     atomic.Int64
-	rtp         atomic.Int64
-	speak       atomic.Int64
-	forwarded   atomic.Int64
-	transcodes  atomic.Int64
-	publish     func(name string, data any)
-	codecReady  bool
-	done        chan struct{}
-	tick        *time.Ticker
-	mixMu       sync.Mutex
-	mixers      map[string]*channelMixer
-	mixes       atomic.Int64
-	e2eeGaps    atomic.Int64
-	e2eeDupes   atomic.Int64
-	remoteMu    sync.Mutex
-	remote      map[uint32]*remoteOpaque
-	mlsMu       sync.Mutex
-	mlsRoster   map[string][]mls.Leaf
-	mlsSuite    map[string]mls.Ciphersuite
-	mlsSign     map[string]map[string]ed25519.PublicKey
-	mlsUserSign map[string]ed25519.PublicKey
-	instanceID  string
-	clusterMix  bool
+	udp          *net.UDPConn
+	ip           string
+	port         int
+	mu           sync.Mutex
+	conns        map[*voiceConn]struct{}
+	session      atomic.Int64
+	rtp          atomic.Int64
+	speak        atomic.Int64
+	forwarded    atomic.Int64
+	transcodes   atomic.Int64
+	publish      func(name string, data any)
+	codecReady   bool
+	done         chan struct{}
+	tick         *time.Ticker
+	mixMu        sync.Mutex
+	mixers       map[string]*channelMixer
+	mixes        atomic.Int64
+	e2eeGaps     atomic.Int64
+	e2eeDupes    atomic.Int64
+	remoteMu     sync.Mutex
+	remote       map[uint32]*remoteOpaque
+	mlsMu        sync.Mutex
+	mlsRoster    map[string][]mls.Leaf
+	mlsSuite     map[string]mls.Ciphersuite
+	mlsProposals map[string]map[string]mls.ProposalMessage
+	mlsSign      map[string]map[string]ed25519.PublicKey
+	mlsUserSign  map[string]ed25519.PublicKey
+	instanceID   string
+	clusterMix   bool
 }
 
 // VoiceOptions tunes the advertised address.
@@ -406,6 +407,40 @@ func (v *VoiceServer) rememberMLSKey(channel, userID string, key ed25519.PublicK
 // the last accepted roster per channel, so a later commit cannot rewrite history. The
 // first commit in a channel is trusted to declare the roster (trust-on-first-use) and
 // must carry no proposals.
+// validateProposalMessage checks a standalone proposal: its proposer must be a known
+// member with a registered credential, and its reference/signature must verify.
+func (v *VoiceServer) validateProposalMessage(channel string, m mls.ProposalMessage) error {
+	rawKeys, err := v.store.MLSCredentials()
+	if err != nil {
+		return err
+	}
+	keys := map[string]ed25519.PublicKey{}
+	for uid, hexKey := range rawKeys {
+		if sk, err := hex.DecodeString(hexKey); err == nil && len(sk) == ed25519.PublicKeySize {
+			keys[uid] = ed25519.PublicKey(sk)
+		}
+	}
+	if _, ok := keys[m.Proposer]; !ok {
+		return mls.ErrVerification
+	}
+	v.mlsMu.Lock()
+	prev := v.mlsRoster[channel]
+	v.mlsMu.Unlock()
+	if len(prev) > 0 && leafIndexGateway(prev, m.Proposer) < 0 {
+		return mls.ErrVerification
+	}
+	return mls.VerifyProposalMessage(m, keys)
+}
+
+func leafIndexGateway(roster []mls.Leaf, userID string) int {
+	for i := range roster {
+		if roster[i].UserID == userID {
+			return i
+		}
+	}
+	return -1
+}
+
 func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) error {
 	// Signing keys come from the persisted directory, not from whatever arrived on
 	// the wire most recently.
@@ -444,7 +479,13 @@ func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) erro
 		}
 		prev = ec.Roster
 	}
-	if err := mls.VerifyEpochCommitWithSuite(ec, prev, prevSuite, keys); err != nil {
+	v.mlsMu.Lock()
+	external := map[string]mls.ProposalMessage{}
+	for ref, m := range v.mlsProposals[channel] {
+		external[ref] = m
+	}
+	v.mlsMu.Unlock()
+	if err := mls.VerifyEpochCommitWithProposals(ec, prev, prevSuite, external, keys); err != nil {
 		return err
 	}
 	v.mlsMu.Lock()
@@ -1564,7 +1605,7 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				c.close(voiceCloseUnknownOpcode, "Invalid commit")
 				return
 			}
-			commit, err := mls.UnmarshalMLSMessage(payload.MLSMessage)
+			format, err := mls.MLSMessageFormat(payload.MLSMessage)
 			if err != nil {
 				c.close(voiceCloseUnknownOpcode, "Invalid MLS message")
 				return
@@ -1576,11 +1617,40 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 			if channel == "" {
 				continue
 			}
-			if err := v.validateMLSCommit(channel, commit); err != nil {
-				c.close(voiceCloseUnknownOpcode, "Invalid MLS commit")
-				return
+			switch format {
+			case 2: // standalone proposal message, stored for later reference
+				pm, perr := mls.UnmarshalProposalMessage(payload.MLSMessage)
+				if perr != nil {
+					c.close(voiceCloseUnknownOpcode, "Invalid MLS proposal")
+					return
+				}
+				if err := v.validateProposalMessage(channel, pm); err != nil {
+					c.close(voiceCloseUnknownOpcode, "Invalid MLS proposal")
+					return
+				}
+				v.mlsMu.Lock()
+				if v.mlsProposals == nil {
+					v.mlsProposals = map[string]map[string]mls.ProposalMessage{}
+				}
+				if v.mlsProposals[channel] == nil {
+					v.mlsProposals[channel] = map[string]mls.ProposalMessage{}
+				}
+				v.mlsProposals[channel][pm.Ref] = pm
+				v.mlsMu.Unlock()
+				v.relayCommit(channel, sender, payload.MLSMessage)
+				continue
+			default:
+				commit, derr := mls.UnmarshalMLSMessage(payload.MLSMessage)
+				if derr != nil {
+					c.close(voiceCloseUnknownOpcode, "Invalid MLS message")
+					return
+				}
+				if err := v.validateMLSCommit(channel, commit); err != nil {
+					c.close(voiceCloseUnknownOpcode, "Invalid MLS commit")
+					return
+				}
+				v.relayCommit(channel, sender, payload.MLSMessage)
 			}
-			v.relayCommit(channel, sender, payload.MLSMessage)
 		case voiceOpHeartbeat:
 			c.send(map[string]any{"op": voiceOpHeartbeatAck, "d": map[string]any{"t": time.Now().UnixMilli()}})
 		case voiceOpSpeaking:

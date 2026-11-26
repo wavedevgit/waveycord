@@ -417,6 +417,12 @@ func Verify(c Commit, previous []Leaf, signKeys map[string]ed25519.PublicKey) er
 // may only change through a signed ciphersuite proposal, and an unchanged suite must
 // match the previous epoch's.
 func VerifyWithSuite(c Commit, previous []Leaf, previousSuite Ciphersuite, signKeys map[string]ed25519.PublicKey) error {
+	return VerifyWithProposals(c, previous, previousSuite, nil, signKeys)
+}
+
+// VerifyWithProposals resolves proposal references that are not carried inside the
+// commit from a cache of previously relayed proposal messages.
+func VerifyWithProposals(c Commit, previous []Leaf, previousSuite Ciphersuite, external map[string]ProposalMessage, signKeys map[string]ed25519.PublicKey) error {
 	if !c.CipherSuite.Supported() {
 		return ErrVerification
 	}
@@ -437,39 +443,48 @@ func VerifyWithSuite(c Commit, previous []Leaf, previousSuite Ciphersuite, signK
 	} else if previousSuite != 0 && c.CipherSuite != previousSuite {
 		return ErrVerification
 	}
-	// Every proposal travels as a signed wire message, and the commit references the
-	// exact message, so neither the body nor the signature can be swapped.
-	if len(c.ProposalMessages) != len(c.Proposals) {
+	// Proposals are either carried by value (with their signed message) or referenced
+	// by ref from a previously relayed proposal; the signed ref list orders them.
+	if len(c.ProposalMessages) > len(c.Proposals) || len(c.ProposalRefs) != len(c.Proposals) {
 		return ErrVerification
 	}
-	for i, m := range c.ProposalMessages {
+	bodyMatches := func(m ProposalMessage, i int) bool {
 		body, _ := json.Marshal(m.Proposal)
 		want, _ := json.Marshal(c.Proposals[i])
-		if string(body) != string(want) {
+		return string(body) == string(want)
+	}
+	proposerOK := func(m ProposalMessage) bool {
+		return leafIndex(previous, m.Proposer) >= 0
+	}
+	seenRef := map[string]bool{}
+	for i := range c.Proposals {
+		ref := c.ProposalRefs[i]
+		if ref == "" || seenRef[ref] {
 			return ErrVerification
 		}
-		// The proposer may be any member of the previous roster, not only the
-		// committer; the signature is checked against that member's signing key.
-		if leafIndex(previous, m.Proposer) < 0 {
+		seenRef[ref] = true
+		var m ProposalMessage
+		if i < len(c.ProposalMessages) {
+			m = c.ProposalMessages[i]
+			if ProposalMessageRef(m) != ref || m.Ref != ref {
+				return ErrVerification
+			}
+		} else {
+			ext, ok := external[ref]
+			if !ok {
+				return ErrVerification
+			}
+			m = ext
+			if ProposalMessageRef(m) != ref || m.Ref != ref {
+				return ErrVerification
+			}
+		}
+		if !bodyMatches(m, i) || !proposerOK(m) {
 			return ErrVerification
 		}
 		if err := VerifyProposalMessage(m, signKeys); err != nil {
 			return err
 		}
-	}
-	refs := ProposalRefsFor(c.ProposalMessages)
-	if len(refs) != len(c.ProposalRefs) {
-		return ErrVerification
-	}
-	seenRef := map[string]bool{}
-	for i := range refs {
-		if refs[i] != c.ProposalRefs[i] || c.ProposalMessages[i].Ref != refs[i] {
-			return ErrVerification
-		}
-		if seenRef[refs[i]] {
-			return ErrVerification
-		}
-		seenRef[refs[i]] = true
 	}
 	expected, err := ApplyProposals(previous, c.Proposals)
 	if err != nil {

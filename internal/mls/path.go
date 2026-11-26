@@ -588,6 +588,37 @@ func VerifyEpochCommitWithSuite(c EpochCommit, previous []Leaf, previousSuite Ci
 	return VerifyWithSuite(c.Commit, previous, previousSuite, signKeys)
 }
 
+// VerifyEpochCommitWithProposals verifies a commit whose proposal list may reference
+// previously relayed proposals by ref.
+func VerifyEpochCommitWithProposals(c EpochCommit, previous []Leaf, previousSuite Ciphersuite, external map[string]ProposalMessage, signKeys map[string]ed25519.PublicKey) error {
+	if c.Path == nil || len(c.Path.Publics) == 0 {
+		return ErrVerification
+	}
+	if c.Path.CommitterLeaf < 1 {
+		return ErrVerification
+	}
+	return VerifyWithProposals(c.Commit, previous, previousSuite, external, signKeys)
+}
+
+// NewEpochCommitExternal builds a commit carrying some proposals by value and
+// referencing the rest from previously relayed proposal messages.
+func NewEpochCommitExternal(epoch uint32, roster []Leaf, proposals []Proposal, included, external []ProposalMessage, suite Ciphersuite, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previous *TreeState) (EpochCommit, *Epoch, error) {
+	if len(included)+len(external) != len(proposals) {
+		return EpochCommit{}, nil, fmt.Errorf("mls: proposals and messages disagree")
+	}
+	full := append(append([]ProposalMessage(nil), included...), external...)
+	commit, epochState, err := NewEpochCommitWithSuite(epoch, roster, proposals, full, suite,
+		committerID, committerSignPriv, committerLeafPriv, previous)
+	if err != nil {
+		return EpochCommit{}, nil, err
+	}
+	// Only the by-value messages travel inside the commit; the signed ref list still
+	// covers every proposal in order.
+	commit.ProposalMessages = append([]ProposalMessage(nil), included...)
+	commit.Signature = ed25519.Sign(committerSignPriv, canonical(commit.Commit))
+	return commit, epochState, nil
+}
+
 // VerifyEpochCommit verifies the commit signature and roster transition, including
 // the path chain shape.
 func VerifyEpochCommit(c EpochCommit, previous []Leaf, signKeys map[string]ed25519.PublicKey) error {
