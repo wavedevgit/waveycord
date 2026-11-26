@@ -599,6 +599,11 @@ CREATE TABLE IF NOT EXISTS scheduled_events (
     created_at           BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS scheduled_events_guild ON scheduled_events (guild_id);
+CREATE TABLE IF NOT EXISTS scheduled_event_users (
+    event_id TEXT NOT NULL REFERENCES scheduled_events(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (event_id, user_id)
+);
 
 CREATE TABLE IF NOT EXISTS stage_instances (
     id                       TEXT PRIMARY KEY,

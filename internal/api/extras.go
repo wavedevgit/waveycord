@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -329,6 +330,12 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 		c.FailForm("status", "Must be 1-4")
 		return
 	}
+	if req.Status != nil && *req.Status != event.Status &&
+		!((event.Status == 1 && (*req.Status == 2 || *req.Status == 4)) ||
+			(event.Status == 2 && *req.Status == 3)) {
+		c.FailForm("status", "Invalid scheduled event status transition")
+		return
+	}
 	updated, err := s.Store.UpdateScheduledEvent(g.ID, event.ID, store.UpdateEventParams{
 		Name: req.Name, Description: req.Description, ChannelID: req.ChannelID,
 		Start: req.Start, End: req.End, Status: req.Status,
@@ -365,8 +372,7 @@ func (s *Server) handleDeleteScheduledEvent(c *Ctx) {
 	c.NoContent()
 }
 
-// handleEventUsers answers with the interested users; interest registration is not
-// implemented, so the list is empty.
+// handleEventUsers returns persisted subscriptions with bounded pagination.
 func (s *Server) handleEventUsers(c *Ctx) {
 	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), 0)
 	if err != nil {
@@ -378,7 +384,53 @@ func (s *Server) handleEventUsers(c *Ctx) {
 		fail(c, NewError(404, 10000, "Unknown Guild Scheduled Event"))
 		return
 	}
-	c.JSON([]any{})
+	q := c.R.URL.Query()
+	limit := 100
+	if value := q.Get("limit"); value != "" {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 100 {
+			fail(c, NewError(400, 50035, "Invalid limit"))
+			return
+		}
+		limit = n
+	}
+	users, err := s.Store.EventUsers(event.ID, g.ID, q.Get("before"), q.Get("after"), limit, q.Get("with_member") == "true")
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(users)
+}
+
+func (s *Server) handleEventInterest(c *Ctx) {
+	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), 0)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	event, err := s.Store.ScheduledEvent(c.Param("eventID"))
+	if err != nil || event.GuildID != g.ID {
+		fail(c, NewError(404, 10000, "Unknown Guild Scheduled Event"))
+		return
+	}
+	interested := c.R.Method == http.MethodPut
+	changed, err := s.Store.SetEventInterest(event.ID, c.User.ID, interested)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if changed && s.Hub != nil {
+		name := "GUILD_SCHEDULED_EVENT_USER_REMOVE"
+		if interested {
+			name = "GUILD_SCHEDULED_EVENT_USER_ADD"
+		}
+		s.Hub.DispatchGuild(g.ID, name, map[string]any{"guild_id": g.ID, "guild_scheduled_event_id": event.ID, "user_id": c.User.ID})
+	}
+	if !interested {
+		c.NoContent()
+		return
+	}
+	c.JSON(store.EventUser{EventID: event.ID, UserID: c.User.ID, Response: 1})
 }
 
 // --- stage instances ---

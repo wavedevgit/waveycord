@@ -154,14 +154,53 @@ func TestScheduledEvents(t *testing.T) {
 		Name   string `json:"name"`
 		Status int    `json:"status"`
 	}
+	if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, map[string]any{"status": 3}); status != 400 {
+		t.Fatalf("invalid transition %d", status)
+	}
+	if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, map[string]any{"status": 2}); status != 200 {
+		t.Fatalf("start event %d", status)
+	}
 	if status := h.decode("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, map[string]any{
 		"name": "Meetup (completed)", "status": 3,
 	}, &updated); status != 200 || updated.Status != 3 {
 		t.Fatalf("patch event %d %+v", status, updated)
 	}
 	var users []any
-	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID+"/users", alice.Token, nil, &users); status != 200 || len(users) != 0 {
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID+"/users", alice.Token, nil, &users); status != 200 || len(users) != 1 {
 		t.Fatalf("event users %d %+v", status, users)
+	}
+	interestPath := "/guilds/" + guild.ID + "/scheduled-events/" + external.ID + "/users"
+	for i := 0; i < 2; i++ {
+		if status, _ := h.request("PUT", interestPath+"/@me", alice.Token, nil); status != 200 {
+			t.Fatalf("subscribe: %d", status)
+		}
+	}
+	var subscribers []struct {
+		User   struct{ ID string } `json:"user"`
+		Member map[string]any      `json:"member"`
+	}
+	if status := h.decode("GET", interestPath+"?with_member=true&limit=1", alice.Token, nil, &subscribers); status != 200 || len(subscribers) != 1 || subscribers[0].User.ID != alice.ID || subscribers[0].Member == nil {
+		t.Fatalf("subscribers %d %+v", status, subscribers)
+	}
+	var counted struct {
+		Count int `json:"user_count"`
+	}
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID+"?with_user_count=true", alice.Token, nil, &counted); status != 200 || counted.Count != 1 {
+		t.Fatalf("event count %d %+v", status, counted)
+	}
+	if status := h.decode("GET", interestPath+"?after="+alice.ID, alice.Token, nil, &users); status != 200 || len(users) != 0 {
+		t.Fatalf("after %d %+v", status, users)
+	}
+	if status, _ := h.request("GET", interestPath+"?limit=101", alice.Token, nil); status != 400 {
+		t.Fatalf("limit %d", status)
+	}
+	for i := 0; i < 2; i++ {
+		if status, _ := h.request("DELETE", interestPath+"/@me", alice.Token, nil); status != 204 {
+			t.Fatalf("unsubscribe %d", status)
+		}
+	}
+	if status := h.decode("GET", interestPath, alice.Token, nil, &users); status != 200 || len(users) != 0 {
+		t.Fatalf("unsubscribed %d %+v", status, users)
 	}
 	if status := h.decode("DELETE", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, nil, nil); status != 204 {
 		t.Fatalf("delete event %d", status)

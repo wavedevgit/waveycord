@@ -315,13 +315,24 @@ type CreateEventParams struct {
 func (s *Store) CreateScheduledEvent(guildID, creatorID string, p CreateEventParams) (ScheduledEvent, error) {
 	meta, _ := json.Marshal(p.EntityMetadata)
 	id := s.NewID()
-	_, err := s.DB.Exec(`INSERT INTO scheduled_events
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return ScheduledEvent{}, mapErr(err)
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(`INSERT INTO scheduled_events
 		(id, guild_id, channel_id, creator_id, name, description, scheduled_start_time,
 		 scheduled_end_time, privacy_level, status, entity_type, entity_id, entity_metadata, image, created_at)
 		VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
 		id, guildID, p.ChannelID, creatorID, p.Name, p.Description, p.Start, p.End,
 		p.PrivacyLevel, p.EntityType, p.ChannelID, string(meta), p.Image, now())
 	if err != nil {
+		return ScheduledEvent{}, mapErr(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO scheduled_event_users (event_id, user_id) VALUES (?,?)`, id, creatorID); err != nil {
+		return ScheduledEvent{}, mapErr(err)
+	}
+	if err := tx.Commit(); err != nil {
 		return ScheduledEvent{}, mapErr(err)
 	}
 	return s.ScheduledEvent(id)
@@ -337,6 +348,10 @@ func (s *Store) ScheduledEvent(id string) (ScheduledEvent, error) {
 		if u, err := s.UserByID(*e.CreatorID); err == nil {
 			e.Creator = &u
 		}
+	}
+	e.UserCount, err = s.EventUserCount(e.ID)
+	if err != nil {
+		return e, err
 	}
 	return e, nil
 }
@@ -362,6 +377,11 @@ func (s *Store) ScheduledEvents(guildID string) ([]ScheduledEvent, error) {
 	}
 	out := make([]ScheduledEvent, 0, len(raw))
 	for i := range raw {
+		count, err := s.EventUserCount(raw[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		raw[i].UserCount = count
 		if raw[i].CreatorID != nil {
 			if u, err := s.UserByID(*raw[i].CreatorID); err == nil {
 				raw[i].Creator = &u
