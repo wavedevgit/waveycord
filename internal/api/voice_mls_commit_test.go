@@ -332,25 +332,25 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	signKeyMap := map[string]ed25519.PublicKey{
 		alice.ID: aliceSignPub, bob.ID: bobSignPub, charlie.ID: charlieSignPub,
 	}
-	commit2, epoch2State, err := mls.NewCommit(2, leaves1,
-		[]mls.Proposal{{Type: "remove", UserID: charlie.ID}}, alice.ID, aliceSignPriv)
+	commit2, epoch2State, err := mls.NewEpochCommit(2, leaves1,
+		[]mls.Proposal{{Type: "remove", UserID: charlie.ID}}, alice.ID, aliceSignPriv, alicePriv)
 	if err != nil {
 		t.Fatalf("epoch2 commit: %v", err)
 	}
-	if err := mls.Verify(commit2, leaves1, signKeyMap); err != nil {
+	if err := mls.VerifyEpochCommit(commit2, leaves1, signKeyMap); err != nil {
 		t.Fatalf("epoch2 verify: %v", err)
 	}
 	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit2})
 	cf := readVoiceOp(t, bobVoice, 38, time.Now().Add(10*time.Second))
-	var relayed mls.Commit
+	var relayed mls.EpochCommit
 	rawCommit, _ := jsonMarshal(cf["d"].(map[string]any)["commit"])
 	if err := jsonUnmarshalBytes(rawCommit, &relayed); err != nil {
 		t.Fatalf("decode epoch2 commit: %v", err)
 	}
-	if err := mls.Verify(relayed, leaves1, signKeyMap); err != nil {
+	if err := mls.VerifyEpochCommit(relayed, leaves1, signKeyMap); err != nil {
 		t.Fatalf("relayed epoch2 verify: %v", err)
 	}
-	bobRoot, err := mls.DecryptRoot(relayed, bob.ID, bobPriv)
+	bobRoot, err := mls.DerivePathRoot(relayed, bob.ID, bobPriv)
 	if err != nil {
 		t.Fatalf("bob decrypt epoch2 root: %v", err)
 	}
@@ -376,9 +376,41 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		}
 	}
 
-	// The removed member cannot decrypt the MLS epoch-2 root at all.
-	if _, err := mls.DecryptRoot(relayed, charlie.ID, charliePriv); err == nil {
-		t.Fatal("removed member decrypted the MLS epoch-2 envelope")
+	// Epoch 3 adds Dave, who joins from the Welcome and can decrypt media.
+	dave := "user-dave"
+	davePriv, davePub := clientKeypair(t)
+	daveSignPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	signKeyMap[dave] = daveSignPub
+	commit3, epoch3State, err := mls.NewEpochCommit(3, commit2.Roster,
+		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}}, alice.ID, aliceSignPriv, alicePriv)
+	if err != nil {
+		t.Fatalf("epoch3 commit: %v", err)
+	}
+	if err := mls.VerifyEpochCommit(commit3, commit2.Roster, signKeyMap); err != nil {
+		t.Fatalf("epoch3 verify: %v", err)
+	}
+	daveRoot, err := mls.DecryptWelcome(commit3, dave, davePriv)
+	if err != nil {
+		t.Fatalf("dave welcome: %v", err)
+	}
+	if !bytes.Equal(daveRoot, epoch3State.Root) {
+		t.Fatal("dave welcome root mismatch")
+	}
+	daveKey3 := gcmFromKey(t, mls.EpochSecret(daveRoot, commit3.Roster))
+	aliceKey3 := gcmFromKey(t, mls.EpochSecret(epoch3State.Root, commit3.Roster))
+	packet3 := sendMedia(aliceKey3, 3, 5, "WELCOME-EPOCH3")
+	counter3 := binary.BigEndian.Uint64(packet3[8:16])
+	plain3, err := daveKey3.Open(nil, clientNonce(counter3), packet3[20:], packet3[0:20])
+	if err != nil || !bytes.Contains(plain3, []byte("WELCOME-EPOCH3")) {
+		t.Fatalf("dave could not decrypt epoch-3 media: %v", err)
+	}
+
+	// The removed member has no path envelope and cannot derive the epoch-2 root.
+	if _, err := mls.DerivePathRoot(relayed, charlie.ID, charliePriv); err == nil {
+		t.Fatal("removed member derived the path root")
+	}
+	if _, err := mls.DecryptWelcome(relayed, charlie.ID, charliePriv); err == nil {
+		t.Fatal("removed member had a Welcome")
 	}
 
 	// Forged commits fail roster authentication.

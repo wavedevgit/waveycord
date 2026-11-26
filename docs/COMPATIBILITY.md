@@ -99,6 +99,7 @@ route is not registered yet.
 | Joint epoch secret from per-member contributions (TreeKEM-style) | implemented + tested |
 | Signed roster commit (op 38) + tree-derived epoch secret | implemented + tested |
 | `internal/mls`: HPKE envelopes, Add/Remove proposals, binary tree key schedule | implemented + tested (TreeKEM-style, not RFC 9420) |
+| Path secrets (per-divergence envelopes) + Welcome for added members | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
 
