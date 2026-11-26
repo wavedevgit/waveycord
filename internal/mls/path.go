@@ -136,7 +136,8 @@ func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committer
 		node = parent
 	}
 	root := secrets[1]
-	commit := EpochCommit{Commit: Commit{Epoch: epoch, Roster: next, Proposals: proposals,
+	commit := EpochCommit{Commit: Commit{Epoch: epoch, CipherSuite: SuiteX25519AES256GCM,
+		ProposalRefs: ProposalRefs(proposals), Roster: next, Proposals: proposals,
 		Envelopes: map[string]Envelope{}, Committer: committerID}}
 	commit.Path = path
 	commit.Welcome = map[string]Welcome{}

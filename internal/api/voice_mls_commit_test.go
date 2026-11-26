@@ -141,8 +141,8 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	bobVoice, bobReady := voiceEndpoint(t, b, bobToken, bob.ID)
 	// Charlie joins after the two voice websockets exist so both see the roster.
 	charlieMain, charlieToken := a.joinVoiceConn(charlie, guild.ID, voice.ID)
-	aliceRekey := readVoiceOp(t, aliceVoice, 36, time.Now().Add(10*time.Second))
-	bobRekey := readVoiceOp(t, bobVoice, 36, time.Now().Add(10*time.Second))
+	aliceRekey := readVoiceOp(t, aliceVoice, 36, time.Now().Add(20*time.Second))
+	bobRekey := readVoiceOp(t, bobVoice, 36, time.Now().Add(20*time.Second))
 	roster := func(f map[string]any) []string {
 		raw := f["d"].(map[string]any)["members"].([]any)
 		out := make([]string, 0, len(raw))
@@ -201,7 +201,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		for _, p := range peers {
 			need[p] = true
 		}
-		until := time.Now().Add(10 * time.Second)
+		until := time.Now().Add(20 * time.Second)
 		for len(need) > 0 && time.Now().Before(until) {
 			f := readVoice(t, conn, until)
 			if f["op"].(float64) != 35 {
@@ -243,7 +243,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	}
 	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit1})
 	for _, conn := range []*websocket.Conn{bobVoice, charlieVoice} {
-		f := readVoiceOp(t, conn, 38, time.Now().Add(10*time.Second))
+		f := readVoiceOp(t, conn, 38, time.Now().Add(20*time.Second))
 		var got mlsCommit
 		raw := f["d"].(map[string]any)["commit"]
 		buf, _ := jsonMarshal(raw)
@@ -297,7 +297,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error)
 	}, want string) {
 		t.Helper()
-		_ = udp.SetReadDeadline(time.Now().Add(10 * time.Second))
+		_ = udp.SetReadDeadline(time.Now().Add(20 * time.Second))
 		buf := make([]byte, 1500)
 		n, _, err := udp.ReadFromUDP(buf)
 		if err != nil {
@@ -319,7 +319,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	// Charlie leaves; Alice commits epoch 2 with an MLS Remove proposal using the
 	// internal/mls key schedule, relayed to the other instance.
 	writeFrame(t, charlieMain, map[string]any{"op": 4, "d": map[string]any{"guild_id": guild.ID, "channel_id": nil}})
-	left := readVoiceOp(t, bobVoice, 36, time.Now().Add(10*time.Second))
+	left := readVoiceOp(t, bobVoice, 36, time.Now().Add(20*time.Second))
 	roster2 := roster(left)
 	if len(roster2) != 2 {
 		t.Fatalf("epoch2 roster = %v", roster2)
@@ -341,7 +341,7 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		t.Fatalf("epoch2 verify: %v", err)
 	}
 	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit2})
-	cf := readVoiceOp(t, bobVoice, 38, time.Now().Add(10*time.Second))
+	cf := readVoiceOp(t, bobVoice, 38, time.Now().Add(20*time.Second))
 	var relayed mls.EpochCommit
 	rawCommit, _ := jsonMarshal(cf["d"].(map[string]any)["commit"])
 	if err := jsonUnmarshalBytes(rawCommit, &relayed); err != nil {

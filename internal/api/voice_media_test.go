@@ -106,10 +106,7 @@ func TestVoiceMediaBoundary(t *testing.T) {
 	writeVoice(t, bobConn, map[string]any{"op": 0, "d": map[string]any{
 		"server_id": guild.ID, "user_id": bob.ID, "session_id": "sess", "token": bobToken,
 	}})
-	ready := readVoice(t, bobConn, deadline)
-	if ready["op"].(float64) != 2 {
-		t.Fatalf("expected READY: %+v", ready)
-	}
+	ready := readVoiceOp(t, bobConn, 2, deadline)
 	d := ready["d"].(map[string]any)
 	ssrc := uint32(d["ssrc"].(float64))
 	udpIP, _ := d["ip"].(string)
@@ -157,10 +154,7 @@ func TestVoiceMediaBoundary(t *testing.T) {
 		"protocol": "udp",
 		"data":     map[string]any{"address": udpIP, "port": udpPort, "mode": "opus"},
 	}})
-	session := readVoice(t, bobConn, deadline)
-	if session["op"].(float64) != 4 {
-		t.Fatalf("expected SESSION_DESCRIPTION: %+v", session)
-	}
+	session := readVoiceOp(t, bobConn, 4, deadline)
 	sd := session["d"].(map[string]any)
 	key := sd["secret_key"].([]any)
 	if sd["mode"] != "opus" || len(key) != 32 {
@@ -177,9 +171,7 @@ func TestVoiceMediaBoundary(t *testing.T) {
 	writeVoice(t, aliceConn, map[string]any{"op": 0, "d": map[string]any{
 		"server_id": guild.ID, "user_id": alice.ID, "session_id": "sess2", "token": aliceToken,
 	}})
-	if f := readVoice(t, aliceConn, deadline); f["op"].(float64) != 2 {
-		t.Fatalf("alice expected READY: %+v", f)
-	}
+	readVoiceOp(t, aliceConn, 2, deadline)
 	writeVoice(t, bobConn, map[string]any{"op": 5, "d": map[string]any{"speaking": 1, "delay": 0, "ssrc": ssrc}})
 	sp := readVoice(t, aliceConn, deadline)
 	if sp["op"].(float64) != 5 {

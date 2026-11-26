@@ -146,7 +146,7 @@ func TestClusterE2EEGroupKey(t *testing.T) {
 
 	waitKey := func(conn interface{}, wantUser string) {
 		t.Helper()
-		until := time.Now().Add(10 * time.Second)
+		until := time.Now().Add(20 * time.Second)
 		for time.Now().Before(until) {
 			f := readVoiceAny(t, conn, until)
 			if f["op"].(float64) != 34 {
@@ -173,7 +173,7 @@ func TestClusterE2EEGroupKey(t *testing.T) {
 
 	var bobGroup cipher.AEAD
 	for bobGroup == nil {
-		f := readVoiceAny(t, bobVoice, time.Now().Add(10*time.Second))
+		f := readVoiceAny(t, bobVoice, time.Now().Add(20*time.Second))
 		if f["op"].(float64) != 35 {
 			continue
 		}
@@ -218,7 +218,7 @@ func TestClusterE2EEGroupKey(t *testing.T) {
 		t.Fatalf("send e2ee media: %v", err)
 	}
 
-	_ = bobRecv.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = bobRecv.SetReadDeadline(time.Now().Add(20 * time.Second))
 	buf := make([]byte, 1500)
 	n, _, err := bobRecv.ReadFromUDP(buf)
 	if err != nil {

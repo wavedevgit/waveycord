@@ -25,6 +25,17 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+// Ciphersuite identifies the negotiated primitives. Only one suite is implemented;
+// unknown values are rejected by Verify.
+type Ciphersuite uint16
+
+// SuiteX25519AES256GCM is X25519 for HPKE, HKDF-SHA256 for derivation and
+// AES-256-GCM for AEAD.
+const SuiteX25519AES256GCM Ciphersuite = 0x0001
+
+// Supported reports whether the suite is implemented.
+func (c Ciphersuite) Supported() bool { return c == SuiteX25519AES256GCM }
+
 // Leaf is one roster member.
 type Leaf struct {
 	UserID string   `json:"user_id"`
@@ -47,12 +58,14 @@ type Envelope struct {
 
 // Commit is the signed epoch transition.
 type Commit struct {
-	Epoch     uint32              `json:"epoch"`
-	Roster    []Leaf              `json:"roster"`
-	Proposals []Proposal          `json:"proposals"`
-	Envelopes map[string]Envelope `json:"envelopes"`
-	Committer string              `json:"committer"`
-	Signature []byte              `json:"signature"`
+	Epoch        uint32              `json:"epoch"`
+	CipherSuite  Ciphersuite         `json:"cipher_suite"`
+	ProposalRefs []string            `json:"proposal_refs"`
+	Roster       []Leaf              `json:"roster"`
+	Proposals    []Proposal          `json:"proposals"`
+	Envelopes    map[string]Envelope `json:"envelopes"`
+	Committer    string              `json:"committer"`
+	Signature    []byte              `json:"signature"`
 }
 
 // Epoch is a committed key schedule.
@@ -77,18 +90,36 @@ func hkdfBytes(secret []byte, salt, info string, n int) []byte {
 
 func canonical(c Commit) []byte {
 	type canon struct {
-		Epoch     uint32              `json:"epoch"`
-		Roster    []Leaf              `json:"roster"`
-		Proposals []Proposal          `json:"proposals"`
-		Envelopes map[string]Envelope `json:"envelopes"`
-		Committer string              `json:"committer"`
+		Epoch        uint32              `json:"epoch"`
+		CipherSuite  Ciphersuite         `json:"cipher_suite"`
+		ProposalRefs []string            `json:"proposal_refs"`
+		Roster       []Leaf              `json:"roster"`
+		Proposals    []Proposal          `json:"proposals"`
+		Envelopes    map[string]Envelope `json:"envelopes"`
+		Committer    string              `json:"committer"`
 	}
-	raw, _ := json.Marshal(canon{c.Epoch, c.Roster, c.Proposals, c.Envelopes, c.Committer})
+	raw, _ := json.Marshal(canon{c.Epoch, c.CipherSuite, c.ProposalRefs, c.Roster, c.Proposals, c.Envelopes, c.Committer})
 	return raw
 }
 
 // CommitError marks verification failures.
 var ErrVerification = errors.New("mls: commit verification failed")
+
+// ProposalRef is the commit reference for one proposal.
+func ProposalRef(p Proposal) string {
+	raw, _ := json.Marshal(p)
+	sum := sha256.Sum256(append([]byte("proposal|"), raw...))
+	return fmt.Sprintf("%x", sum[:16])
+}
+
+// ProposalRefs computes the reference list for a proposal slice.
+func ProposalRefs(proposals []Proposal) []string {
+	out := make([]string, 0, len(proposals))
+	for _, p := range proposals {
+		out = append(out, ProposalRef(p))
+	}
+	return out
+}
 
 // ApplyProposals validates and applies Add/Remove proposals to a roster.
 func ApplyProposals(roster []Leaf, proposals []Proposal) ([]Leaf, error) {
@@ -140,7 +171,9 @@ func NewCommit(epoch uint32, roster []Leaf, proposals []Proposal, committerID st
 	if _, err := rand.Read(root); err != nil {
 		return Commit{}, nil, err
 	}
-	commit := Commit{Epoch: epoch, Roster: next, Proposals: proposals, Envelopes: map[string]Envelope{}, Committer: committerID}
+	commit := Commit{Epoch: epoch, CipherSuite: SuiteX25519AES256GCM,
+		ProposalRefs: ProposalRefs(proposals), Roster: next, Proposals: proposals,
+		Envelopes: map[string]Envelope{}, Committer: committerID}
 	for _, leaf := range next {
 		env, err := sealRoot(root, leaf)
 		if err != nil {
@@ -186,6 +219,18 @@ func sealRoot(root []byte, leaf Leaf) (Envelope, error) {
 
 // Verify checks the signature, roster transition and proposer membership.
 func Verify(c Commit, previous []Leaf, signKeys map[string]ed25519.PublicKey) error {
+	if !c.CipherSuite.Supported() {
+		return ErrVerification
+	}
+	refs := ProposalRefs(c.Proposals)
+	if len(refs) != len(c.ProposalRefs) {
+		return ErrVerification
+	}
+	for i := range refs {
+		if refs[i] != c.ProposalRefs[i] {
+			return ErrVerification
+		}
+	}
 	expected, err := ApplyProposals(previous, c.Proposals)
 	if err != nil {
 		return err

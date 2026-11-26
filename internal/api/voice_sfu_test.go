@@ -60,10 +60,8 @@ func selectProtocol(t *testing.T, conn *websocket.Conn, recv *net.UDPConn) {
 			"mode":    "opus",
 		},
 	}})
-	deadline := time.Now().Add(5 * time.Second)
-	if f := readVoice(t, conn, deadline); f["op"].(float64) != 4 {
-		t.Fatalf("expected SESSION_DESCRIPTION: %+v", f)
-	}
+	// Rekey/roster frames can interleave; wait for the session description.
+	readVoiceOp(t, conn, 4, time.Now().Add(20*time.Second))
 }
 
 func rtpPacket(ssrc uint32, payload string) []byte {

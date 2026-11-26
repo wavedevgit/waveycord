@@ -123,7 +123,7 @@ func TestVoiceMLSEpochRatchet(t *testing.T) {
 		for _, p := range peers {
 			need[p] = true
 		}
-		until := time.Now().Add(10 * time.Second)
+		until := time.Now().Add(20 * time.Second)
 		for len(need) > 0 && time.Now().Before(until) {
 			f := readVoice(t, voiceConnOf(conns, self), until)
 			if f["op"].(float64) != 35 {
@@ -181,7 +181,7 @@ func TestVoiceMLSEpochRatchet(t *testing.T) {
 	}
 	readDecrypt := func(udp *net.UDPConn, gcm cipher.AEAD, keyID uint32, want string) {
 		t.Helper()
-		_ = udp.SetReadDeadline(time.Now().Add(10 * time.Second))
+		_ = udp.SetReadDeadline(time.Now().Add(20 * time.Second))
 		buf := make([]byte, 1500)
 		n, _, err := udp.ReadFromUDP(buf)
 		if err != nil {
@@ -206,7 +206,7 @@ func TestVoiceMLSEpochRatchet(t *testing.T) {
 	writeFrame(t, charlieMain, map[string]any{"op": 4, "d": map[string]any{
 		"guild_id": guild.ID, "channel_id": nil,
 	}})
-	_ = readVoiceOp(t, bobVoice, 36, time.Now().Add(10*time.Second))
+	_ = readVoiceOp(t, bobVoice, 36, time.Now().Add(20*time.Second))
 
 	const epoch2 = uint32(2)
 	sendContrib(alice.ID, []string{bob.ID}, epoch2)

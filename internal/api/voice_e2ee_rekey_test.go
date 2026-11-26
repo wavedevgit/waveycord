@@ -27,7 +27,7 @@ func (h *harness) joinVoiceConn(acc account, guildID, channelID string) (*websoc
 		h.t.Fatalf("dial gateway: %v", err)
 	}
 	h.t.Cleanup(func() { conn.CloseNow() })
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	readFrame(h.t, conn, deadline)
 	writeFrame(h.t, conn, map[string]any{"op": 2, "d": map[string]any{"token": acc.Token, "intents": 0}})
 	if f := readFrame(h.t, conn, deadline); f["t"] != "READY" {
@@ -92,7 +92,7 @@ func TestClusterVoiceEpochRekey(t *testing.T) {
 
 	alicePriv, alicePub := clientKeypair(t)
 	bobPriv, bobPub := clientKeypair(t)
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	writeVoice(t, aliceVoice, map[string]any{"op": 34, "d": map[string]any{"public_key": encodeB64(alicePub)}})
 	writeVoice(t, bobVoice, map[string]any{"op": 34, "d": map[string]any{"public_key": encodeB64(bobPub)}})
 	for aliceVoice != nil { // wait until each has the other's key
@@ -110,11 +110,11 @@ func TestClusterVoiceEpochRekey(t *testing.T) {
 
 	// Charlie joins: both members on both instances receive the rekey signal.
 	charlieMain, charlieToken := a.joinVoiceConn(charlie, guild.ID, voice.ID)
-	aliceRekey := readVoiceOp(t, aliceVoice, 36, time.Now().Add(10*time.Second))
+	aliceRekey := readVoiceOp(t, aliceVoice, 36, time.Now().Add(20*time.Second))
 	if aliceRekey["d"].(map[string]any)["reason"] != "member_joined" {
 		t.Fatalf("alice rekey payload: %+v", aliceRekey)
 	}
-	bobRekey := readVoiceOp(t, bobVoice, 36, time.Now().Add(10*time.Second))
+	bobRekey := readVoiceOp(t, bobVoice, 36, time.Now().Add(20*time.Second))
 	if bobRekey["d"].(map[string]any)["reason"] != "member_joined" {
 		t.Fatalf("bob rekey payload: %+v", bobRekey)
 	}
@@ -156,7 +156,7 @@ func TestClusterVoiceEpochRekey(t *testing.T) {
 	// Bob unwraps through the bus.
 	var bobGroup cipher.AEAD
 	for bobGroup == nil {
-		f := readVoice(t, bobVoice, time.Now().Add(10*time.Second))
+		f := readVoice(t, bobVoice, time.Now().Add(20*time.Second))
 		if f["op"].(float64) != 35 {
 			continue
 		}
@@ -173,7 +173,7 @@ func TestClusterVoiceEpochRekey(t *testing.T) {
 	}
 	var charlieGroup cipher.AEAD
 	for charlieGroup == nil {
-		f := readVoice(t, charlieVoice, time.Now().Add(10*time.Second))
+		f := readVoice(t, charlieVoice, time.Now().Add(20*time.Second))
 		if f["op"].(float64) != 35 {
 			continue
 		}
@@ -208,7 +208,7 @@ func TestClusterVoiceEpochRekey(t *testing.T) {
 	if _, err := sender.Write(sealed); err != nil {
 		t.Fatal(err)
 	}
-	_ = bobRecv.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = bobRecv.SetReadDeadline(time.Now().Add(20 * time.Second))
 	buf := make([]byte, 1500)
 	n, _, err := bobRecv.ReadFromUDP(buf)
 	if err != nil {
@@ -222,11 +222,11 @@ func TestClusterVoiceEpochRekey(t *testing.T) {
 	writeFrame(t, charlieMain, map[string]any{"op": 4, "d": map[string]any{
 		"guild_id": guild.ID, "channel_id": nil,
 	}})
-	left := readVoiceOp(t, bobVoice, 36, time.Now().Add(10*time.Second))
+	left := readVoiceOp(t, bobVoice, 36, time.Now().Add(20*time.Second))
 	if left["d"].(map[string]any)["reason"] != "member_left" {
 		t.Fatalf("bob leave rekey payload: %+v", left)
 	}
-	_ = readVoiceOp(t, aliceVoice, 36, time.Now().Add(10*time.Second))
+	_ = readVoiceOp(t, aliceVoice, 36, time.Now().Add(20*time.Second))
 
 	_ = bobMain
 	_ = aliceMain

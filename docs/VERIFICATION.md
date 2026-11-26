@@ -24,6 +24,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Search: tsvector/GIN and live OpenSearch guild-sharded indices | `TestPostgresFullTextSearch`, `TestESAdapter*`, `TestESRealCluster` |
 | Voice gateway, UDP discovery, RTP fanout, jitter/PLC, Opus mixing, AEAD, MLS-style epochs | `TestVoice*` |
 | MLS path secrets + Welcome (removal and add) | `TestPathUpdateAndWelcome`, `TestVoiceMLSSignedRosterCommit` |
+| MLS ciphersuite negotiation + proposal references | `TestCiphersuiteAndProposalRefs` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
@@ -42,11 +43,12 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 
 ## Test stability note
 
-Cluster voice tests occasionally fail once in a full-suite run and pass on rerun or
-in isolation; observed failures are frame-order flakiness (rekey/roster frames
-arriving before READY or a commit), not product behaviour. Reads were made
-op-scoped and READY waits were fixed, which reduced but did not eliminate it. Treat a
-single cluster-test failure as suspect until reproduced alone.
+Cluster voice tests failed intermittently when a rekey/roster frame arrived while a
+helper expected the next frame to be READY or SESSION_DESCRIPTION; the observed
+failure at ~5 s matched the old fixed deadline on that wait. Every handshake helper
+now waits for its specific opcode (2 for READY, 4 for SESSION_DESCRIPTION, 38 for a
+commit) with a 20 s deadline. Two consecutive full PostgreSQL suites pass after the
+change. Treat a single cluster-test failure as suspect until reproduced alone.
 
 ## Known functional gaps (not just unverifiable)
 

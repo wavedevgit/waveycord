@@ -195,14 +195,9 @@ func TestClusterVoiceSpeaking(t *testing.T) {
 		}
 		t.Cleanup(func() { conn.CloseNow() })
 		deadline := time.Now().Add(10 * time.Second)
-		if f := readVoice(t, conn, deadline); f["op"].(float64) != 8 {
-			t.Fatalf("expected voice HELLO: %+v", f)
-		}
+		readVoiceOp(t, conn, 8, deadline)
 		writeVoice(t, conn, map[string]any{"op": 0, "d": map[string]any{"server_id": guild.ID, "session_id": "s"}})
-		ready := readVoice(t, conn, deadline)
-		if ready["op"].(float64) != 2 {
-			t.Fatalf("expected voice READY: %+v", ready)
-		}
+		readVoiceOp(t, conn, 2, deadline)
 		return conn
 	}
 	aliceVoice := dialVoice(a, aliceToken)
