@@ -26,7 +26,8 @@ route is not registered yet.
 | `POST /auth/sessions/logout` | implemented |
 | MFA: TOTP enroll/disable, backup codes, login gate (`/auth/mfa/totp`) | implemented + tested |
 | WebAuthn (ES256) credential register/list/rename/delete and assertion login | implemented + tested |
-| Remote auth (QR) / SMS MFA / conditional and passwordless WebAuthn | TBD |
+| Conditional (discoverable-credential) and passwordless WebAuthn sign-in | implemented + tested |
+| Remote auth (QR) / SMS MFA | TBD |
 
 ## Users
 
@@ -471,13 +472,26 @@ hash, user-present flag, ES256 signature over authenticator data plus the
 client-data hash), consumes the challenge, records the counter and returns `{token}`.
 A challenge is single-use; a failed verification does not consume it.
 
+Discoverable-credential and passwordless sign-in reuse the same assertion verifier:
+
+- `POST /auth/conditional/start` (unauthenticated) returns `{ticket, challenge,
+  timeout}` with no user binding; `POST /auth/conditional/finish` takes
+  `{ticket, credential}`, resolves the raw credential id to its owner, verifies the
+  assertion and returns `{token}`. Unknown credentials and bad signatures are
+  rejected without consuming the ticket.
+- `POST /auth/passwordless/start` requires a session and a registered credential
+  (`403` otherwise); it issues a user-bound challenge. `POST
+  /auth/passwordless/finish` accepts only a challenge of the passwordless kind for
+  the same user, verifying the assertion against that user's credential.
+
 Not 1:1: only the ES256 algorithm is supported; the attestation statement is not
 cryptographically verified (`fmt` is read but `attStmt` is ignored), only two
 formats are accepted, and the assertion counter is stored without enforcing a
-strictly increasing value. Conditional UI (`/auth/conditional/*`) and passwordless
-(`/auth/passwordless/*`) are not implemented, nor is remote-auth/QR or SMS. The
-login challenge route is an extension: the client route table exposes only
-`/auth/mfa/:param`.
+strictly increasing value. Remote-auth/QR and SMS are not implemented. The login
+challenge route is an extension: the client route table exposes only
+`/auth/mfa/:param`. The request bodies for the conditional/passwordless finish routes
+were not confirmed against a client build; only the start paths appear in the client
+route table.
 
 ## Polls
 

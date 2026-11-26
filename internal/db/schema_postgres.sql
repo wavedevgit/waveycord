@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS webauthn_challenges (
     expires   BIGINT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS webauthn_login_challenges (
+    ticket    TEXT PRIMARY KEY,
+    challenge TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    expires   BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mfa_tickets (
     id      TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

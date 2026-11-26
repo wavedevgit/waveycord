@@ -151,3 +151,32 @@ func (s *Store) DeleteWebAuthnChallenge(ticket string) error {
 	_, err := s.DB.Exec(`DELETE FROM webauthn_challenges WHERE ticket = ?`, ticket)
 	return mapErr(err)
 }
+
+// CreateLoginChallenge stores a challenge that is not bound to a user, used by the
+// discoverable-credential (conditional) flow where the account is unknown until an
+// assertion identifies a credential.
+func (s *Store) CreateLoginChallenge(ticket, challenge, kind string, expires int64) error {
+	_, err := s.DB.Exec(`INSERT INTO webauthn_login_challenges (ticket, challenge, kind, expires)
+		VALUES (?,?,?,?)`, ticket, challenge, kind, expires)
+	return mapErr(err)
+}
+
+// LoginChallenge resolves an unexpired user-less challenge.
+func (s *Store) LoginChallenge(ticket string) (challenge, kind string, err error) {
+	var expires int64
+	err = s.DB.QueryRow(`SELECT challenge, kind, expires FROM webauthn_login_challenges WHERE ticket = ?`, ticket).
+		Scan(&challenge, &kind, &expires)
+	if err != nil {
+		return "", "", mapErr(err)
+	}
+	if now() > expires {
+		return "", "", ErrWebAuthnChallenge
+	}
+	return challenge, kind, nil
+}
+
+// DeleteLoginChallenge consumes a user-less challenge.
+func (s *Store) DeleteLoginChallenge(ticket string) error {
+	_, err := s.DB.Exec(`DELETE FROM webauthn_login_challenges WHERE ticket = ?`, ticket)
+	return mapErr(err)
+}

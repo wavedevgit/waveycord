@@ -141,8 +141,6 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	bobVoice, bobReady := voiceEndpoint(t, b, bobToken, bob.ID)
 	// Charlie joins after the two voice websockets exist so both see the roster.
 	charlieMain, charlieToken := a.joinVoiceConn(charlie, guild.ID, voice.ID)
-	aliceRekey := readVoiceOp(t, aliceVoice, 36, time.Now().Add(20*time.Second))
-	bobRekey := readVoiceOp(t, bobVoice, 36, time.Now().Add(20*time.Second))
 	roster := func(f map[string]any) []string {
 		raw := f["d"].(map[string]any)["members"].([]any)
 		out := make([]string, 0, len(raw))
@@ -151,9 +149,23 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		}
 		return out
 	}
-	if len(roster(aliceRekey)) != 3 || len(roster(bobRekey)) != 3 {
-		t.Fatalf("roster missing: %+v / %+v", aliceRekey, bobRekey)
+	// Every join emits a rekey, so Bob's earlier join can still be in flight; wait
+	// for the roster that names all three members.
+	waitRoster := func(conn *websocket.Conn, want int) map[string]any {
+		t.Helper()
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			f := readVoiceOp(t, conn, 36, deadline)
+			raw, _ := f["d"].(map[string]any)["members"].([]any)
+			if len(raw) == want {
+				return f
+			}
+		}
 	}
+	aliceRekey := waitRoster(aliceVoice, 3)
+	bobRekey := waitRoster(bobVoice, 3)
+	_ = aliceRekey
+	_ = bobRekey
 	charlieVoice, _ := voiceEndpoint(t, a, charlieToken, charlie.ID)
 	aliceRecv := udpListener(t)
 	bobRecv := udpListener(t)
