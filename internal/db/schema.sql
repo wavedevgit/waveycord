@@ -62,6 +62,21 @@ CREATE TABLE IF NOT EXISTS webauthn_login_challenges (
     expires   INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS sms_mfa (
+    user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    phone      TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sms_mfa_codes (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL,
+    code    TEXT NOT NULL,
+    expires INTEGER NOT NULL,
+    PRIMARY KEY (user_id, purpose)
+);
+
 CREATE TABLE IF NOT EXISTS remote_auth_sessions (
     ticket      TEXT PRIMARY KEY,
     user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -207,9 +207,13 @@ func (s *Server) handleLogin(c *Ctx) {
 	}
 	// With a second factor the password only yields a ticket; a session token is
 	// issued after TOTP or a WebAuthn assertion.
-	secret, totpEnabled, _ := s.Store.MFASecret(user.ID)
+	secret, enabled, _ := s.Store.MFASecret(user.ID)
+	// mfa_enabled also covers WebAuthn-only and SMS-only accounts, so the TOTP flag
+	// is only true when a secret actually exists.
+	hasTOTP := enabled && secret != ""
 	hasWebAuthn := s.Store.HasWebAuthn(user.ID)
-	if totpEnabled || hasWebAuthn {
+	hasSMS := s.Store.HasSMS(user.ID)
+	if hasTOTP || hasWebAuthn || hasSMS {
 		ticket, err := NewToken()
 		if err != nil {
 			fail(c, err)
@@ -219,9 +223,17 @@ func (s *Server) handleLogin(c *Ctx) {
 			fail(c, err)
 			return
 		}
+		// When SMS is the only factor there is nothing else to present, so the
+		// login code is issued up front; clients can resend it.
+		if hasSMS && !hasTOTP && !hasWebAuthn {
+			if _, err := s.sendSMSCode(user.ID, store.SMSCodeLogin); err != nil {
+				fail(c, err)
+				return
+			}
+		}
 		c.JSON(map[string]any{
-			"mfa": true, "totp": totpEnabled && secret != "",
-			"webauthn": hasWebAuthn, "sms": false, "ticket": ticket,
+			"mfa": true, "totp": hasTOTP,
+			"webauthn": hasWebAuthn, "sms": hasSMS, "ticket": ticket,
 		})
 		return
 	}

@@ -28,7 +28,7 @@ route is not registered yet.
 | WebAuthn (ES256) credential register/list/rename/delete and assertion login | implemented + tested |
 | Conditional (discoverable-credential) and passwordless WebAuthn sign-in | implemented + tested |
 | Remote auth (QR) handshake: start/approve/cancel and single-use redemption | implemented + tested |
-| SMS MFA | TBD |
+| SMS MFA: enrollment, login gate and redemption, disable | implemented + tested (code delivery is out of scope) |
 
 ## Users
 
@@ -493,6 +493,29 @@ challenge route is an extension: the client route table exposes only
 `/auth/mfa/:param`. The request bodies for the conditional/passwordless finish routes
 were not confirmed against a client build; only the start paths appear in the client
 route table.
+
+## SMS MFA
+
+`POST /users/@me/mfa/sms/send {phone}` issues a six-digit enrollment code (5 minute
+TTL, phone must be 6-20 digits with an optional leading `+`), and
+`POST /users/@me/mfa/sms/enable {phone, code}` consumes it, stores the phone in
+`sms_mfa`, enables the factor, and returns ten `recovery_codes`.
+`POST /users/@me/mfa/sms/disable` requires the account password and clears the
+factor, deleting outstanding codes; the account's `mfa_enabled` flag is recomputed,
+so disabling the last factor stops the login gate.
+
+Login returns `{mfa, totp, webauthn, sms, ticket}`. When SMS is the only factor the
+login code is issued with the ticket; `POST /auth/mfa/sms/send {ticket}` resends it.
+`POST /auth/mfa/sms {ticket, code}` verifies the code, consumes the login ticket and
+returns `{token}`. Codes are single use — a superseded or reused code is rejected,
+and expired codes are rejected and pruned on read.
+
+Not 1:1: no SMS is actually delivered; codes are stored verbatim in
+`sms_mfa_codes` so tests and operators can read them, where a production service
+would store a hash and hand the plaintext only to the carrier. There is no phone
+number verification against the user record, no per-attempt rate limit, and the
+disable request body (password) was chosen here rather than confirmed against a
+client build.
 
 ## Remote auth (QR)
 

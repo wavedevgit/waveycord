@@ -452,11 +452,7 @@ func (s *Server) handleDeleteWebAuthnCredential(c *Ctx) {
 		return
 	}
 	// Removing the last factor leaves the account without MFA.
-	if !s.Store.HasWebAuthn(c.User.ID) {
-		if secret, enabled, err := s.Store.MFASecret(c.User.ID); err == nil && enabled && secret == "" {
-			_ = s.Store.DisableMFA(c.User.ID)
-		}
-	}
+	s.refreshMFAFlag(c.User.ID)
 	c.JSONStatus(204, nil)
 }
 

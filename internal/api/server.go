@@ -296,6 +296,7 @@ var (
 	ErrUnknownRemoteAuth     = NewError(404, 10026, "Unknown Remote Auth Session")
 	ErrRemoteAuthExpired     = NewError(400, 60008, "Session expired")
 	ErrRemoteAuthNotApproved = NewError(400, 60008, "Remote auth session is not approved")
+	ErrSMSNotEnabled         = NewError(400, 50035, "SMS two factor is not enabled")
 )
 
 func fail(c *Ctx, err error) {
