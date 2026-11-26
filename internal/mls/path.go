@@ -44,6 +44,22 @@ type EpochCommit struct {
 	Welcome map[string]Welcome `json:"welcome,omitempty"`
 }
 
+// Resolution returns the TreeKEM resolution of a node: the highest non-blank
+// descendants. A blank node under a present node is replaced by its children's
+// resolutions; a padding (blank) subtree contributes nothing. Presence is leaf
+// membership plus any node key persisted from an earlier epoch.
+func Resolution(node, size int, present map[int]bool) []int {
+	if present[node] {
+		return []int{node}
+	}
+	if node >= size {
+		return nil
+	}
+	left := Resolution(2*node, size, present)
+	right := Resolution(2*node+1, size, present)
+	return append(left, right...)
+}
+
 // pathNodeSecret derives an ancestor secret from its child, using the RFC 9420
 // "path" label. Every ancestor in the chain is one labeled expansion of the child,
 // and only members that learn a node secret through a DH envelope can walk up.
@@ -87,6 +103,13 @@ func resolutionUnder(node, size int, roster []Leaf) []string {
 // NewEpochCommit creates a path-updated, signed epoch with Welcome messages for
 // members added by the commit's proposals.
 func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte) (EpochCommit, *Epoch, error) {
+	return NewEpochCommitWithTree(epoch, roster, proposals, committerID, committerSignPriv, committerLeafPriv, nil)
+}
+
+// NewEpochCommitWithTree carries the previous epoch's node public keys so nodes
+// outside this update's path keep their keys, which is what lets a later commit
+// address an ancestor node instead of every leaf beneath it.
+func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, committerID string, committerSignPriv ed25519.PrivateKey, committerLeafPriv [32]byte, previousTree map[int][32]byte) (EpochCommit, *Epoch, error) {
 	next, err := ApplyProposals(roster, proposals)
 	if err != nil {
 		return EpochCommit{}, nil, err
@@ -121,24 +144,49 @@ func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committer
 			publics[idx] = clone32(priv.PublicKey().Bytes())
 		}
 	}
+	// Persisted node keys from earlier epochs survive this update off-path.
+	treePublics := map[int][32]byte{}
+	for node, pub := range previousTree {
+		treePublics[node] = pub
+	}
+	for node, pub := range publics {
+		treePublics[node] = pub
+	}
 	path := &PathChain{CommitterLeaf: size + ci, Publics: publics}
 	// A self-envelope lets the committer replay its own chain uniformly.
 	if selfEnv, err := sealRoot(leafSecret, next[ci]); err == nil {
 		path.Recipients = append(path.Recipients, PathRecipient{Node: size + ci, UserID: committerID, Envelope: selfEnv})
 	}
-	// Encrypt each path node's secret to the sibling subtree's members.
+	// Encrypt each path node's secret to the resolution of its sibling. Presence is
+	// the member leaves plus persisted node keys; a resolved internal node is
+	// expanded to the members beneath it because client-side node private keys are
+	// not persisted by this implementation.
+	present := map[int]bool{}
+	for i := range next {
+		present[size+i] = true
+	}
+	for node := range previousTree {
+		present[node] = true
+	}
 	node = size + ci
 	for node > 1 {
 		parent := node / 2
 		sibling := node ^ 1
 		secret := secrets[parent]
-		for _, uid := range resolutionUnder(sibling, size, next) {
-			leaf := next[leafIndex(next, uid)]
-			env, err := sealRoot(secret, leaf)
-			if err != nil {
-				return EpochCommit{}, nil, err
+		seen := map[string]bool{}
+		for _, resNode := range Resolution(sibling, size, present) {
+			for _, uid := range resolutionUnder(resNode, size, next) {
+				if seen[uid] {
+					continue
+				}
+				seen[uid] = true
+				leaf := next[leafIndex(next, uid)]
+				env, err := sealRoot(secret, leaf)
+				if err != nil {
+					return EpochCommit{}, nil, err
+				}
+				path.Recipients = append(path.Recipients, PathRecipient{Node: parent, UserID: uid, Envelope: env})
 			}
-			path.Recipients = append(path.Recipients, PathRecipient{Node: parent, UserID: uid, Envelope: env})
 		}
 		node = parent
 	}
@@ -153,6 +201,7 @@ func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committer
 		Envelopes: map[string]Envelope{}, Committer: committerID}}
 	commit.Path = path
 	commit.Welcome = map[string]Welcome{}
+	commit.TreePublics = treePublics
 	// Existing members derive the root through the path; added members need a
 	// Welcome that binds the root to the commit hash.
 	commit.Signature = ed25519.Sign(committerSignPriv, canonical(commit.Commit))
@@ -168,7 +217,7 @@ func NewEpochCommit(epoch uint32, roster []Leaf, proposals []Proposal, committer
 		}
 		commit.Welcome[p.UserID] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), Root: env}
 	}
-	return commit, &Epoch{Epoch: epoch, Root: root, Roster: next}, nil
+	return commit, &Epoch{Epoch: epoch, Root: root, Roster: next, TreePublics: treePublics}, nil
 }
 
 func clone32(b []byte) (out [32]byte) { copy(out[:], b); return out }

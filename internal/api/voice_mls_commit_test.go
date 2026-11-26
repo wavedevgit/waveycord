@@ -363,6 +363,12 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		t.Fatalf("relayed epoch2 verify: %v", err)
 	}
 	// The proposal travels as a signed wire message, not only as a hash reference.
+	if !strings.Contains(string(rawCommit), "tree_publics") {
+		t.Fatalf("commit on the wire has no persisted tree keys: %s", rawCommit)
+	}
+	if len(relayed.TreePublics) == 0 {
+		t.Fatal("relayed epoch2 commit lost its tree keys")
+	}
 	if !strings.Contains(string(rawCommit), "proposal_messages") {
 		t.Fatalf("commit on the wire has no proposal messages: %s", rawCommit)
 	}
@@ -416,8 +422,9 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	davePriv, davePub := clientKeypair(t)
 	daveSignPub, _, _ := ed25519.GenerateKey(rand.Reader)
 	signKeyMap[dave] = daveSignPub
-	commit3, epoch3State, err := mls.NewEpochCommit(3, commit2.Roster,
-		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}}, alice.ID, aliceSignPriv, alicePriv)
+	commit3, epoch3State, err := mls.NewEpochCommitWithTree(3, commit2.Roster,
+		[]mls.Proposal{{Type: "add", UserID: dave, Public: davePub}}, alice.ID, aliceSignPriv, alicePriv,
+		epoch2State.TreePublics)
 	if err != nil {
 		t.Fatalf("epoch3 commit: %v", err)
 	}
@@ -430,6 +437,18 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	}
 	if err := mls.VerifyProposalMessage(commit3.ProposalMessages[0], signKeyMap); err != nil {
 		t.Fatalf("epoch3 proposal signature: %v", err)
+	}
+	if len(commit3.TreePublics) == 0 || len(epoch3State.TreePublics) == 0 {
+		t.Fatal("epoch3 did not publish persisted tree keys")
+	}
+	carried := 0
+	for node := range epoch2State.TreePublics {
+		if _, ok := commit3.TreePublics[node]; ok {
+			carried++
+		}
+	}
+	if carried == 0 {
+		t.Fatal("epoch3 dropped every previous tree key")
 	}
 	badAdd := commit3
 	badAdd.ProposalMessages = []mls.ProposalMessage{commit3.ProposalMessages[0]}

@@ -35,6 +35,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | MLS ciphersuite negotiation + proposal references | `TestCiphersuiteAndProposalRefs` |
 | RFC-style path KDF, application key schedule, nonce ratchet | `TestExpandWithLabelAndApplicationKeys`, `TestVoiceMLSSignedRosterCommit` |
 | Signed proposal wire messages in commits, verify rejection paths | `TestCiphersuiteAndProposalRefs`, `TestVoiceMLSSignedRosterCommit` |
+| TreeKEM resolution with blanks/padding, persisted tree keys across epochs, add/remove with carried tree | `TestResolutionWithBlanks`, `TestTreePublicsPersistAcrossEpochs`, `TestVoiceMLSSignedRosterCommit` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
