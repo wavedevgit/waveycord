@@ -12,6 +12,8 @@ var ErrUnavailable = errors.New("voicecodec: opus support not compiled in (build
 type Codec interface {
 	Encode(pcm []int16) ([]byte, error)
 	Decode(packet []byte) ([]int16, error)
+	// Conceal fills pcm with libopus packet-loss concealment output.
+	Conceal(pcm []int16) (int, error)
 	Close()
 }
 

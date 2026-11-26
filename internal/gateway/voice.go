@@ -62,7 +62,9 @@ type VoiceServer struct {
 	forwarded  atomic.Int64
 	transcodes atomic.Int64
 	publish    func(name string, data any)
-	codec      voicecodec.Codec
+	codecReady bool
+	done       chan struct{}
+	tick       *time.Ticker
 }
 
 // VoiceOptions tunes the advertised address.
@@ -87,17 +89,61 @@ func NewVoiceServer(st *store.Store, opts VoiceOptions) (*VoiceServer, error) {
 		return nil, fmt.Errorf("voice: bind udp: %w", err)
 	}
 	v := &VoiceServer{store: st, log: logger, udp: conn, ip: ip,
-		port: conn.LocalAddr().(*net.UDPAddr).Port, conns: map[*voiceConn]struct{}{}}
-	if voicecodec.Available() {
-		if c, err := voicecodec.New(); err == nil {
-			v.codec = c
-			logger.Info("voice opus codec enabled")
-		} else {
-			logger.Warn("voice opus codec unavailable", "err", err)
-		}
+		port: conn.LocalAddr().(*net.UDPAddr).Port, conns: map[*voiceConn]struct{}{},
+		codecReady: voicecodec.Available(), done: make(chan struct{})}
+	if v.codecReady {
+		logger.Info("voice opus codec enabled")
 	}
 	go v.readUDP()
+	go v.jitterLoop()
 	return v, nil
+}
+
+// Port is the UDP discovery port advertised in READY.
+func (v *VoiceServer) Port() int { return v.port }
+
+// Stats exposes counters for metrics and tests.
+func (v *VoiceServer) Stats() (sessions, rtpPackets, speaking int64) {
+	return v.session.Load(), v.rtp.Load(), v.speak.Load()
+}
+
+// Close stops the UDP socket, the jitter loop and all clients.
+func (v *VoiceServer) Close() {
+	select {
+	case <-v.done:
+	default:
+		close(v.done)
+	}
+	if v.udp != nil {
+		_ = v.udp.Close()
+	}
+	v.mu.Lock()
+	for c := range v.conns {
+		c.close(1000, "server shutdown")
+	}
+	v.mu.Unlock()
+}
+
+// DeliverRTP forwards a packet received from another instance to local voice
+// connections in the channel.
+func (v *VoiceServer) DeliverRTP(channelID string, packet []byte) {
+	if len(packet) == 0 {
+		return
+	}
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channelID {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		if addr := c.udp(); addr != nil {
+			_, _ = v.udp.WriteToUDP(packet, addr)
+			v.forwarded.Add(1)
+		}
+	}
 }
 
 // SetPublisher enables cross-instance speaking events.
@@ -152,41 +198,254 @@ func rtpPayloadOffset(packet []byte) int {
 	return offset
 }
 
-// transcode decodes an Opus payload and re-encodes it, leaving the RTP header
-// intact. Packets that fail to decode are forwarded unchanged.
-func (v *VoiceServer) transcode(packet []byte) []byte {
-	if v.codec == nil {
+// ensureCodec lazily creates a per-connection Opus codec so decode state is not
+// shared between speakers.
+func (c *voiceConn) ensureCodec() voicecodec.Codec {
+	c.mu.Lock()
+	if c.codec != nil || !c.server.codecReady {
+		codec := c.codec
+		c.mu.Unlock()
+		return codec
+	}
+	c.mu.Unlock()
+	codec, err := voicecodec.New()
+	if err != nil {
+		return nil
+	}
+	c.mu.Lock()
+	if c.codec == nil {
+		c.codec = codec
+	} else {
+		codec.Close()
+		codec = c.codec
+	}
+	c.mu.Unlock()
+	return codec
+}
+
+// transcode decodes an Opus payload and re-encodes it, keeping the RTP header.
+func (c *voiceConn) transcode(packet []byte) []byte {
+	codec := c.ensureCodec()
+	if codec == nil {
 		return packet
 	}
 	offset := rtpPayloadOffset(packet)
 	if offset == 0 {
 		return packet
 	}
-	pcm, err := v.codec.Decode(packet[offset:])
+	pcm, err := codec.Decode(packet[offset:])
 	if err != nil || len(pcm) == 0 {
 		return packet
 	}
-	encoded, err := v.codec.Encode(pcm)
+	encoded, err := codec.Encode(pcm)
 	if err != nil || len(encoded) == 0 {
 		return packet
 	}
-	v.transcodes.Add(1)
+	c.server.transcodes.Add(1)
 	out := make([]byte, offset+len(encoded))
 	copy(out, packet[:offset])
 	copy(out[offset:], encoded)
 	return out
 }
 
-// DeliverRTP forwards a packet received from another instance to local voice
-// connections in the channel.
-func (v *VoiceServer) DeliverRTP(channelID string, packet []byte) {
-	if len(packet) == 0 {
+// jitterState buffers frames per sender, emits them in sequence order and fills
+// gaps with libopus concealment.
+type jitterState struct {
+	started    bool
+	emitted    bool
+	expected   uint16
+	buf        map[uint16]jitterFrame
+	gapSince   time.Time
+	plcs       int
+	lastHeader []byte
+	lastTS     uint32
+}
+
+type jitterFrame struct {
+	header  []byte
+	payload []byte
+	ts      uint32
+}
+
+const (
+	jitterDepth = 2
+	jitterDelay = 60 * time.Millisecond
+	maxPLC      = 3
+)
+
+func (v *VoiceServer) jitterLoop() {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	v.tick = ticker
+	for {
+		select {
+		case <-v.done:
+			return
+		case <-ticker.C:
+			v.mu.Lock()
+			conns := make([]*voiceConn, 0, len(v.conns))
+			for c := range v.conns {
+				conns = append(conns, c)
+			}
+			v.mu.Unlock()
+			for _, c := range conns {
+				v.drainJitter(c)
+			}
+		}
+	}
+}
+
+// ingestRTP buffers a plaintext RTP packet for ordered emission.
+func (v *VoiceServer) ingestRTP(sender *voiceConn, packet []byte) {
+	offset := rtpPayloadOffset(packet)
+	if offset == 0 {
+		return
+	}
+	seq := binary.BigEndian.Uint16(packet[2:4])
+	ts := binary.BigEndian.Uint32(packet[4:8])
+	header := append([]byte(nil), packet[:offset]...)
+	payload := append([]byte(nil), packet[offset:]...)
+	sender.mu.Lock()
+	if sender.jitter == nil {
+		sender.jitter = &jitterState{buf: map[uint16]jitterFrame{}}
+	}
+	j := sender.jitter
+	if !j.started {
+		j.started = true
+		j.expected = seq
+	}
+	if seqLess(seq, j.expected) {
+		sender.mu.Unlock()
+		return
+	}
+	j.buf[seq] = jitterFrame{header: header, payload: payload, ts: ts}
+	sender.mu.Unlock()
+	v.drainJitter(sender)
+}
+
+func seqLess(a, b uint16) bool { return int16(a-b) < 0 }
+
+// drainJitter emits contiguous frames, inserting PLC after the gap delay.
+func (v *VoiceServer) drainJitter(sender *voiceConn) {
+	sender.mu.Lock()
+	j := sender.jitter
+	if j == nil || !j.started {
+		sender.mu.Unlock()
+		return
+	}
+	for {
+		if !j.emitted && len(j.buf) < jitterDepth {
+			// Hold the first frame briefly so a reordered neighbour can arrive,
+			// then start streaming instead of stalling a single-frame sender.
+			if j.gapSince.IsZero() {
+				j.gapSince = time.Now()
+				sender.mu.Unlock()
+				return
+			}
+			if time.Since(j.gapSince) < 20*time.Millisecond {
+				sender.mu.Unlock()
+				return
+			}
+		}
+		if f, ok := j.buf[j.expected]; ok {
+			delete(j.buf, j.expected)
+			j.expected++
+			j.plcs = 0
+			j.gapSince = time.Time{}
+			j.emitted = true
+			j.lastHeader = f.header
+			j.lastTS = f.ts
+			sender.mu.Unlock()
+			v.emitFrame(sender, f.header, f.payload)
+			sender.mu.Lock()
+			continue
+		}
+		if len(j.buf) == 0 {
+			sender.mu.Unlock()
+			return
+		}
+		if j.gapSince.IsZero() {
+			j.gapSince = time.Now()
+			sender.mu.Unlock()
+			return
+		}
+		if time.Since(j.gapSince) < jitterDelay {
+			sender.mu.Unlock()
+			return
+		}
+		if j.plcs >= maxPLC {
+			// Give up on the hole and jump to the next buffered sequence.
+			var next uint16
+			first := true
+			for seq := range j.buf {
+				if first || seqLess(seq, next) {
+					next = seq
+					first = false
+				}
+			}
+			j.expected = next
+			j.plcs = 0
+			j.gapSince = time.Time{}
+			continue
+		}
+		header := plcHeader(j.lastHeader, j.expected, j.lastTS+960*uint32(j.plcs+1))
+		j.expected++
+		j.plcs++
+		j.gapSince = time.Now()
+		sender.mu.Unlock()
+		v.emitPLC(sender, header)
+		sender.mu.Lock()
+	}
+}
+
+func plcHeader(last []byte, seq uint16, ts uint32) []byte {
+	header := make([]byte, 12)
+	if len(last) >= 12 {
+		copy(header, last[:12])
+	} else {
+		header[0] = 0x80
+	}
+	binary.BigEndian.PutUint16(header[2:4], seq)
+	binary.BigEndian.PutUint32(header[4:8], ts)
+	return header
+}
+
+func (v *VoiceServer) emitFrame(sender *voiceConn, header, payload []byte) {
+	packet := append(append([]byte(nil), header...), payload...)
+	packet = sender.transcode(packet)
+	v.deliver(sender, packet)
+	v.publishRTP(sender, packet)
+}
+
+func (v *VoiceServer) emitPLC(sender *voiceConn, header []byte) {
+	codec := sender.ensureCodec()
+	if codec == nil {
+		return
+	}
+	pcm := make([]int16, voicecodec.FrameSize)
+	n, err := codec.Conceal(pcm)
+	if err != nil || n == 0 {
+		return
+	}
+	encoded, err := codec.Encode(pcm[:n])
+	if err != nil || len(encoded) == 0 {
+		return
+	}
+	v.transcodes.Add(1)
+	packet := append(append([]byte(nil), header...), encoded...)
+	v.deliver(sender, packet)
+	v.publishRTP(sender, packet)
+}
+
+// deliver sends a packet to the sender's channel peers.
+func (v *VoiceServer) deliver(sender *voiceConn, packet []byte) {
+	channel := sender.channel()
+	if channel == "" {
 		return
 	}
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for c := range v.conns {
-		if c.channel() == channelID {
+		if c != sender && c.channel() == channel {
 			targets = append(targets, c)
 		}
 	}
@@ -197,76 +456,6 @@ func (v *VoiceServer) DeliverRTP(channelID string, packet []byte) {
 			v.forwarded.Add(1)
 		}
 	}
-}
-
-// Port is the UDP discovery port advertised in READY.
-func (v *VoiceServer) Port() int { return v.port }
-
-// Stats exposes counters for metrics and tests.
-func (v *VoiceServer) Stats() (sessions, rtpPackets, speaking int64) {
-	return v.session.Load(), v.rtp.Load(), v.speak.Load()
-}
-
-// Close stops the UDP socket and disconnects clients.
-func (v *VoiceServer) Close() {
-	if v.udp != nil {
-		_ = v.udp.Close()
-	}
-	if v.codec != nil {
-		v.codec.Close()
-	}
-	v.mu.Lock()
-	for c := range v.conns {
-		c.close(1000, "server shutdown")
-	}
-	v.mu.Unlock()
-}
-
-// readUDP answers discovery packets and counts RTP.
-// forwardRTP routes a packet from a known ssrc to the other connections in that
-// channel and publishes it for other instances.
-func (v *VoiceServer) forwardRTP(ssrc uint32, packet []byte, from *net.UDPAddr) {
-	v.mu.Lock()
-	var sender *voiceConn
-	channel := ""
-	for c := range v.conns {
-		c.mu.Lock()
-		match := c.ready && c.ssrc == ssrc && c.channelID != ""
-		if match {
-			sender = c
-			channel = c.channelID
-		}
-		c.mu.Unlock()
-		if match {
-			break
-		}
-	}
-	targets := make([]*voiceConn, 0, len(v.conns))
-	if sender != nil {
-		for c := range v.conns {
-			if c != sender && c.channel() == channel {
-				targets = append(targets, c)
-			}
-		}
-	}
-	v.mu.Unlock()
-	if sender == nil {
-		return
-	}
-	out := v.transcode(packet)
-	for _, c := range targets {
-		if addr := c.udp(); addr != nil {
-			_, _ = v.udp.WriteToUDP(out, addr)
-			v.forwarded.Add(1)
-		}
-	}
-	if v.publish != nil {
-		v.publish("VOICE_RTP", map[string]any{
-			"channel_id": channel,
-			"packet":     base64.StdEncoding.EncodeToString(packet),
-		})
-	}
-	_ = from
 }
 
 func (v *VoiceServer) findBySSRC(ssrc uint32) *voiceConn {
@@ -283,13 +472,13 @@ func (v *VoiceServer) findBySSRC(ssrc uint32) *voiceConn {
 	return nil
 }
 
-// forwardEncrypted re-wraps decrypted media for every other connection in the
-// channel that has completed a key exchange.
+// forwardEncrypted re-wraps decrypted media for every peer that has a key.
 func (v *VoiceServer) forwardEncrypted(ssrc uint32, plaintext []byte) {
 	sender := v.findBySSRC(ssrc)
 	if sender == nil {
 		return
 	}
+	plaintext = sender.transcode(plaintext)
 	channel := sender.channel()
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
@@ -306,9 +495,8 @@ func (v *VoiceServer) forwardEncrypted(ssrc uint32, plaintext []byte) {
 			c.outCounter++
 			counter := c.outCounter
 			c.mu.Unlock()
-			addr := c.udp()
-			if addr != nil {
-				frame := encodeEnvelope(gcm, keyID, counter, ssrc, v.transcode(plaintext))
+			if addr := c.udp(); addr != nil {
+				frame := encodeEnvelope(gcm, keyID, counter, ssrc, plaintext)
 				_, _ = v.udp.WriteToUDP(frame, addr)
 				v.forwarded.Add(1)
 			}
@@ -316,6 +504,17 @@ func (v *VoiceServer) forwardEncrypted(ssrc uint32, plaintext []byte) {
 		}
 		c.mu.Unlock()
 	}
+}
+
+// publishRTP sends an emitted packet to other instances.
+func (v *VoiceServer) publishRTP(sender *voiceConn, packet []byte) {
+	if v.publish == nil {
+		return
+	}
+	v.publish("VOICE_RTP", map[string]any{
+		"channel_id": sender.channel(),
+		"packet":     base64.StdEncoding.EncodeToString(packet),
+	})
 }
 
 func (v *VoiceServer) readUDP() {
@@ -371,7 +570,10 @@ func (v *VoiceServer) readUDP() {
 			v.rtp.Add(1)
 			packet := append([]byte(nil), buf[:n]...)
 			ssrc := binary.BigEndian.Uint32(packet[8:12])
-			v.forwardRTP(ssrc, packet, from)
+			if sender := v.findBySSRC(ssrc); sender != nil {
+				v.ingestRTP(sender, packet)
+			}
+			_ = from
 		}
 	}
 }
@@ -412,6 +614,8 @@ type voiceConn struct {
 	lastCounter uint64
 	outCounter  uint64
 	peerPub     [32]byte
+	codec       voicecodec.Codec
+	jitter      *jitterState
 	closed      bool
 	done        chan struct{}
 }
