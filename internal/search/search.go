@@ -54,6 +54,47 @@ type Backfiller interface {
 	Backfill(ctx context.Context, limit int) (int, error)
 }
 
+// GuildCounter reports how many documents one guild's index currently holds. It is
+// optional; an index without it opts out of drift checks.
+type GuildCounter interface {
+	GuildDocCount(ctx context.Context, guildID string) (int, error)
+}
+
+// GuildResetter drops one guild's index so that guild alone can be rebuilt, the
+// big-freaking-guild reindex path.
+type GuildResetter interface {
+	ResetGuild(ctx context.Context, guildID string) error
+}
+
+// BFGPolicy decides when a single guild's index has drifted far enough from the
+// authoritative row count to justify a full per-guild rebuild.
+type BFGPolicy struct {
+	// Threshold is the minimum number of rows before per-guild rebuilds are
+	// considered at all; below it the incremental path is always used.
+	Threshold int
+	// Drift is the allowed |indexed-rows|/rows ratio. Zero means 0.1.
+	Drift float64
+}
+
+// NeedsRebuild applies the policy to one guild.
+func (p BFGPolicy) NeedsRebuild(rows, indexed int) bool {
+	if rows <= 0 {
+		return false
+	}
+	if p.Threshold > 0 && rows < p.Threshold {
+		return false
+	}
+	allowed := p.Drift
+	if allowed <= 0 {
+		allowed = 0.1
+	}
+	diff := indexed - rows
+	if diff < 0 {
+		diff = -diff
+	}
+	return float64(diff) > allowed*float64(rows)
+}
+
 // Resetter clears the index so a full reindex can rebuild it.
 type Resetter interface {
 	Reset(ctx context.Context) error

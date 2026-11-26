@@ -111,6 +111,15 @@ func (f *fakeES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"deleted": deleted})
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/_count"):
+		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/_count")
+		docs, ok := f.indices[name]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"count": len(docs)})
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/_search"):
 		name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/"), "/_search")
 		var body map[string]any

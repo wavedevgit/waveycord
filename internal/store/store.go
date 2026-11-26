@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -38,6 +39,12 @@ type Store struct {
 	Gen    *id.Generator
 	// Search is the message-search index; nil keeps the LIKE fallback.
 	Search search.Index
+	// BFG state: an opt-in per-guild reindex-on-threshold trigger.
+	bfgMu     sync.Mutex
+	bfgWrites map[string]int
+	bfgBusy   map[string]bool
+	bfgPolicy search.BFGPolicy
+	bfgEvery  int
 }
 
 // SetSearchIndex installs the search service.

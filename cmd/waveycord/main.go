@@ -93,6 +93,16 @@ func main() {
 		}
 	}
 	st.SetSearchIndex(searchIndex)
+	// BFG reindex-on-threshold is opt-in: a guild above the threshold whose index
+	// drifts past the ratio is rebuilt on its own during writes.
+	if n, err := strconv.Atoi(os.Getenv("WAVEYCORD_SEARCH_BFG_THRESHOLD")); err == nil && n > 0 {
+		drift := 0.1
+		if v, err := strconv.ParseFloat(os.Getenv("WAVEYCORD_SEARCH_BFG_DRIFT"), 64); err == nil && v > 0 {
+			drift = v
+		}
+		st.SetBFGPolicy(search.BFGPolicy{Threshold: n, Drift: drift}, envInt("WAVEYCORD_SEARCH_BFG_EVERY", 250))
+		log.Info("search bfg enabled", "threshold", n, "drift", drift)
+	}
 	if mode := os.Getenv("WAVEYCORD_SEARCH_REINDEX"); mode != "" {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

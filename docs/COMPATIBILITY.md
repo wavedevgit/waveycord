@@ -143,6 +143,7 @@ synthesise and none is fabricated.
 | `GET /guilds/{guild.id}/messages/search` | implemented |
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
+| BFG reindex-on-threshold: drifted large guild reset and rebuilt alone (`WAVEYCORD_SEARCH_BFG_THRESHOLD`, `_DRIFT`, `_EVERY`) | implemented + tested |
 | Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
 | Poll viewer-relative `me_voted`; expiry sweep finalizes, freezes the tally and pushes per-viewer `MESSAGE_UPDATE` | implemented + tested |
 | Components v2: container/section/text/media/file/separator validation under flag `1<<15` | implemented + tested |
@@ -404,9 +405,19 @@ Remaining differences from Discord's published design:
   `WAVEYCORD_SEARCH_REINDEX=reset` runs it in the background at startup. Tested by
   wiping the Postgres tsvector index and by resetting live OpenSearch indices and
   rebuilding them; searches return the original results afterwards.
-- Still absent: PubSub-backed guaranteed indexing, BFG reindex-on-threshold, and
-  index-size automation. The reindex is a single bounded scan, not a distributed
-  migration.
+- BFG reindex-on-threshold is implemented: `search.BFGPolicy` compares a guild's
+  authoritative row count with its index count and rebuilds that guild alone
+  (per-guild index deletion, then a bounded re-index) when the drift exceeds the
+  ratio and the guild is at or above the size threshold. It is opt-in through
+  `WAVEYCORD_SEARCH_BFG_THRESHOLD` (plus `WAVEYCORD_SEARCH_BFG_DRIFT` and
+  `WAVEYCORD_SEARCH_BFG_EVERY`), triggered in the background from message writes at
+  most once per guild at a time, and can also be called directly through
+  `Store.BFGMaintainGuild`. Tested for under-threshold skip, under- and over-indexed
+  drift, idempotent second pass, per-guild ES count/reset isolation and the async
+  write trigger.
+- Still absent: PubSub-backed guaranteed indexing and index-size automation; the
+  rebuild is a bounded per-guild scan, not a distributed migration, and the trigger
+  samples writes rather than receiving a guaranteed queue.
 
 ## Components v2
 

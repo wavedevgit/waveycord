@@ -221,6 +221,7 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 		return model.Message{}, mapErr(err)
 	}
 	s.indexMessage(mid, p.GuildID, p.ChannelID, p.AuthorID, p.Content, ts)
+	s.noteGuildWrite(p.GuildID)
 	return s.Message(mid)
 }
 

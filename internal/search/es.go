@@ -121,6 +121,46 @@ func (e *ES) IndexName(guildID string) string {
 	return strings.ToLower(e.cfg.Prefix + "-guild-" + safe)
 }
 
+// GuildDocCount returns the document count of one guild's index. A missing index is
+// zero documents, not an error.
+func (e *ES) GuildDocCount(ctx context.Context, guildID string) (int, error) {
+	cell := e.cellFor(guildID)
+	status, out, err := e.do(ctx, cell, http.MethodGet,
+		"/"+url.PathEscape(e.IndexName(guildID))+"/_count", nil, "")
+	if err != nil {
+		return 0, err
+	}
+	if status == http.StatusNotFound {
+		return 0, nil
+	}
+	if status >= 300 {
+		return 0, fmt.Errorf("search: count status %d: %s", status, truncate(out))
+	}
+	var parsed struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return 0, err
+	}
+	return parsed.Count, nil
+}
+
+// ResetGuild deletes one guild's index so it can be rebuilt alone.
+func (e *ES) ResetGuild(ctx context.Context, guildID string) error {
+	cell := e.cellFor(guildID)
+	index := e.IndexName(guildID)
+	status, out, err := e.do(ctx, cell, http.MethodDelete,
+		"/"+url.PathEscape(index)+"?ignore_unavailable=true", nil, "")
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("search: reset guild status %d: %s", status, truncate(out))
+	}
+	e.ensured.Delete(fmt.Sprintf("%d/%s", cell, index))
+	return nil
+}
+
 // CellIndex reports which cell owns a guild.
 func (e *ES) CellIndex(guildID string) int { return e.cellFor(guildID) }
 
