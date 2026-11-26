@@ -105,7 +105,7 @@ route is not registered yet.
 | SFU-style RTP fanout to same-channel connections (local + cross-instance via bus) | implemented + tested |
 | Media crypto boundary: X25519 key exchange, AES-256-GCM envelope, replay protection, key rotation | implemented + tested (server-terminated for the WCDF path) |
 | Member group key agreement (op 34/35) with server-opaque `WCE2` media, local + cross-instance | implemented + tested |
-| Reorder/dedupe for server-opaque group media by sender counter (no PLC possible) | implemented + tested |
+| Reorder/dedupe/gap shedding for server-opaque group media by sender counter, local and cross-instance (no PLC possible) | implemented + tested |
 | Epoch rekey signal on voice join/leave (op 36, local + cross-instance) | implemented + tested |
 | Epoch rotation excluding departed members; stale-epoch rejection | implemented + tested |
 | Joint epoch secret from per-member contributions (TreeKEM-style) | implemented + tested |
@@ -121,8 +121,12 @@ Group-E2EE media (`WCE2`) is never decrypted. Each sender's frames pass through 
 reorder buffer keyed by the envelope counter: the first frame is held briefly,
 out-of-order frames are emitted in counter order, a duplicate of an already emitted
 counter is dropped, and a lost counter is released after the gap window instead of
-stalling. PLC is impossible there because the payload is ciphertext; frames arriving
-from other instances are delivered in bus order.
+stalling. Cross-instance frames get the same treatment on the receiving instance,
+keyed by the ssrc in the envelope, so a hole does not stall a relayed stream. A shed
+gap increments `waveycord_voice_e2ee_gaps_total` and a dropped duplicate increments
+`waveycord_voice_e2ee_duplicates_total`. PLC is impossible on this path because the
+payload is ciphertext the server cannot decode, so there is no concealment frame to
+synthesise and none is fabricated.
 
 ## Messages
 

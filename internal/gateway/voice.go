@@ -68,6 +68,10 @@ type VoiceServer struct {
 	mixMu      sync.Mutex
 	mixers     map[string]*channelMixer
 	mixes      atomic.Int64
+	e2eeGaps   atomic.Int64
+	e2eeDupes  atomic.Int64
+	remoteMu   sync.Mutex
+	remote     map[uint32]*remoteOpaque
 	instanceID string
 	clusterMix bool
 }
@@ -135,10 +139,26 @@ func (v *VoiceServer) Close() {
 	}
 }
 
+// remoteOpaque is the reorder/dedupe state for opaque media that arrived from
+// another instance. The sender's connection is not local, so the channel is stored
+// with the state instead of being read from a connection.
+type remoteOpaque struct {
+	mu      sync.Mutex
+	j       opaqueJitter
+	channel string
+	seen    time.Time
+}
+
 // DeliverRTP forwards a packet received from another instance to local voice
 // connections in the channel.
 func (v *VoiceServer) DeliverRTP(channelID string, packet []byte) {
 	if len(packet) == 0 {
+		return
+	}
+	// Group-E2EE frames from another instance still get loss handling here: the
+	// payload is opaque, so only ordering, dedupe and gap shedding are possible.
+	if len(packet) >= 20 && string(packet[0:4]) == e2eeMagic {
+		v.ingestRemoteOpaque(channelID, binary.BigEndian.Uint32(packet[16:20]), packet)
 		return
 	}
 	v.mu.Lock()
@@ -411,6 +431,13 @@ func (v *VoiceServer) DeliverSpeaking(channelID string, speaking, delay int, ssr
 	}
 }
 
+// E2EEGaps counts opaque group-media gaps shed because the ciphertext could not
+// be reconstructed.
+func (v *VoiceServer) E2EEGaps() int64 { return v.e2eeGaps.Load() }
+
+// E2EEDupes counts opaque group-media frames dropped as already emitted.
+func (v *VoiceServer) E2EEDupes() int64 { return v.e2eeDupes.Load() }
+
 // Forwarded counts RTP packets sent to other voice connections.
 func (v *VoiceServer) Forwarded() int64 { return v.forwarded.Load() }
 
@@ -532,6 +559,7 @@ func (v *VoiceServer) jitterLoop() {
 			for _, c := range connsAll {
 				v.drainOpaque(c)
 			}
+			v.drainRemoteOpaqueAll()
 			v.mu.Lock()
 			conns := make([]*voiceConn, 0, len(v.conns))
 			for c := range v.conns {
@@ -632,6 +660,7 @@ func (v *VoiceServer) ingestOpaque(sender *voiceConn, packet []byte) {
 	}
 	if counterLess(counter, j.expected) {
 		if j.emitted {
+			v.e2eeDupes.Add(1)
 			sender.mu.Unlock()
 			return
 		}
@@ -703,8 +732,143 @@ func (v *VoiceServer) drainOpaque(sender *voiceConn) {
 				next, first = c, false
 			}
 		}
+		v.e2eeGaps.Add(1)
 		j.expected = next
 		j.gapSince = time.Time{}
+	}
+}
+
+// ingestRemoteOpaque buffers one cross-instance opaque frame by sender counter.
+func (v *VoiceServer) ingestRemoteOpaque(channel string, ssrc uint32, packet []byte) {
+	if len(packet) < 20 || channel == "" {
+		return
+	}
+	v.remoteMu.Lock()
+	if v.remote == nil {
+		v.remote = map[uint32]*remoteOpaque{}
+	}
+	ro := v.remote[ssrc]
+	if ro == nil {
+		ro = &remoteOpaque{channel: channel, j: opaqueJitter{buf: map[uint64][]byte{}}}
+		v.remote[ssrc] = ro
+	}
+	v.remoteMu.Unlock()
+
+	counter := binary.BigEndian.Uint64(packet[8:16])
+	ro.mu.Lock()
+	ro.seen = time.Now()
+	j := &ro.j
+	if !j.started {
+		j.started = true
+		j.expected = counter
+	}
+	if counterLess(counter, j.expected) {
+		if j.emitted {
+			v.e2eeDupes.Add(1)
+			ro.mu.Unlock()
+			return
+		}
+		j.expected = counter
+	}
+	j.buf[counter] = packet
+	ro.mu.Unlock()
+	v.drainRemoteOpaque(ro)
+}
+
+// drainRemoteOpaque emits consecutive cross-instance frames, shedding a gap once
+// the hold window expires. A missing frame is ciphertext the server never had, so
+// there is no loss-concealment frame to synthesise; the gap is counted instead.
+func (v *VoiceServer) drainRemoteOpaque(ro *remoteOpaque) {
+	ro.mu.Lock()
+	j := &ro.j
+	if !j.started {
+		ro.mu.Unlock()
+		return
+	}
+	channel := ro.channel
+	for {
+		if !j.emitted && len(j.buf) < opaqueDepth {
+			if j.gapSince.IsZero() {
+				j.gapSince = time.Now()
+				ro.mu.Unlock()
+				return
+			}
+			if time.Since(j.gapSince) < opaqueHold {
+				ro.mu.Unlock()
+				return
+			}
+		}
+		if pkt, ok := j.buf[j.expected]; ok {
+			delete(j.buf, j.expected)
+			j.expected++
+			j.emitted = true
+			j.gapSince = time.Time{}
+			ro.mu.Unlock()
+			v.writeChannel(channel, pkt)
+			ro.mu.Lock()
+			continue
+		}
+		if len(j.buf) == 0 {
+			ro.mu.Unlock()
+			return
+		}
+		if j.gapSince.IsZero() {
+			j.gapSince = time.Now()
+			ro.mu.Unlock()
+			return
+		}
+		if time.Since(j.gapSince) < opaqueGapLimit {
+			ro.mu.Unlock()
+			return
+		}
+		var next uint64
+		first := true
+		for c := range j.buf {
+			if first || counterLess(c, next) {
+				next, first = c, false
+			}
+		}
+		v.e2eeGaps.Add(1)
+		j.expected = next
+		j.gapSince = time.Time{}
+	}
+}
+
+// drainRemoteOpaqueAll advances every cross-instance buffer and forgets state that
+// has been idle long enough to be stale.
+func (v *VoiceServer) drainRemoteOpaqueAll() {
+	v.remoteMu.Lock()
+	all := make([]*remoteOpaque, 0, len(v.remote))
+	for ssrc, ro := range v.remote {
+		all = append(all, ro)
+		ro.mu.Lock()
+		idle := time.Since(ro.seen) > 2*time.Minute
+		ro.mu.Unlock()
+		if idle {
+			delete(v.remote, ssrc)
+		}
+	}
+	v.remoteMu.Unlock()
+	for _, ro := range all {
+		v.drainRemoteOpaque(ro)
+	}
+}
+
+// writeChannel fans a packet out to every local connection in a channel.
+func (v *VoiceServer) writeChannel(channel string, packet []byte) {
+	v.mu.Lock()
+	targets := make([]*voiceConn, 0, len(v.conns))
+	for c := range v.conns {
+		if c.channel() == channel {
+			targets = append(targets, c)
+		}
+	}
+	v.mu.Unlock()
+	for _, c := range targets {
+		if addr := c.udp(); addr != nil {
+			_, _ = v.udp.WriteToUDP(packet, addr)
+			v.forwarded.Add(1)
+		}
 	}
 }
 

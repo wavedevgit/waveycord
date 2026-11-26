@@ -26,7 +26,8 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Multi-cell search routing and cell isolation | `TestMultiCellRouting` (two fake clusters) |
 | Voice gateway, UDP discovery, RTP fanout, jitter/PLC, Opus mixing, AEAD, MLS-style epochs | `TestVoice*` |
 | Host-only voice endpoint advertised; root upgrade path connects | `TestVoiceHostOnlyEndpoint` |
-| Opaque group-media reorder, dedupe and gap release | `TestVoiceOpaqueJitter` |
+| Opaque group-media reorder, dedupe and gap release (local) | `TestVoiceOpaqueJitter` |
+| Opaque group-media loss handling across two instances, gap metrics, no mixing | `TestClusterOpaqueGapShedding` |
 | MLS path secrets + Welcome (removal and add) | `TestPathUpdateAndWelcome`, `TestVoiceMLSSignedRosterCommit` |
 | MLS ciphersuite negotiation + proposal references | `TestCiphersuiteAndProposalRefs` |
 | RFC-style path KDF, application key schedule, nonce ratchet | `TestExpandWithLabelAndApplicationKeys`, `TestVoiceMLSSignedRosterCommit` |

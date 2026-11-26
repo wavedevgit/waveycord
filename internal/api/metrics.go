@@ -85,6 +85,10 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(&b, "# TYPE waveycord_voice_mixes_total counter\nwaveycord_voice_mixes_total %d\n", s.voice.Mixes())
 		fmt.Fprintf(&b, "# HELP waveycord_voice_transcodes_total Opus frames decoded and re-encoded.\n")
 		fmt.Fprintf(&b, "# TYPE waveycord_voice_transcodes_total counter\nwaveycord_voice_transcodes_total %d\n", s.voice.Transcodes())
+		fmt.Fprintf(&b, "# HELP waveycord_voice_e2ee_gaps_total Opaque group-media gaps shed without concealment.\n")
+		fmt.Fprintf(&b, "# TYPE waveycord_voice_e2ee_gaps_total counter\nwaveycord_voice_e2ee_gaps_total %d\n", s.voice.E2EEGaps())
+		fmt.Fprintf(&b, "# HELP waveycord_voice_e2ee_duplicates_total Opaque group-media frames dropped as already emitted.\n")
+		fmt.Fprintf(&b, "# TYPE waveycord_voice_e2ee_duplicates_total counter\nwaveycord_voice_e2ee_duplicates_total %d\n", s.voice.E2EEDupes())
 		fmt.Fprintf(&b, "# HELP waveycord_voice_rtp_forwarded_total RTP packets forwarded to other connections.\n")
 		fmt.Fprintf(&b, "# TYPE waveycord_voice_rtp_forwarded_total counter\nwaveycord_voice_rtp_forwarded_total %d\n", s.voice.Forwarded())
 	}
