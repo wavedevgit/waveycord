@@ -34,11 +34,14 @@ type PathRecipient struct {
 	Envelope   Envelope `json:"envelope"`
 }
 
-// Welcome lets an added member join without the prior tree state.
+// Welcome lets an added member join without the prior tree state. NodeKeys carries
+// the node private keys on the newcomer's branch, sealed to its leaf, so it can open
+// node-addressed envelopes in this and later epochs.
 type Welcome struct {
-	Epoch      uint32   `json:"epoch"`
-	CommitHash string   `json:"commit_hash"`
-	Root       Envelope `json:"root"`
+	Epoch      uint32           `json:"epoch"`
+	CommitHash string           `json:"commit_hash"`
+	Root       Envelope         `json:"root"`
+	NodeKeys   map[int]Envelope `json:"node_keys,omitempty"`
 }
 
 // EpochCommit extends Commit with a path update and Welcome messages.
@@ -270,6 +273,66 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 		path.Recipients = append(path.Recipients, PathRecipient{Node: committerNode, UserID: committerID, Envelope: selfEnv})
 	}
 
+	newcomerSlots := map[int]string{}
+	for i, l := range next {
+		newcomerSlots[size+positions[i]] = l.UserID
+	}
+	// Newcomers: reissue any persisted ancestor key above their slot that the
+	// committer does not already control, and deliver the resulting node secrets to
+	// retained members as leaf envelopes. The newcomer itself receives them through
+	// the Welcome instead, which is what lets it open node-addressed envelopes.
+	added := map[string]bool{}
+	for _, p := range proposals {
+		if p.Type == "add" {
+			added[p.UserID] = true
+		}
+	}
+	newcomerKeys := map[string]map[int]Envelope{}
+	for uid := range added {
+		i := leafIndex(next, uid)
+		if i < 0 {
+			continue
+		}
+		keys := map[int]Envelope{}
+		n := size + positions[i]
+		for n > 1 {
+			parent := n / 2
+			if parent >= 2 {
+				if _, have := secrets[parent]; !have {
+					fresh := make([]byte, 32)
+					if _, err := rand.Read(fresh); err != nil {
+						return EpochCommit{}, nil, err
+					}
+					secrets[parent] = fresh
+					if priv, err := ecdh.X25519().NewPrivateKey(fresh); err == nil {
+						pub := clone32(priv.PublicKey().Bytes())
+						publics[parent] = pub
+						treePublics[parent] = pub
+						tree.Publics = treePublics
+					}
+					for _, other := range membersUnder(parent, size, newcomerSlots) {
+						if added[other] {
+							continue
+						}
+						oi := leafIndex(next, other)
+						env, err := sealRoot(fresh, next[oi])
+						if err != nil {
+							return EpochCommit{}, nil, err
+						}
+						path.Recipients = append(path.Recipients, PathRecipient{Node: parent, UserID: other, Envelope: env})
+					}
+				}
+				env, err := sealRoot(secrets[parent], next[i])
+				if err != nil {
+					return EpochCommit{}, nil, err
+				}
+				keys[parent] = env
+			}
+			n = parent
+		}
+		newcomerKeys[uid] = keys
+	}
+
 	// Presence: occupied leaves plus persisted node keys that are still usable. An
 	// internal node is dropped when a removed member sat under it, so a stale key the
 	// departed member still holds can never be addressed again, and when it no longer
@@ -295,7 +358,7 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 		slotUser[abs] = l.UserID
 	}
 	rekeyed := map[int]bool{}
-	for n := range prevPublics {
+	for n := range treePublics {
 		if n >= size {
 			continue
 		}
@@ -384,6 +447,22 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 			path.Recipients = append(path.Recipients, PathRecipient{Node: 1, UserID: uid, Envelope: env})
 		}
 	}
+	// Re-seal any node-addressed envelope whose target was reissued above, so the
+	// fresh public key is the one on the wire.
+	for idx := range path.Recipients {
+		r := &path.Recipients[idx]
+		if r.TargetNode <= 0 {
+			continue
+		}
+		pub, ok := treePublics[r.TargetNode]
+		sec, have := secrets[r.Node]
+		if !ok || !have {
+			continue
+		}
+		if env, err := sealNodeKey(sec, r.TargetNode, pub); err == nil {
+			r.Envelope = env
+		}
+	}
 	messages := make([]ProposalMessage, 0, len(proposals))
 	for _, p := range proposals {
 		messages = append(messages, SignProposalMessage(p, committerID, committerSignPriv))
@@ -409,7 +488,10 @@ func NewEpochCommitWithState(epoch uint32, roster []Leaf, proposals []Proposal, 
 		if err != nil {
 			return EpochCommit{}, nil, err
 		}
-		commit.Welcome[p.UserID] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), Root: env}
+		var extra int
+		commit.Welcome[p.UserID] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), Root: env,
+			NodeKeys: newcomerKeys[p.UserID]}
+		_ = extra
 	}
 	return commit, &Epoch{Epoch: epoch, Root: root, Roster: next, TreePublics: treePublics, Tree: tree}, nil
 }
@@ -522,18 +604,34 @@ func DerivePathRootWithKeys(c EpochCommit, userID string, priv [32]byte, nodePri
 		updated[node] = key
 	}
 	opened := map[int][]byte{}
+	// Phase 1: leaf-addressed envelopes, which also yield node secrets learned this
+	// commit.
 	for _, r := range c.Path.Recipients {
 		if r.UserID == userID {
 			if secret, err := openRoot(r.Envelope, userID, priv); err == nil {
 				opened[r.Node] = secret
 			}
+		}
+	}
+	// Phase 2: node-addressed envelopes, using persisted keys plus keys opened above.
+	keyFor := func(node int) ([]byte, bool) {
+		// A node secret learned in this commit supersedes a persisted one: the node
+		// may have been reissued, in which case the old key no longer opens anything.
+		if key, ok := opened[node]; ok {
+			return key, true
+		}
+		if key, ok := nodePrivs[node]; ok {
+			return key, true
+		}
+		return nil, false
+	}
+	for _, r := range c.Path.Recipients {
+		if r.TargetNode <= 0 {
 			continue
 		}
-		if r.TargetNode > 0 {
-			if key, ok := nodePrivs[r.TargetNode]; ok {
-				if secret, err := openNodeKey(r.Envelope, r.TargetNode, key); err == nil {
-					opened[r.Node] = secret
-				}
+		if key, ok := keyFor(r.TargetNode); ok {
+			if secret, err := openNodeKey(r.Envelope, r.TargetNode, key); err == nil {
+				opened[r.Node] = secret
 			}
 		}
 	}
@@ -565,6 +663,30 @@ func DerivePathRootWithKeys(c EpochCommit, userID string, priv [32]byte, nodePri
 		}
 	}
 	return cur, updated, nil
+}
+
+// DecryptWelcomeTree opens an added member's Welcome and returns the root plus the
+// node private keys on its branch, which let it open node-addressed envelopes.
+func DecryptWelcomeTree(c EpochCommit, userID string, priv [32]byte) ([]byte, map[int][]byte, error) {
+	w, ok := c.Welcome[userID]
+	if !ok {
+		return nil, nil, fmt.Errorf("mls: no welcome for %s", userID)
+	}
+	hash := sha256.Sum256(canonical(c.Commit))
+	if w.CommitHash != hex.EncodeToString(hash[:]) {
+		return nil, nil, ErrVerification
+	}
+	root, err := openRoot(w.Root, userID, priv)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys := map[int][]byte{}
+	for node, env := range w.NodeKeys {
+		if key, err := openRoot(env, userID, priv); err == nil {
+			keys[node] = key
+		}
+	}
+	return root, keys, nil
 }
 
 // DecryptWelcome opens an added member's Welcome and checks it binds the commit.

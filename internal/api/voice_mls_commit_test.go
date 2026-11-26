@@ -479,12 +479,35 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if err := mls.VerifyEpochCommit(badAdd, commit2.Roster, signKeyMap); err == nil {
 		t.Fatal("tampered add proposal signature verified")
 	}
-	daveRoot, err := mls.DecryptWelcome(commit3, dave, davePriv)
+	daveRoot, daveNodeKeys, err := mls.DecryptWelcomeTree(commit3, dave, davePriv)
 	if err != nil {
 		t.Fatalf("dave welcome: %v", err)
 	}
 	if !bytes.Equal(daveRoot, epoch3State.Root) {
 		t.Fatal("dave welcome root mismatch")
+	}
+	if len(commit3.Welcome[dave].NodeKeys) == 0 {
+		t.Fatal("welcome carried no node keys")
+	}
+	nodeAddressed := 0
+	for _, r := range commit3.Path.Recipients {
+		if r.TargetNode > 0 {
+			nodeAddressed++
+		}
+	}
+	if nodeAddressed == 0 {
+		t.Fatalf("epoch3 has no node-addressed envelope: %+v", commit3.Path.Recipients)
+	}
+	if len(daveNodeKeys) == 0 {
+		t.Fatal("welcome node keys did not decrypt for dave")
+	}
+	// The newcomer opens the node-addressed path secret with its Welcome keys.
+	derived, _, err := mls.DerivePathRootWithKeys(commit3, dave, davePriv, daveNodeKeys)
+	if err != nil || !bytes.Equal(derived, epoch3State.Root) {
+		t.Fatalf("dave node-addressed derivation: %v", err)
+	}
+	if _, _, err := mls.DerivePathRootWithKeys(commit3, dave, davePriv, nil); err == nil {
+		t.Fatal("dave opened a node-addressed envelope without Welcome keys")
 	}
 	// Media for epoch 3 uses the per-application key schedule, not the epoch root
 	// directly: the newcomer derives the same key, nonce and exporter from the root

@@ -390,3 +390,60 @@ func TestRemovedMemberBranchExcluded(t *testing.T) {
 		t.Fatalf("a epoch2: %v", err)
 	}
 }
+
+// TestWelcomeDeliversNodeKeys proves a newcomer receives its branch node keys in the
+// Welcome and can therefore open a node-addressed envelope for that branch.
+func TestWelcomeDeliversNodeKeys(t *testing.T) {
+	a := newMember(t, "wa")
+	b := newMember(t, "wb")
+	c := newMember(t, "wc")
+	roster := []Leaf{a.leaf(), b.leaf()}
+	signKeys := map[string]ed25519.PublicKey{a.id: a.signK, b.id: b.signK, c.id: c.signK}
+
+	commit1, _, err := NewEpochCommit(1, roster, nil, a.id, a.signP, a.priv)
+	if err != nil {
+		t.Fatalf("epoch1: %v", err)
+	}
+	commit2, epoch2, err := NewEpochCommitWithState(2, roster,
+		[]Proposal{{Type: "add", UserID: c.id, Public: c.pub}}, a.id, a.signP, a.priv, commit1.Tree)
+	if err != nil {
+		t.Fatalf("epoch2: %v", err)
+	}
+	if err := VerifyEpochCommit(commit2, roster, signKeys); err != nil {
+		t.Fatalf("epoch2 verify: %v", err)
+	}
+	w := commit2.Welcome[c.id]
+	if len(w.NodeKeys) == 0 {
+		t.Fatal("welcome carried no node keys")
+	}
+	addressed := 0
+	for _, r := range commit2.Path.Recipients {
+		if r.TargetNode > 0 {
+			addressed++
+		}
+	}
+	if addressed == 0 {
+		t.Fatalf("no node-addressed envelope to open: %+v", commit2.Path.Recipients)
+	}
+
+	root, keys, err := DecryptWelcomeTree(commit2, c.id, c.priv)
+	if err != nil || !bytes.Equal(root, epoch2.Root) {
+		t.Fatalf("welcome tree: root ok=%v err=%v", bytes.Equal(root, epoch2.Root), err)
+	}
+	if len(keys) == 0 {
+		t.Fatal("welcome node keys did not decrypt")
+	}
+	// With the Welcome-delivered node keys the newcomer opens the node-addressed
+	// envelope and reaches the same root.
+	derived, _, err := DerivePathRootWithKeys(commit2, c.id, c.priv, keys)
+	if err != nil {
+		t.Fatalf("newcomer with node keys: %v", err)
+	}
+	if !bytes.Equal(derived, epoch2.Root) {
+		t.Fatal("newcomer root mismatch via node-addressed envelope")
+	}
+	// Without them it cannot.
+	if _, _, err := DerivePathRootWithKeys(commit2, c.id, c.priv, nil); err == nil {
+		t.Fatal("newcomer without node keys opened a node-addressed envelope")
+	}
+}
