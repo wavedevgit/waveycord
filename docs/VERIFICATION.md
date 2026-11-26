@@ -32,6 +32,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
+| Polls: create, vote, retract, multiselect, expire, voters, validation | `TestPollsCreateVoteExpireAndVoters` |
 
 ## Not verifiable, therefore not claimed
 

@@ -116,6 +116,11 @@ func (s *Store) hydrate(r rawMessage, depth int) model.Message {
 			m.Member = &member
 		}
 	}
+	if r.Type == 32 {
+		if poll, err := s.Poll(r.ID); err == nil {
+			m.Poll = &poll
+		}
+	}
 	if r.Ref.Valid && depth > 0 {
 		if parent, err := scanRawMessage(s.DB.QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, r.Ref.String)); err == nil {
 			pm := s.hydrate(parent, depth-1)
@@ -429,11 +434,12 @@ func (s *Store) DeleteMessage(idv string) (string, error) {
 	for _, q := range []string{
 		`DELETE FROM message_reactions WHERE channel_id = ? AND message_id = ?`,
 		`DELETE FROM pins WHERE channel_id = ? AND message_id = ?`,
+		`DELETE FROM polls WHERE message_id = ?`,
 		`DELETE FROM message_index WHERE id = ?`,
 		`DELETE FROM messages WHERE channel_id = ? AND id = ?`,
 	} {
 		var err error
-		if q == `DELETE FROM message_index WHERE id = ?` {
+		if q == `DELETE FROM message_index WHERE id = ?` || q == `DELETE FROM polls WHERE message_id = ?` {
 			_, err = tx.Exec(q, idv)
 		} else {
 			_, err = tx.Exec(q, channelID, idv)

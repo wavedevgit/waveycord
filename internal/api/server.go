@@ -280,6 +280,11 @@ var (
 	ErrUnknownWebhook  = NewError(404, 10015, "Unknown Webhook")
 	ErrCannotDM        = NewError(403, 50007, "Cannot send messages to this user")
 	ErrInvalidToken    = NewError(400, 40001, "Invalid Authorization")
+	// Poll failures. Discord's exact codes for these are not published; both use
+	// the generic form-body code, which is documented as the validation fallback.
+	ErrPollEnded          = NewError(400, 50035, "Poll has ended")
+	ErrPollAnswerNotFound = NewError(400, 50035, "Invalid Form Body")
+	ErrBotsCannotVote     = NewError(403, 50001, "Bots cannot vote on polls")
 )
 
 func fail(c *Ctx, err error) {

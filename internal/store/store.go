@@ -22,6 +22,10 @@ import (
 var (
 	ErrNotFound = errors.New("store: not found")
 	ErrConflict = errors.New("store: conflict")
+	// Poll-specific failures; the API maps them to documented 400/404 responses.
+	ErrPollEnded          = errors.New("store: poll has ended")
+	ErrPollAnswerNotFound = errors.New("store: poll answer not found")
+	ErrPollVoteNotFound   = errors.New("store: poll vote not found")
 )
 
 // Store is the aggregate root for persistence.

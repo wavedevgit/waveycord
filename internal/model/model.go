@@ -322,6 +322,49 @@ type Message struct {
 	ApplicationID     *string       `json:"application_id,omitempty"`
 	GuildID           *string       `json:"guild_id,omitempty"`
 	Member            *Member       `json:"member,omitempty"`
+	Poll              *Poll         `json:"poll,omitempty"`
+}
+
+// PollMedia backs a poll question or answer.
+type PollMedia struct {
+	Text  string     `json:"text,omitempty"`
+	Emoji *PollEmoji `json:"emoji,omitempty"`
+}
+
+// PollEmoji is a partial emoji reference.
+type PollEmoji struct {
+	ID       *string `json:"id,omitempty"`
+	Name     *string `json:"name,omitempty"`
+	Animated *bool   `json:"animated,omitempty"`
+}
+
+// PollAnswer is one answer entry.
+type PollAnswer struct {
+	AnswerID  int       `json:"answer_id"`
+	PollMedia PollMedia `json:"poll_media"`
+}
+
+// PollAnswerCount is one answer's tally for the requesting user.
+type PollAnswerCount struct {
+	ID      int  `json:"id"`
+	Count   int  `json:"count"`
+	MeVoted bool `json:"me_voted"`
+}
+
+// PollResults carries the tallies.
+type PollResults struct {
+	IsFinalized  bool              `json:"is_finalized"`
+	AnswerCounts []PollAnswerCount `json:"answer_counts"`
+}
+
+// Poll is the message poll object.
+type Poll struct {
+	Question         PollMedia    `json:"question"`
+	Answers          []PollAnswer `json:"answers"`
+	Expiry           string       `json:"expiry"`
+	AllowMultiselect bool         `json:"allow_multiselect"`
+	LayoutType       int          `json:"layout_type"`
+	Results          *PollResults `json:"results,omitempty"`
 }
 
 // Invite is the invite object.

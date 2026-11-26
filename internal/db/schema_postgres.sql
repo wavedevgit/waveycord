@@ -206,6 +206,29 @@ CREATE TABLE IF NOT EXISTS message_index (
 );
 CREATE INDEX IF NOT EXISTS message_index_channel ON message_index (channel_id);
 
+CREATE TABLE IF NOT EXISTS polls (
+    -- No FK to messages: the partitioned table's primary key is (channel_id, bucket, id).
+    -- Store.DeleteMessage deletes the poll row explicitly.
+    message_id        TEXT PRIMARY KEY,
+    channel_id        TEXT NOT NULL,
+    question          TEXT NOT NULL,
+    answers           TEXT NOT NULL DEFAULT '[]',
+    expiry            BIGINT NOT NULL,
+    allow_multiselect SMALLINT NOT NULL DEFAULT 0,
+    layout_type       INTEGER NOT NULL DEFAULT 1,
+    finalized         SMALLINT NOT NULL DEFAULT 0,
+    created_at        BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS poll_votes (
+    message_id TEXT NOT NULL REFERENCES polls(message_id) ON DELETE CASCADE,
+    answer_id  INTEGER NOT NULL,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at BIGINT NOT NULL,
+    PRIMARY KEY (message_id, answer_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS poll_votes_answer ON poll_votes (message_id, answer_id, user_id);
+
 CREATE TABLE IF NOT EXISTS message_reactions (
     message_id TEXT NOT NULL,
     channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,

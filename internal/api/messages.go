@@ -50,6 +50,7 @@ type createMessageRequest struct {
 	Attachments []model.Attachment `json:"attachments"`
 	Flags       int                `json:"flags"`
 	Pinned      bool               `json:"pinned"`
+	Poll        *pollCreateRequest `json:"poll"`
 }
 
 func (s *Server) handleCreateMessage(c *Ctx) {
@@ -71,11 +72,30 @@ func (s *Server) handleCreateMessage(c *Ctx) {
 		c.FailForm("embeds", "Must be 10 or fewer in length")
 		return
 	}
+	var poll model.Poll
+	var pollExpiry int64
+	if req.Poll != nil {
+		var formErr string
+		poll, pollExpiry, formErr = validatePoll(req.Poll)
+		if formErr != "" {
+			c.FailForm("poll", formErr)
+			return
+		}
+		if strings.TrimSpace(req.Content) == "" && len(req.Embeds) == 0 && len(req.Attachments) == 0 {
+			// A poll message without text is valid; the empty-message check below
+			// must not reject it.
+			req.Content = ""
+		}
+		if len(req.Attachments) > 0 {
+			c.FailForm("poll", "Polls cannot be combined with attachments")
+			return
+		}
+	}
 	if msg := validateMessageComponents(req.Components); msg != "" {
 		c.FailForm("components", msg)
 		return
 	}
-	if strings.TrimSpace(req.Content) == "" && len(req.Embeds) == 0 && len(req.Attachments) == 0 {
+	if strings.TrimSpace(req.Content) == "" && len(req.Embeds) == 0 && len(req.Attachments) == 0 && req.Poll == nil {
 		fail(c, ErrEmptyMessage)
 		return
 	}
@@ -127,15 +147,32 @@ func (s *Server) handleCreateMessage(c *Ctx) {
 			req.Attachments[i].ProxyURL = req.Attachments[i].URL
 		}
 	}
+	msgType := 0
+	if req.Poll != nil {
+		msgType = 32
+	}
 	msg, err := s.Store.CreateMessage(store.CreateMessageParams{
 		ChannelID: ch.ID, GuildID: guildID, AuthorID: c.User.ID,
 		Content: req.Content, TTS: req.TTS, Embeds: req.Embeds,
 		Attachments: req.Attachments, Components: req.Components,
 		Nonce: req.Nonce, ReferencedMessageID: refID, Flags: req.Flags, Pinned: req.Pinned,
+		Type: msgType,
 	})
 	if err != nil {
 		fail(c, err)
 		return
+	}
+	if req.Poll != nil {
+		if err := s.Store.CreatePoll(msg.ID, ch.ID, poll, pollExpiry, poll.AllowMultiselect, poll.LayoutType); err != nil {
+			// The message is already written; remove it so a failed poll insert
+			// cannot leave a type-32 message without a poll.
+			_, _ = s.Store.DeleteMessage(msg.ID)
+			fail(c, err)
+			return
+		}
+		if refreshed, err := s.Store.Message(msg.ID); err == nil {
+			msg = refreshed
+		}
 	}
 	if s.Hub != nil {
 		if ch.GuildID != nil {

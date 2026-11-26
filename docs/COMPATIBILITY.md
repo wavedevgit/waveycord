@@ -134,7 +134,8 @@ from other instances are delivered in bus order.
 | `GET /guilds/{guild.id}/messages/search` | implemented |
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
 | Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
-| Polls, components v2 validation | TBD |
+| Polls: create on message send, vote, retract, expire, answer voters | implemented + tested |
+| Components v2 validation | TBD |
 
 ## Invites and webhooks
 
@@ -396,6 +397,30 @@ Remaining differences from Discord's published design:
 - Still absent: PubSub-backed guaranteed indexing, BFG reindex-on-threshold, and
   index-size automation. The reindex is a single bounded scan, not a distributed
   migration.
+
+## Polls
+
+A message created with a `poll` object becomes type 32. The request is validated
+against the documented limits: question 1-300 characters, 1-10 answers of 1-55
+characters each with an optional emoji id or name, `duration` 1-768 hours
+(default 24, stored as an ISO8601 `expiry`), `layout_type` 1 only, and
+`allow_multiselect` defaulting to false. Poll rows live in `polls`, per-voter
+selections in `poll_votes`.
+
+Reading a message attaches `poll` with `results.answer_counts` (one entry per answer
+that has a vote) and `is_finalized`. Expiry is enforced lazily on read and on vote, so
+an expired poll reports finalized and rejects new votes without a scheduler. Votes are
+set with `PUT /channels/{id}/polls/{message_id}/answers/@me` and `{answer_ids}` — the
+route the client uses, undocumented in the reference — an empty list retracts, a
+single-select poll rejects more than one answer, and unknown answer ids are rejected.
+`GET .../answers/{answer_id}` lists voters with `after`/`limit`, and
+`POST .../expire` returns the updated message and is restricted to the poll author.
+Each vote and expiry dispatches `MESSAGE_UPDATE`.
+
+Not 1:1: `me_voted` is always `false` because hydration has no viewer context; the
+poll object is not view-filtered. There is no background final-tally job, so counts
+are exact at read time rather than Discord's approximate-live/accurate-finalized
+split, and an expiring poll does not push a `MESSAGE_UPDATE` on its own.
 
 ## Permission inspection routes
 

@@ -175,6 +175,28 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_channel ON messages (channel_id, id DESC);
 CREATE INDEX IF NOT EXISTS messages_guild ON messages (guild_id, id DESC);
 
+CREATE TABLE IF NOT EXISTS polls (
+    message_id        TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    channel_id        TEXT NOT NULL,
+    question          TEXT NOT NULL,
+    answers           TEXT NOT NULL DEFAULT '[]',
+    expiry            INTEGER NOT NULL,
+    allow_multiselect INTEGER NOT NULL DEFAULT 0,
+    layout_type       INTEGER NOT NULL DEFAULT 1,
+    finalized         INTEGER NOT NULL DEFAULT 0,
+    created_at        INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS poll_votes (
+    message_id TEXT NOT NULL REFERENCES polls(message_id) ON DELETE CASCADE,
+    answer_id  INTEGER NOT NULL,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (message_id, answer_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS poll_votes_answer ON poll_votes (message_id, answer_id, user_id);
+
+
 CREATE TABLE IF NOT EXISTS message_reactions (
     message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     channel_id TEXT NOT NULL,
