@@ -503,8 +503,15 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if !bytes.Equal(daveRoot, epoch3State.Root) {
 		t.Fatal("dave welcome root mismatch")
 	}
-	if len(commit3.Welcome[dave].NodeKeys) == 0 {
-		t.Fatal("welcome carried no node keys")
+	welcomeJSON, _ := json.Marshal(commit3.Welcome[dave])
+	if !strings.Contains(string(welcomeJSON), "group_info") {
+		t.Fatalf("welcome is not encrypted group info: %s", welcomeJSON)
+	}
+	if strings.Contains(string(welcomeJSON), `"root"`) || strings.Contains(string(welcomeJSON), `"node_keys"`) {
+		t.Fatalf("welcome still carries separate envelopes: %s", welcomeJSON)
+	}
+	if len(commit3.Welcome[dave].GroupInfo.Ciphertext) == 0 {
+		t.Fatal("welcome group info is empty")
 	}
 	nodeAddressed := 0
 	for _, r := range commit3.Path.Recipients {

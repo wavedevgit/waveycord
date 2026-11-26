@@ -121,6 +121,7 @@ route is not registered yet.
 | Node-addressed path envelopes: member node private keys persisted in epoch state, `DerivePathRootWithKeys` | implemented + tested (unit + two-instance) |
 | Removed-member branch handling: a node with retained members is rekeyed (fresh secret/public, delivered to them, stale key useless); a branch with no retained members is dropped | implemented + tested (unit); exclusion path also in two-instance |
 | Welcome-delivered node keys: newcomer's branch reissued and sealed into the Welcome, letting it open node-addressed envelopes | implemented + tested (unit + two-instance add) |
+| Encrypted group-info Welcome: one sealed blob (epoch, roster, tree, root, node keys) bound to the commit hash | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | implemented + tested (`-tags opus` for codec paths) |
 

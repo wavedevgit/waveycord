@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"crypto/ed25519"
+	"encoding/json"
 	"testing"
 )
 
@@ -413,8 +414,8 @@ func TestWelcomeDeliversNodeKeys(t *testing.T) {
 		t.Fatalf("epoch2 verify: %v", err)
 	}
 	w := commit2.Welcome[c.id]
-	if len(w.NodeKeys) == 0 {
-		t.Fatal("welcome carried no node keys")
+	if len(w.GroupInfo.Ciphertext) == 0 {
+		t.Fatal("welcome carried no encrypted group info")
 	}
 	addressed := 0
 	for _, r := range commit2.Path.Recipients {
@@ -446,4 +447,71 @@ func TestWelcomeDeliversNodeKeys(t *testing.T) {
 	if _, _, err := DerivePathRootWithKeys(commit2, c.id, c.priv, nil); err == nil {
 		t.Fatal("newcomer without node keys opened a node-addressed envelope")
 	}
+}
+
+// TestWelcomeGroupInfoFraming proves the Welcome carries one encrypted group-info
+// blob (no separate root/node-key envelopes) bound to the commit hash, and that the
+// blob cannot be tampered with or moved to another commit.
+func TestWelcomeGroupInfoFraming(t *testing.T) {
+	a := newMember(t, "ga")
+	b := newMember(t, "gb")
+	c := newMember(t, "gc")
+	roster := []Leaf{a.leaf(), b.leaf()}
+	signKeys := map[string]ed25519.PublicKey{a.id: a.signK, b.id: b.signK, c.id: c.signK}
+
+	base, _, err := NewEpochCommit(1, roster, nil, a.id, a.signP, a.priv)
+	if err != nil {
+		t.Fatalf("base: %v", err)
+	}
+	commit, epoch, err := NewEpochCommitWithState(2, roster,
+		[]Proposal{{Type: "add", UserID: c.id, Public: c.pub}}, a.id, a.signP, a.priv, base.Tree)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	welcome := commit.Welcome[c.id]
+	rawWelcome, _ := json.Marshal(welcome)
+	if bytes.Contains(rawWelcome, []byte(`"root"`)) || bytes.Contains(rawWelcome, []byte(`"node_keys"`)) {
+		t.Fatalf("welcome still carries separate envelopes: %s", rawWelcome)
+	}
+	if len(welcome.GroupInfo.Ciphertext) == 0 {
+		t.Fatal("welcome group info is empty")
+	}
+	// The plaintext root must not appear on the wire.
+	if bytes.Contains(rawWelcome, epoch.Root) {
+		t.Fatal("root leaked in clear inside the welcome")
+	}
+	root, keys, err := DecryptWelcomeTree(commit, c.id, c.priv)
+	if err != nil || !bytes.Equal(root, epoch.Root) {
+		t.Fatalf("group info decrypt: %v", err)
+	}
+	if len(keys) == 0 {
+		t.Fatal("group info carried no node keys")
+	}
+
+	// Tampered ciphertext is rejected.
+	tampered := commit
+	tw := welcome
+	tw.GroupInfo = welcome.GroupInfo
+	tw.GroupInfo.Ciphertext = append([]byte(nil), welcome.GroupInfo.Ciphertext...)
+	tw.GroupInfo.Ciphertext[0] ^= 0xff
+	tampered.Welcome = map[string]Welcome{c.id: tw}
+	if _, _, err := DecryptWelcomeTree(tampered, c.id, c.priv); err == nil {
+		t.Fatal("tampered group info accepted")
+	}
+
+	// A group-info blob from another commit cannot be replayed.
+	d := newMember(t, "gd")
+	other, _, err := NewEpochCommitWithState(3, commit.Roster,
+		[]Proposal{{Type: "add", UserID: d.id, Public: d.pub}}, a.id, a.signP, a.priv, commit.Tree)
+	if err != nil {
+		t.Fatalf("other: %v", err)
+	}
+	swapped := commit
+	swWelcome := welcome
+	swWelcome.GroupInfo = other.Welcome[d.id].GroupInfo
+	swapped.Welcome = map[string]Welcome{c.id: swWelcome}
+	if _, _, err := DecryptWelcomeTree(swapped, c.id, c.priv); err == nil {
+		t.Fatal("group info replayed from another commit")
+	}
+	_ = signKeys
 }

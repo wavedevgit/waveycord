@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -34,14 +35,23 @@ type PathRecipient struct {
 	Envelope   Envelope `json:"envelope"`
 }
 
-// Welcome lets an added member join without the prior tree state. NodeKeys carries
-// the node private keys on the newcomer's branch, sealed to its leaf, so it can open
-// node-addressed envelopes in this and later epochs.
+// GroupInfo is the group state handed to a newcomer. The whole structure is sealed
+// as one blob (the Welcome's encrypted group info), rather than shipping the root and
+// node keys as separate envelopes.
+type GroupInfo struct {
+	Epoch    uint32         `json:"epoch"`
+	Roster   []Leaf         `json:"roster"`
+	Tree     *TreeState     `json:"tree"`
+	Root     []byte         `json:"root"`
+	NodeKeys map[int][]byte `json:"node_keys,omitempty"`
+}
+
+// Welcome lets an added member join without the prior tree state. GroupInfo is the
+// RFC-style encrypted group info: one sealed blob bound to the commit hash.
 type Welcome struct {
-	Epoch      uint32           `json:"epoch"`
-	CommitHash string           `json:"commit_hash"`
-	Root       Envelope         `json:"root"`
-	NodeKeys   map[int]Envelope `json:"node_keys,omitempty"`
+	Epoch      uint32   `json:"epoch"`
+	CommitHash string   `json:"commit_hash"`
+	GroupInfo  Envelope `json:"group_info"`
 }
 
 // EpochCommit extends Commit with a path update and Welcome messages.
@@ -294,13 +304,13 @@ func NewEpochCommitWithMessages(epoch uint32, roster []Leaf, proposals []Proposa
 			added[p.UserID] = true
 		}
 	}
-	newcomerKeys := map[string]map[int]Envelope{}
+	newcomerSecrets := map[string]map[int][]byte{}
 	for uid := range added {
 		i := leafIndex(next, uid)
 		if i < 0 {
 			continue
 		}
-		keys := map[int]Envelope{}
+		keys := map[int][]byte{}
 		n := size + positions[i]
 		for n > 1 {
 			parent := n / 2
@@ -329,15 +339,11 @@ func NewEpochCommitWithMessages(epoch uint32, roster []Leaf, proposals []Proposa
 						path.Recipients = append(path.Recipients, PathRecipient{Node: parent, UserID: other, Envelope: env})
 					}
 				}
-				env, err := sealRoot(secrets[parent], next[i])
-				if err != nil {
-					return EpochCommit{}, nil, err
-				}
-				keys[parent] = env
+				keys[parent] = append([]byte(nil), secrets[parent]...)
 			}
 			n = parent
 		}
-		newcomerKeys[uid] = keys
+		newcomerSecrets[uid] = keys
 	}
 
 	// Presence: occupied leaves plus persisted node keys that are still usable. An
@@ -495,14 +501,12 @@ func NewEpochCommitWithMessages(epoch uint32, roster []Leaf, proposals []Proposa
 			continue
 		}
 		leaf := next[leafIndex(next, p.UserID)]
-		env, err := sealRoot(root, leaf)
-		if err != nil {
-			return EpochCommit{}, nil, err
+		g := GroupInfo{Epoch: epoch, Roster: next, Tree: tree, Root: root, NodeKeys: newcomerSecrets[p.UserID]}
+		sealed, serr := sealGroupInfo(g, leaf, hex.EncodeToString(hash[:]))
+		if serr != nil {
+			return EpochCommit{}, nil, serr
 		}
-		var extra int
-		commit.Welcome[p.UserID] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), Root: env,
-			NodeKeys: newcomerKeys[p.UserID]}
-		_ = extra
+		commit.Welcome[p.UserID] = Welcome{Epoch: epoch, CommitHash: hex.EncodeToString(hash[:]), GroupInfo: sealed}
 	}
 	return commit, &Epoch{Epoch: epoch, Root: root, Roster: next, TreePublics: treePublics, Tree: tree}, nil
 }
@@ -676,6 +680,70 @@ func DerivePathRootWithKeys(c EpochCommit, userID string, priv [32]byte, nodePri
 	return cur, updated, nil
 }
 
+// sealGroupInfo encrypts the group state to the newcomer's leaf, with the commit hash
+// as associated data so the blob cannot be moved to another commit.
+func sealGroupInfo(g GroupInfo, leaf Leaf, commitHash string) (Envelope, error) {
+	raw, err := json.Marshal(g)
+	if err != nil {
+		return Envelope{}, err
+	}
+	pub, err := ecdh.X25519().NewPublicKey(leaf.Public[:])
+	if err != nil {
+		return Envelope{}, err
+	}
+	eph, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return Envelope{}, err
+	}
+	shared, err := eph.ECDH(pub)
+	if err != nil {
+		return Envelope{}, err
+	}
+	info := append(append(append([]byte(nil), eph.PublicKey().Bytes()...), []byte("welcome")...), []byte(commitHash)...)
+	k := hkdfBytes(shared, labelHPKE, string(info), 32)
+	block, err := aesNewGCM(k)
+	if err != nil {
+		return Envelope{}, err
+	}
+	var env Envelope
+	copy(env.Ephemeral[:], eph.PublicKey().Bytes())
+	if _, err := rand.Read(env.Nonce[:]); err != nil {
+		return Envelope{}, err
+	}
+	env.Ciphertext = block.Seal(nil, env.Nonce[:], raw, []byte(commitHash))
+	return env, nil
+}
+
+func openGroupInfo(env Envelope, userID string, priv [32]byte, commitHash string) (GroupInfo, error) {
+	var g GroupInfo
+	pub, err := ecdh.X25519().NewPublicKey(env.Ephemeral[:])
+	if err != nil {
+		return g, err
+	}
+	key, err := ecdh.X25519().NewPrivateKey(priv[:])
+	if err != nil {
+		return g, err
+	}
+	shared, err := key.ECDH(pub)
+	if err != nil {
+		return g, err
+	}
+	info := append(append(append([]byte(nil), env.Ephemeral[:]...), []byte("welcome")...), []byte(commitHash)...)
+	k := hkdfBytes(shared, labelHPKE, string(info), 32)
+	block, err := aesNewGCM(k)
+	if err != nil {
+		return g, err
+	}
+	raw, err := block.Open(nil, env.Nonce[:], env.Ciphertext, []byte(commitHash))
+	if err != nil {
+		return g, ErrVerification
+	}
+	if err := json.Unmarshal(raw, &g); err != nil {
+		return g, ErrVerification
+	}
+	return g, nil
+}
+
 // DecryptWelcomeTree opens an added member's Welcome and returns the root plus the
 // node private keys on its branch, which let it open node-addressed envelopes.
 func DecryptWelcomeTree(c EpochCommit, userID string, priv [32]byte) ([]byte, map[int][]byte, error) {
@@ -684,33 +752,28 @@ func DecryptWelcomeTree(c EpochCommit, userID string, priv [32]byte) ([]byte, ma
 		return nil, nil, fmt.Errorf("mls: no welcome for %s", userID)
 	}
 	hash := sha256.Sum256(canonical(c.Commit))
-	if w.CommitHash != hex.EncodeToString(hash[:]) {
+	hashHex := hex.EncodeToString(hash[:])
+	if w.CommitHash != hashHex {
 		return nil, nil, ErrVerification
 	}
-	root, err := openRoot(w.Root, userID, priv)
+	g, err := openGroupInfo(w.GroupInfo, userID, priv, hashHex)
 	if err != nil {
 		return nil, nil, err
 	}
-	keys := map[int][]byte{}
-	for node, env := range w.NodeKeys {
-		if key, err := openRoot(env, userID, priv); err == nil {
-			keys[node] = key
-		}
+	if g.Epoch != c.Epoch {
+		return nil, nil, ErrVerification
 	}
-	return root, keys, nil
+	keys := map[int][]byte{}
+	for node, key := range g.NodeKeys {
+		keys[node] = key
+	}
+	return g.Root, keys, nil
 }
 
 // DecryptWelcome opens an added member's Welcome and checks it binds the commit.
 func DecryptWelcome(c EpochCommit, userID string, priv [32]byte) ([]byte, error) {
-	w, ok := c.Welcome[userID]
-	if !ok {
-		return nil, fmt.Errorf("mls: no welcome for %s", userID)
-	}
-	hash := sha256.Sum256(canonical(c.Commit))
-	if w.CommitHash != hex.EncodeToString(hash[:]) {
-		return nil, ErrVerification
-	}
-	return openRoot(w.Root, userID, priv)
+	root, _, err := DecryptWelcomeTree(c, userID, priv)
+	return root, err
 }
 
 func openRoot(env Envelope, userID string, priv [32]byte) ([]byte, error) {
