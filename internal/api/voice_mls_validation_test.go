@@ -58,11 +58,8 @@ func TestVoiceMLSCommitServerValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit})
-	f := readVoiceOp(t, bobVoice, 38, time.Now().Add(20*time.Second))
-	if f["op"].(float64) != 38 {
-		t.Fatalf("valid commit not relayed: %+v", f)
-	}
+	sendMLSCommit(t, aliceVoice, commit)
+	readMLSCommit(t, bobVoice, time.Now().Add(20*time.Second))
 
 	// A tampered signature must be rejected and the sender disconnected without a
 	// second relay.
@@ -73,7 +70,7 @@ func TestVoiceMLSCommitServerValidation(t *testing.T) {
 	if _, err := json.Marshal(forged); err != nil {
 		t.Fatal(err)
 	}
-	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": forged})
+	sendMLSCommit(t, aliceVoice, forged)
 
 	// The peer must not receive the forged commit, and Alice's connection closes.
 	deadline := time.Now().Add(2 * time.Second)

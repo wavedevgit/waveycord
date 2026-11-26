@@ -49,6 +49,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Ancestor-chain root derivation for newcomers (ancestor below root, no root secret) | `TestNewcomerAncestorChainDerivation` |
 | Encrypted group-info Welcome framing, no plaintext root, tamper/replay rejection | `TestWelcomeGroupInfoFraming`, `TestVoiceMLSSignedRosterCommit` |
 | GroupInfo TLS presentation-language round trip and strict decode rejection | `TestGroupInfoTLSRoundTrip`, `TestVoiceMLSSignedRosterCommit` |
+| MLSMessage framing round trip, version/format/truncation rejection, two-instance relay | `TestMLSMessageRoundTrip`, `TestVoiceMLSSignedRosterCommit` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
 | Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |

@@ -117,6 +117,7 @@ route is not registered yet.
 | Signed Add/Remove proposal wire messages carried in the commit, signature and body validated on verify | implemented + tested |
 | Independent proposal authors: any previous-roster member may author/sign a proposal; proposer and signature validated on verify | implemented + tested |
 | Server-side op 38 commit validation before relaying (ciphersuite, proposals, roster transition, path shape) | implemented + tested |
+| MLSMessage framing on op 38: version + wire-format prefix, TLS-encoded commit body, decoded by server and clients | implemented + tested |
 | MLS credential directory: per-user signing/media keys persisted server-side; validation resolves keys from it; first commit checked against live voice membership | implemented + tested |
 | TreeKEM resolution with blank/padding subtrees; per-node public keys persisted across epochs and covered by the commit signature | implemented + tested |
 | Stable leaf slots: `TreeState` carries size/users/positions, removal blanks a slot without shrinking, newcomers fill the lowest free slot | implemented + tested |

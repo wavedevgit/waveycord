@@ -179,12 +179,12 @@ func (s *Server) handleClusterEvent(name string, data json.RawMessage) {
 		}
 	case "VOICE_MLS_COMMIT":
 		var ev struct {
-			ChannelID  string          `json:"channel_id"`
-			FromUserID string          `json:"from_user_id"`
-			Commit     json.RawMessage `json:"commit"`
+			ChannelID  string `json:"channel_id"`
+			FromUserID string `json:"from_user_id"`
+			MLSMessage string `json:"mls_message"`
 		}
-		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" {
-			s.voice.DeliverMLSCommit(ev.ChannelID, ev.FromUserID, ev.Commit)
+		if json.Unmarshal(data, &ev) == nil && s.voice != nil && ev.ChannelID != "" && ev.MLSMessage != "" {
+			s.voice.DeliverMLSCommit(ev.ChannelID, ev.FromUserID, ev.MLSMessage)
 		}
 	case "VOICE_RTP":
 		var ev struct {

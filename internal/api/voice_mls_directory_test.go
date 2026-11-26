@@ -62,7 +62,7 @@ func TestVoiceMLSCommitRejectsUnknownCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit})
+	sendMLSCommit(t, aliceVoice, commit)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

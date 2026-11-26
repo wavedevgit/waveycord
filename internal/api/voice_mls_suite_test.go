@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -49,17 +49,21 @@ func TestVoiceMLSCommitRejectsUnsupportedSuite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	// Rewrite the suite on the wire; the server must refuse it before relaying.
-	raw, err := json.Marshal(commit)
+	// Rewrite the negotiated suite inside the framed commit; the server must refuse it
+	// before relaying.
+	encoded, err := mls.MarshalMLSMessage(commit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var wire map[string]any
-	if err := json.Unmarshal(raw, &wire); err != nil {
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
 		t.Fatal(err)
 	}
-	wire["cipher_suite"] = 0x0099
-	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": wire})
+	// MLSMessage header (4 bytes) + opaque length (2) + epoch (4) => suite at 10..14.
+	raw[10], raw[11], raw[12], raw[13] = 0, 0, 0, 0x99
+	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": map[string]any{
+		"mls_message": base64.StdEncoding.EncodeToString(raw),
+	}})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

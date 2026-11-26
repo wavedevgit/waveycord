@@ -405,11 +405,7 @@ func (v *VoiceServer) rememberMLSKey(channel, userID string, key ed25519.PublicK
 // the last accepted roster per channel, so a later commit cannot rewrite history. The
 // first commit in a channel is trusted to declare the roster (trust-on-first-use) and
 // must carry no proposals.
-func (v *VoiceServer) validateMLSCommit(channel string, raw json.RawMessage) error {
-	var ec mls.EpochCommit
-	if err := json.Unmarshal(raw, &ec); err != nil {
-		return err
-	}
+func (v *VoiceServer) validateMLSCommit(channel string, ec mls.EpochCommit) error {
 	// Signing keys come from the persisted directory, not from whatever arrived on
 	// the wire most recently.
 	rawKeys, err := v.store.MLSCredentials()
@@ -459,7 +455,7 @@ func (v *VoiceServer) validateMLSCommit(channel string, raw json.RawMessage) err
 }
 
 // relayCommit broadcasts a signed MLS commit to channel peers and other instances.
-func (v *VoiceServer) relayCommit(channelID, sender string, commit json.RawMessage) {
+func (v *VoiceServer) relayCommit(channelID, sender, commit string) {
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for c := range v.conns {
@@ -470,18 +466,18 @@ func (v *VoiceServer) relayCommit(channelID, sender string, commit json.RawMessa
 	v.mu.Unlock()
 	for _, c := range targets {
 		c.send(map[string]any{"op": 38, "d": map[string]any{
-			"from_user_id": sender, "commit": commit,
+			"from_user_id": sender, "mls_message": commit,
 		}})
 	}
 	if v.publish != nil {
 		v.publish("VOICE_MLS_COMMIT", map[string]any{
-			"channel_id": channelID, "from_user_id": sender, "commit": commit,
+			"channel_id": channelID, "from_user_id": sender, "mls_message": commit,
 		})
 	}
 }
 
 // DeliverMLSCommit forwards a commit received from another instance.
-func (v *VoiceServer) DeliverMLSCommit(channelID, sender string, commit json.RawMessage) {
+func (v *VoiceServer) DeliverMLSCommit(channelID, sender, commit string) {
 	v.mu.Lock()
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for c := range v.conns {
@@ -492,7 +488,7 @@ func (v *VoiceServer) DeliverMLSCommit(channelID, sender string, commit json.Raw
 	v.mu.Unlock()
 	for _, c := range targets {
 		c.send(map[string]any{"op": 38, "d": map[string]any{
-			"from_user_id": sender, "commit": commit,
+			"from_user_id": sender, "mls_message": commit,
 		}})
 	}
 }
@@ -1554,10 +1550,17 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				continue
 			}
 			v.relayE2EEKey(channel, sender, ex.RecipientUserID, ex.KeyID, ex.Wrapped, ex.Kind)
-		case 38: // MLS_COMMIT: signed roster commit relayed to channel members
-			var commit json.RawMessage
-			if len(frame.D) == 0 || json.Unmarshal(frame.D, &commit) != nil {
+		case 38: // MLS_COMMIT: MLSMessage-framed signed commit relayed to members
+			var payload struct {
+				MLSMessage string `json:"mls_message"`
+			}
+			if len(frame.D) == 0 || json.Unmarshal(frame.D, &payload) != nil || payload.MLSMessage == "" {
 				c.close(voiceCloseUnknownOpcode, "Invalid commit")
+				return
+			}
+			commit, err := mls.UnmarshalMLSMessage(payload.MLSMessage)
+			if err != nil {
+				c.close(voiceCloseUnknownOpcode, "Invalid MLS message")
 				return
 			}
 			c.mu.Lock()
@@ -1571,7 +1574,7 @@ func (v *VoiceServer) serve(ctx context.Context, ws *websocket.Conn, token strin
 				c.close(voiceCloseUnknownOpcode, "Invalid MLS commit")
 				return
 			}
-			v.relayCommit(channel, sender, commit)
+			v.relayCommit(channel, sender, payload.MLSMessage)
 		case voiceOpHeartbeat:
 			c.send(map[string]any{"op": voiceOpHeartbeatAck, "d": map[string]any{"t": time.Now().UnixMilli()}})
 		case voiceOpSpeaking:

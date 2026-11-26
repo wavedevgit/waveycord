@@ -119,6 +119,31 @@ func gcmFromKey(t *testing.T, key []byte) interface {
 	return g
 }
 
+// sendMLSCommit sends an op 38 commit in MLSMessage framing.
+func sendMLSCommit(t *testing.T, conn *websocket.Conn, commit mls.EpochCommit) {
+	t.Helper()
+	encoded, err := mls.MarshalMLSMessage(commit)
+	if err != nil {
+		t.Fatalf("marshal mls message: %v", err)
+	}
+	writeVoice(t, conn, map[string]any{"op": 38, "d": map[string]any{"mls_message": encoded}})
+}
+
+// readMLSCommit reads the next op 38 frame and decodes its MLSMessage.
+func readMLSCommit(t *testing.T, conn *websocket.Conn, deadline time.Time) mls.EpochCommit {
+	t.Helper()
+	f := readVoiceOp(t, conn, 38, deadline)
+	encoded, _ := f["d"].(map[string]any)["mls_message"].(string)
+	if encoded == "" {
+		t.Fatalf("op 38 without mls_message: %+v", f)
+	}
+	commit, err := mls.UnmarshalMLSMessage(encoded)
+	if err != nil {
+		t.Fatalf("decode mls message: %v", err)
+	}
+	return commit
+}
+
 func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	a, b := newPGCluster(t)
 	alice := a.register("signeda")
@@ -261,15 +286,9 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if err := mls.VerifyEpochCommit(commit1, leaves1, signKeyMap); err != nil {
 		t.Fatalf("epoch1 verify: %v", err)
 	}
-	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit1})
+	sendMLSCommit(t, aliceVoice, commit1)
 	for _, conn := range []*websocket.Conn{bobVoice, charlieVoice} {
-		f := readVoiceOp(t, conn, 38, time.Now().Add(20*time.Second))
-		var got mls.EpochCommit
-		raw := f["d"].(map[string]any)["commit"]
-		buf, _ := jsonMarshal(raw)
-		if err := jsonUnmarshalBytes(buf, &got); err != nil {
-			t.Fatalf("decode commit: %v", err)
-		}
+		got := readMLSCommit(t, conn, time.Now().Add(20*time.Second))
 		if err := mls.VerifyEpochCommit(got, leaves1, signKeyMap); err != nil {
 			t.Fatalf("relayed commit failed verification: %v", err)
 		}
@@ -373,13 +392,8 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 			t.Fatalf("roundtrip verify: %v", err)
 		}
 	}
-	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit2})
-	cf := readVoiceOp(t, bobVoice, 38, time.Now().Add(20*time.Second))
-	var relayed mls.EpochCommit
-	rawCommit, _ := jsonMarshal(cf["d"].(map[string]any)["commit"])
-	if err := jsonUnmarshalBytes(rawCommit, &relayed); err != nil {
-		t.Fatalf("decode epoch2 commit: %v", err)
-	}
+	sendMLSCommit(t, aliceVoice, commit2)
+	relayed := readMLSCommit(t, bobVoice, time.Now().Add(20*time.Second))
 	if err := mls.VerifyEpochCommit(relayed, leaves1, signKeyMap); err != nil {
 		t.Fatalf("relayed epoch2 verify: %v", err)
 	}
@@ -413,14 +427,8 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 	if _, stale := relayed.Tree.Publics[3]; stale {
 		t.Fatal("relayed tree kept the removed member's node key")
 	}
-	if !strings.Contains(string(rawCommit), "tree_publics") {
-		t.Fatalf("commit on the wire has no persisted tree keys: %s", rawCommit)
-	}
 	if len(relayed.TreePublics) == 0 {
 		t.Fatal("relayed epoch2 commit lost its tree keys")
-	}
-	if !strings.Contains(string(rawCommit), "proposal_messages") {
-		t.Fatalf("commit on the wire has no proposal messages: %s", rawCommit)
 	}
 	if len(relayed.ProposalMessages) != 1 {
 		t.Fatalf("epoch2 proposal messages = %d", len(relayed.ProposalMessages))
@@ -487,13 +495,8 @@ func TestVoiceMLSSignedRosterCommit(t *testing.T) {
 		t.Fatalf("epoch3 suite = %#x", commit3.CipherSuite)
 	}
 	// Relay it through the server, which must accept the negotiated suite.
-	writeVoice(t, aliceVoice, map[string]any{"op": 38, "d": commit3})
-	rcf := readVoiceOp(t, bobVoice, 38, time.Now().Add(20*time.Second))
-	var relayed3 mls.EpochCommit
-	raw3, _ := jsonMarshal(rcf["d"].(map[string]any)["commit"])
-	if err := jsonUnmarshalBytes(raw3, &relayed3); err != nil {
-		t.Fatalf("decode epoch3: %v", err)
-	}
+	sendMLSCommit(t, aliceVoice, commit3)
+	relayed3 := readMLSCommit(t, bobVoice, time.Now().Add(20*time.Second))
 	if relayed3.CipherSuite != mls.SuiteX25519AES128GCM {
 		t.Fatalf("relayed suite = %#x", relayed3.CipherSuite)
 	}

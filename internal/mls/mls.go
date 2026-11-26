@@ -162,6 +162,14 @@ func hkdfBytes(secret []byte, salt, info string, n int) []byte {
 	return out
 }
 
+// normSlice maps an empty slice to nil so nil and empty encode identically.
+func normSlice[T any](v []T) []T {
+	if len(v) == 0 {
+		return nil
+	}
+	return v
+}
+
 func canonical(c Commit) []byte {
 	type canon struct {
 		Epoch            uint32              `json:"epoch"`
@@ -175,7 +183,29 @@ func canonical(c Commit) []byte {
 		Envelopes        map[string]Envelope `json:"envelopes"`
 		Committer        string              `json:"committer"`
 	}
-	raw, _ := json.Marshal(canon{c.Epoch, c.CipherSuite, c.ProposalRefs, c.ProposalMessages, c.TreePublics, c.Tree, c.Roster, c.Proposals, c.Envelopes, c.Committer})
+	// Normalize empty collections so a nil and an empty slice or map produce the same
+	// signed bytes. Without this a TLS round trip (which allocates empty collections)
+	// would change the canonical form and break the signature.
+	tree := c.Tree
+	if tree != nil {
+		cp := *tree
+		cp.Users = normSlice(cp.Users)
+		cp.Positions = normSlice(cp.Positions)
+		if len(cp.Publics) == 0 {
+			cp.Publics = nil
+		}
+		tree = &cp
+	}
+	treePublics := c.TreePublics
+	if len(treePublics) == 0 {
+		treePublics = nil
+	}
+	envelopes := c.Envelopes
+	if len(envelopes) == 0 {
+		envelopes = nil
+	}
+	raw, _ := json.Marshal(canon{c.Epoch, c.CipherSuite, normSlice(c.ProposalRefs), normSlice(c.ProposalMessages),
+		treePublics, tree, normSlice(c.Roster), normSlice(c.Proposals), envelopes, c.Committer})
 	return raw
 }
 
