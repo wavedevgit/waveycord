@@ -23,6 +23,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Interactions, command permissions, components/modals, forwarding | `TestInteractions*`, `TestCommandPermission*` |
 | Auto moderation keyword/regex/spam/profile/mention-raid | `TestAutoModeration*`, `TestAutoModSpamTrigger`, `TestAutoModMemberProfileTrigger` |
 | Search: tsvector/GIN and live OpenSearch guild-sharded indices | `TestPostgresFullTextSearch`, `TestESAdapter*`, `TestESRealCluster` |
+| Multi-cell search routing and cell isolation | `TestMultiCellRouting` (two fake clusters) |
 | Voice gateway, UDP discovery, RTP fanout, jitter/PLC, Opus mixing, AEAD, MLS-style epochs | `TestVoice*` |
 | Host-only voice endpoint advertised; root upgrade path connects | `TestVoiceHostOnlyEndpoint` |
 | MLS path secrets + Welcome (removal and add) | `TestPathUpdateAndWelcome`, `TestVoiceMLSSignedRosterCommit` |

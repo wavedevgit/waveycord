@@ -41,9 +41,21 @@ func main() {
 
 	st := store.New(handle)
 	var searchIndex search.Index
-	if esURLs := os.Getenv("WAVEYCORD_ES_URL"); esURLs != "" {
+	esCellsEnv := os.Getenv("WAVEYCORD_ES_CELLS")
+	if esURLs := os.Getenv("WAVEYCORD_ES_URL"); esURLs != "" || esCellsEnv != "" {
+		var cells [][]string
+		if esCellsEnv != "" {
+			for _, cell := range strings.Split(esCellsEnv, ";") {
+				cell = strings.TrimSpace(cell)
+				if cell == "" {
+					continue
+				}
+				cells = append(cells, strings.Split(cell, ","))
+			}
+		}
 		es, err := search.NewES(search.ESConfig{
 			URLs:     strings.Split(esURLs, ","),
+			Cells:    cells,
 			Username: os.Getenv("WAVEYCORD_ES_USERNAME"),
 			Password: os.Getenv("WAVEYCORD_ES_PASSWORD"),
 			Prefix:   env("WAVEYCORD_ES_PREFIX", "waveycord"),
@@ -59,7 +71,7 @@ func main() {
 		if err := es.Health(context.Background()); err != nil {
 			log.Warn("elasticsearch health", "err", err)
 		} else {
-			log.Info("search backend", "backend", "elasticsearch", "prefix", env("WAVEYCORD_ES_PREFIX", "waveycord"))
+			log.Info("search backend", "backend", "elasticsearch", "prefix", env("WAVEYCORD_ES_PREFIX", "waveycord"), "cells", len(cells))
 		}
 	} else {
 		ix, err := search.Open(context.Background(), handle)

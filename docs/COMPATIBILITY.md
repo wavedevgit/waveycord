@@ -125,6 +125,7 @@ route is not registered yet.
 | `POST /channels/{channel.id}/messages/{message.id}/ack` | implemented |
 | `GET /guilds/{guild.id}/messages/search` | implemented |
 | Index reset + full reindex workflow (`WAVEYCORD_SEARCH_REINDEX=reset`) | implemented + tested (tsvector and live OpenSearch) |
+| Multi-cell routing: guild hashed to one of N ES clusters, per-guild index inside it (`WAVEYCORD_ES_CELLS`) | implemented + tested (two fake clusters) |
 | Polls, components v2 validation | TBD |
 
 ## Invites and webhooks
@@ -365,10 +366,17 @@ and `TestESRealCluster`, which runs the same assertions against a live
 Elasticsearch/OpenSearch node when `WAVEYCORD_TEST_ES_URL` is set. The real-cluster
 run was executed against OpenSearch 2.19.0 and passed.
 
+Cell architecture: `WAVEYCORD_ES_CELLS` takes semicolon-separated cells, each a
+comma-separated URL list (`cellA1,cellA2;cellB1`). A guild is hashed to one cell,
+its index is created only there, and queries/deletes use that cell; bulk batches are
+grouped per cell. Tested with two independent fake clusters: each guild's index exists
+only in its cell, ranked guild-scoped queries read one cell, an unindexed guild
+returns empty, deletes hit only the owning cell, and reset clears every cell.
+
 Remaining differences from Discord's published design:
 
-- One cluster configured by URL list, not a multi-cluster "cell" architecture with
-  per-cell routing and BFG (big-freaking-guild) reindexing.
+- Cells are configured statically; there is no per-cell autoscaling, routing table
+  or BFG (big-freaking-guild) reindexing.
 - Inline bounded bulk worker, not a PubSub-backed guaranteed-delivery indexing
   queue with destination-grouped batching.
 - No index-size automation or reindex-on-threshold workflow.

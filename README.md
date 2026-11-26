@@ -70,6 +70,8 @@ go run ./cmd/waveycord
 ```
 
 One index per guild (`<prefix>-guild-<guild_id>`), written through a bulk worker.
+For multiple cells set `WAVEYCORD_ES_CELLS='http://es-a:9200;http://es-b:9200'`
+(semicolon-separated cells, comma-separated URLs per cell); guilds hash to a cell.
 Without `WAVEYCORD_ES_URL` the server uses Postgres tsvector (or SQLite substring
 matching).
 

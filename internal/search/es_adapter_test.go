@@ -73,6 +73,21 @@ func (f *fakeES) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = w.Write([]byte(`{"errors":false,"items":[]}`))
 		_ = errors
+	case r.Method == http.MethodDelete && !strings.HasSuffix(r.URL.Path, "/_delete_by_query"):
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		prefixMatch := strings.HasSuffix(name, "*")
+		base := strings.TrimSuffix(name, "*")
+		deleted := 0
+		for index := range f.indices {
+			if prefixMatch && strings.HasPrefix(index, base) {
+				delete(f.indices, index)
+				deleted++
+			} else if !prefixMatch && index == name {
+				delete(f.indices, index)
+				deleted++
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"acknowledged": true, "deleted": deleted})
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/_delete_by_query"):
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)

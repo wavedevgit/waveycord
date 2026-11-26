@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,7 +19,10 @@ import (
 // in one index per guild ("guild-sharded"), which mirrors the published
 // cell/indices design at a single-cluster scale.
 type ESConfig struct {
+	// URLs is the single-cell cluster list. Cells overrides it with independent
+	// Elasticsearch clusters; guilds are assigned to a cell by hash.
 	URLs          []string
+	Cells         [][]string
 	Username      string
 	Password      string
 	Prefix        string
@@ -30,10 +34,16 @@ type ESConfig struct {
 
 // ES is an Index backed by the Elasticsearch REST API. Writes are queued to a
 // bulk-indexing worker; reads are synchronous.
+type esCell struct {
+	urls []string
+	next atomic.Uint64
+}
+
 type ES struct {
 	cfg    ESConfig
 	client *http.Client
 	next   atomic.Uint64
+	cells  []esCell
 
 	queue   chan bulkOp
 	done    chan struct{}
@@ -45,7 +55,13 @@ type ES struct {
 	err     error
 }
 
+type indexedDoc struct {
+	cell  int
+	index string
+}
+
 type bulkOp struct {
+	cell    int
 	index   string
 	id      string
 	doc     *Doc
@@ -55,7 +71,7 @@ type bulkOp struct {
 
 // NewES builds the adapter and starts the indexing worker.
 func NewES(cfg ESConfig) (*ES, error) {
-	if len(cfg.URLs) == 0 {
+	if len(cfg.URLs) == 0 && len(cfg.Cells) == 0 {
 		return nil, fmt.Errorf("search: es urls required")
 	}
 	if cfg.Prefix == "" {
@@ -77,6 +93,17 @@ func NewES(cfg ESConfig) (*ES, error) {
 		cfg: cfg, client: &http.Client{Timeout: 10 * time.Second},
 		queue: make(chan bulkOp, 4096), done: make(chan struct{}),
 	}
+	if len(cfg.Cells) > 0 {
+		for _, urls := range cfg.Cells {
+			if len(urls) == 0 {
+				continue
+			}
+			e.cells = append(e.cells, esCell{urls: urls})
+		}
+	}
+	if len(e.cells) == 0 {
+		e.cells = []esCell{{urls: cfg.URLs}}
+	}
 	e.wg.Add(1)
 	go e.worker()
 	return e, nil
@@ -94,13 +121,30 @@ func (e *ES) IndexName(guildID string) string {
 	return strings.ToLower(e.cfg.Prefix + "-guild-" + safe)
 }
 
-func (e *ES) baseURL() string {
-	i := e.next.Add(1)
-	return strings.TrimRight(e.cfg.URLs[int(i)%len(e.cfg.URLs)], "/")
+// CellIndex reports which cell owns a guild.
+func (e *ES) CellIndex(guildID string) int { return e.cellFor(guildID) }
+
+// CellCount reports the configured cell count.
+func (e *ES) CellCount() int { return len(e.cells) }
+
+// cellFor assigns a guild to a cell by hash.
+func (e *ES) cellFor(guildID string) int {
+	if len(e.cells) <= 1 {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(guildID))
+	return int(h.Sum64() % uint64(len(e.cells)))
 }
 
-func (e *ES) do(ctx context.Context, method, path string, body []byte, contentType string) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, method, e.baseURL()+path, bytes.NewReader(body))
+func (e *ES) baseURL(cell int) string {
+	c := &e.cells[cell]
+	i := c.next.Add(1)
+	return strings.TrimRight(c.urls[int(i)%len(c.urls)], "/")
+}
+
+func (e *ES) do(ctx context.Context, cell int, method, path string, body []byte, contentType string) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, e.baseURL(cell)+path, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -119,8 +163,9 @@ func (e *ES) do(ctx context.Context, method, path string, body []byte, contentTy
 	return resp.StatusCode, out, nil
 }
 
-func (e *ES) ensureIndex(ctx context.Context, index string) error {
-	if _, ok := e.ensured.Load(index); ok {
+func (e *ES) ensureIndex(ctx context.Context, cell int, index string) error {
+	key := fmt.Sprintf("%d/%s", cell, index)
+	if _, ok := e.ensured.Load(key); ok {
 		return nil
 	}
 	body, _ := json.Marshal(map[string]any{
@@ -137,14 +182,14 @@ func (e *ES) ensureIndex(ctx context.Context, index string) error {
 			"created_at": map[string]any{"type": "long"},
 		}},
 	})
-	status, out, err := e.do(ctx, http.MethodPut, "/"+url.PathEscape(index), body, "application/json")
+	status, out, err := e.do(ctx, cell, http.MethodPut, "/"+url.PathEscape(index), body, "application/json")
 	if err != nil {
 		return err
 	}
 	if status >= 300 && !bytes.Contains(out, []byte("resource_already_exists_exception")) {
 		return fmt.Errorf("search: create index %s: status %d: %s", index, status, truncate(out))
 	}
-	e.ensured.Store(index, true)
+	e.ensured.Store(key, true)
 	return nil
 }
 
@@ -160,13 +205,14 @@ func (e *ES) Index(ctx context.Context, d Doc) error {
 	if d.GuildID == "" {
 		return nil
 	}
+	cell := e.cellFor(d.GuildID)
 	index := e.IndexName(d.GuildID)
-	if err := e.ensureIndex(ctx, index); err != nil {
+	if err := e.ensureIndex(ctx, cell, index); err != nil {
 		return err
 	}
-	e.indices.Store(d.MessageID, index)
+	e.indices.Store(d.MessageID, indexedDoc{cell: cell, index: index})
 	select {
-	case e.queue <- bulkOp{index: index, id: d.MessageID, doc: &d}:
+	case e.queue <- bulkOp{cell: cell, index: index, id: d.MessageID, doc: &d}:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -223,21 +269,42 @@ func (e *ES) worker() {
 }
 
 func (e *ES) bulk(ops []bulkOp) error {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
+	type cellBatch struct {
+		buf  bytes.Buffer
+		cell int
+	}
+	batches := map[int]*cellBatch{}
+	encByCell := func(cell int) *json.Encoder {
+		b := batches[cell]
+		if b == nil {
+			b = &cellBatch{cell: cell}
+			batches[cell] = b
+		}
+		return json.NewEncoder(&b.buf)
+	}
 	for _, op := range ops {
 		if op.delete {
 			body, _ := json.Marshal(map[string]any{"query": map[string]any{
 				"term": map[string]any{"message_id": op.id},
 			}})
 			index := e.cfg.Prefix + "-guild-*"
+			cell := -1
 			if known, ok := e.indices.Load(op.id); ok {
-				index = known.(string)
+				doc := known.(indexedDoc)
+				index, cell = doc.index, doc.cell
 			}
-			_, _, _ = e.do(context.Background(), http.MethodPost,
-				"/"+url.PathEscape(index)+"/_delete_by_query?conflicts=proceed&refresh=true", body, "application/json")
+			if cell >= 0 {
+				_, _, _ = e.do(context.Background(), cell, http.MethodPost,
+					"/"+url.PathEscape(index)+"/_delete_by_query?conflicts=proceed&refresh=true", body, "application/json")
+			} else {
+				for ci := range e.cells {
+					_, _, _ = e.do(context.Background(), ci, http.MethodPost,
+						"/"+url.PathEscape(index)+"/_delete_by_query?conflicts=proceed&refresh=true", body, "application/json")
+				}
+			}
 			continue
 		}
+		enc := encByCell(op.cell)
 		meta := map[string]any{"index": map[string]any{"_index": op.index, "_id": op.id}}
 		if err := enc.Encode(meta); err != nil {
 			continue
@@ -251,26 +318,28 @@ func (e *ES) bulk(ops []bulkOp) error {
 			continue
 		}
 	}
-	if buf.Len() == 0 {
-		return nil
-	}
-	status, out, err := e.do(context.Background(), http.MethodPost, "/_bulk?refresh=false",
-		buf.Bytes(), "application/x-ndjson")
-	if err != nil {
-		e.setErr(err)
-		return err
-	}
-	if status >= 300 {
-		err := fmt.Errorf("search: bulk status %d: %s", status, truncate(out))
-		e.setErr(err)
-		return err
-	}
-	var parsed struct {
-		Errors bool                        `json:"errors"`
-		Items  []map[string]map[string]any `json:"items"`
-	}
-	if json.Unmarshal(out, &parsed) == nil && parsed.Errors {
-		e.setErr(fmt.Errorf("search: bulk reported item errors"))
+	for _, batch := range batches {
+		if batch.buf.Len() == 0 {
+			continue
+		}
+		status, out, err := e.do(context.Background(), batch.cell, http.MethodPost, "/_bulk?refresh=false",
+			batch.buf.Bytes(), "application/x-ndjson")
+		if err != nil {
+			e.setErr(err)
+			return err
+		}
+		if status >= 300 {
+			err := fmt.Errorf("search: bulk status %d: %s", status, truncate(out))
+			e.setErr(err)
+			return err
+		}
+		var parsed struct {
+			Errors bool                        `json:"errors"`
+			Items  []map[string]map[string]any `json:"items"`
+		}
+		if json.Unmarshal(out, &parsed) == nil && parsed.Errors {
+			e.setErr(fmt.Errorf("search: bulk reported item errors"))
+		}
 	}
 	return nil
 }
@@ -303,7 +372,7 @@ func (e *ES) Search(ctx context.Context, q Query) (Result, error) {
 		"sort":             []any{"_score", map[string]any{"created_at": "desc"}},
 		"_source":          []string{"message_id"},
 	})
-	status, out, err := e.do(ctx, http.MethodPost,
+	status, out, err := e.do(ctx, e.cellFor(q.GuildID), http.MethodPost,
 		"/"+url.PathEscape(e.IndexName(q.GuildID))+"/_search", body, "application/json")
 	if err != nil {
 		return Result{}, err
@@ -373,12 +442,14 @@ func (e *ES) Close() error {
 // reindex rebuilds from the database.
 func (e *ES) Reset(ctx context.Context) error {
 	// The wildcard must stay literal; only the prefix is escaped.
-	status, out, err := e.do(ctx, http.MethodDelete, "/"+url.PathEscape(e.cfg.Prefix)+"-guild-*?ignore_unavailable=true", nil, "")
-	if err != nil {
-		return err
-	}
-	if status >= 300 {
-		return fmt.Errorf("search: reset status %d: %s", status, truncate(out))
+	for ci := range e.cells {
+		status, out, err := e.do(ctx, ci, http.MethodDelete, "/"+url.PathEscape(e.cfg.Prefix)+"-guild-*?ignore_unavailable=true", nil, "")
+		if err != nil {
+			return err
+		}
+		if status >= 300 {
+			return fmt.Errorf("search: reset status %d: %s", status, truncate(out))
+		}
 	}
 	e.ensured = sync.Map{}
 	return nil
@@ -386,12 +457,14 @@ func (e *ES) Reset(ctx context.Context) error {
 
 // Health pings the cluster.
 func (e *ES) Health(ctx context.Context) error {
-	status, _, err := e.do(ctx, http.MethodGet, "/_cluster/health", nil, "")
-	if err != nil {
-		return err
-	}
-	if status >= 300 {
-		return fmt.Errorf("search: cluster health status %d", status)
+	for ci := range e.cells {
+		status, _, err := e.do(ctx, ci, http.MethodGet, "/_cluster/health", nil, "")
+		if err != nil {
+			return err
+		}
+		if status >= 300 {
+			return fmt.Errorf("search: cluster health status %d", status)
+		}
 	}
 	return nil
 }
