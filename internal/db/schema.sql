@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS guilds (
     afk_channel_id                 TEXT,
     afk_timeout                    INTEGER NOT NULL DEFAULT 300,
     widget_enabled                 INTEGER NOT NULL DEFAULT 0,
+    widget_channel_id              TEXT,
     verification_level             INTEGER NOT NULL DEFAULT 0,
     default_message_notifications  INTEGER NOT NULL DEFAULT 0,
     explicit_content_filter        INTEGER NOT NULL DEFAULT 0,
@@ -522,3 +523,17 @@ CREATE TABLE IF NOT EXISTS welcome_screens (
     welcome_channels TEXT NOT NULL DEFAULT '[]',
     enabled          SMALLINT NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS stickers (
+    id          TEXT PRIMARY KEY,
+    guild_id    TEXT REFERENCES guilds(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT,
+    tags        TEXT NOT NULL DEFAULT '',
+    format_type INTEGER NOT NULL DEFAULT 1,
+    available   SMALLINT NOT NULL DEFAULT 1,
+    user_id     TEXT,
+    sort_value  INTEGER NOT NULL DEFAULT 0,
+    created_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stickers_guild ON stickers (guild_id);

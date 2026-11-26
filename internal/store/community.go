@@ -195,3 +195,26 @@ func (s *Store) PutWelcomeScreen(guildID string, description *string, channels j
 	}
 	return s.GetWelcomeScreen(guildID)
 }
+
+// ReplaceAllCommandPermissions replaces every override for an application in a
+// guild (the deprecated bulk endpoint).
+func (s *Store) ReplaceAllCommandPermissions(appID, guildID string, sets map[string][]CommandPermissionEntry) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return mapErr(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM command_permissions WHERE application_id = ? AND guild_id = ?`, appID, guildID); err != nil {
+		return mapErr(err)
+	}
+	for commandID, entries := range sets {
+		for _, e := range entries {
+			if _, err := tx.Exec(`INSERT INTO command_permissions
+				(application_id, guild_id, command_id, target_id, type, permission)
+				VALUES (?,?,?,?,?,?)`, appID, guildID, commandID, e.ID, e.Type, e.Permission); err != nil {
+				return mapErr(err)
+			}
+		}
+	}
+	return mapErr(tx.Commit())
+}

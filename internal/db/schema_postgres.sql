@@ -367,6 +367,7 @@ CREATE TABLE IF NOT EXISTS bot_tokens (
 
 -- Additive migrations for deployments created by earlier revisions. CREATE TABLE
 -- IF NOT EXISTS does not add columns to an existing table.
+ALTER TABLE guilds ADD COLUMN IF NOT EXISTS widget_channel_id TEXT;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS archived SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS template TEXT;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS message_retention TEXT;
@@ -561,3 +562,17 @@ CREATE TABLE IF NOT EXISTS welcome_screens (
     welcome_channels TEXT NOT NULL DEFAULT '[]',
     enabled          SMALLINT NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS stickers (
+    id          TEXT PRIMARY KEY,
+    guild_id    TEXT REFERENCES guilds(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    description TEXT,
+    tags        TEXT NOT NULL DEFAULT '',
+    format_type INTEGER NOT NULL DEFAULT 1,
+    available   SMALLINT NOT NULL DEFAULT 1,
+    user_id     TEXT,
+    sort_value  INTEGER NOT NULL DEFAULT 0,
+    created_at  BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stickers_guild ON stickers (guild_id);

@@ -7,6 +7,11 @@ backed by a real SQL database (SQLite in WAL mode by default), with the object
 shapes, error envelopes, permission bitfields and rate-limit headers the
 published documentation specifies.
 
+## Verification
+
+See `docs/VERIFICATION.md` for what tests prove and what cannot be proven from
+public documentation.
+
 ## Status
 
 See `docs/COMPATIBILITY.md` for the endpoint-by-endpoint matrix. Nothing in this

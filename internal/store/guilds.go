@@ -11,7 +11,7 @@ import (
 )
 
 const guildColumns = `id, name, icon, splash, discovery_splash, banner, owner_id, region,
-	afk_channel_id, afk_timeout, widget_enabled, verification_level,
+	afk_channel_id, afk_timeout, widget_enabled, widget_channel_id, verification_level,
 	default_message_notifications, explicit_content_filter, mfa_level, system_channel_id,
 	system_channel_flags, rules_channel_id, features, preferred_locale, description,
 	vanity_url_code, premium_tier, premium_subscription_count, nsfw_level`
@@ -25,6 +25,7 @@ func scanGuild(row rowScanner) (model.Guild, error) {
 		banner   sql.NullString
 		afk      sql.NullString
 		widget   int
+		widgetCh sql.NullString
 		system   sql.NullString
 		rules    sql.NullString
 		features string
@@ -32,7 +33,7 @@ func scanGuild(row rowScanner) (model.Guild, error) {
 		vanity   sql.NullString
 	)
 	err := row.Scan(&g.ID, &g.Name, &icon, &splash, &disc, &banner, &g.OwnerID, new(string),
-		&afk, &g.AfkTimeout, &widget, &g.VerificationLevel, &g.DefaultMessageNotifications,
+		&afk, &g.AfkTimeout, &widget, &widgetCh, &g.VerificationLevel, &g.DefaultMessageNotifications,
 		&g.ExplicitContentFilter, &g.MfaLevel, &system, &g.SystemChannelFlags, &rules,
 		&features, &g.PreferredLocale, &desc, &vanity, &g.PremiumTier,
 		&g.PremiumSubscriptionCount, &g.NSFWLevel)
@@ -46,6 +47,7 @@ func scanGuild(row rowScanner) (model.Guild, error) {
 	g.AfkChannelID = ns(afk)
 	enabled := widget != 0
 	g.WidgetEnabled = &enabled
+	g.WidgetChannelID = ns(widgetCh)
 	g.SystemChannelID = ns(system)
 	g.RulesChannelID = ns(rules)
 	g.Description = ns(desc)

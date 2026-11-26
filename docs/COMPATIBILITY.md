@@ -60,6 +60,9 @@ route is not registered yet.
 | `GET /guilds/{guild.id}/bans` and `GET/PUT/DELETE .../bans/{user.id}` | implemented |
 | `GET /guilds/{guild.id}/invites` | implemented |
 | `GET /guilds/{guild.id}/emojis` and emoji CRUD | implemented |
+| `GET/POST /guilds/{guild.id}/stickers`, `GET/PATCH/DELETE .../{sticker.id}` | implemented + tested |
+| `GET /stickers/{sticker.id}` | implemented + tested |
+| `GET/PATCH /guilds/{guild.id}/widget`, `GET /guilds/{guild.id}/widget.json` | implemented + tested |
 | `GET /guilds/{guild.id}/audit-logs` | implemented |
 | `GET /guilds/{guild.id}/vanity-url` | implemented (read) |
 | `GET /guilds/{guild.id}/webhooks` | implemented |
@@ -172,6 +175,7 @@ rejected.
 | Guild command variants at `/applications/{id}/guilds/{guild.id}/commands` | implemented + tested |
 | `GET /applications/{app.id}/guilds/{guild.id}/commands/permissions` | implemented + tested |
 | `GET/PUT .../commands/{command.id}/permissions` | implemented + tested |
+| `PUT .../commands/permissions` (deprecated bulk replace) | implemented + tested |
 | Command permission enforcement at interaction dispatch | implemented + tested |
 | `verify_key` registration through `PATCH /applications/{id}` | implemented + tested |
 | Interaction type 3 (message component) callback + payload validation | implemented + tested |
@@ -367,6 +371,15 @@ Remaining differences from Discord's published design:
 - Still absent: multi-cluster cells, PubSub-backed guaranteed indexing, BFG
   reindex-on-threshold, and index-size automation. The reindex is a single bounded
   scan, not a distributed migration.
+
+## Stickers and widget
+
+Guild stickers support create/list/get/patch/delete with name 2-30, tags 1-200,
+description ≤100 and a 20-sticker cap; global `GET /stickers/{id}` is registered.
+Guild widget settings validate the channel belongs to the guild; the public
+`widget.json` returns guild name, channels and an empty member list, and is refused
+with `403` when the widget is disabled. Sticker image data is accepted but not
+decoded; `.png` widget rendering is not implemented.
 
 ## Deliberately different from Discord
 
