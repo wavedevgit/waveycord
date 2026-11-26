@@ -23,11 +23,15 @@ type PathChain struct {
 	Publics       map[int][32]byte `json:"publics"`
 }
 
-// PathRecipient carries one node secret encrypted to one member.
+// PathRecipient carries one path node's secret. Either it is sealed to one member's
+// leaf (UserID set), or, when the sibling resolution is a present internal node, to
+// that node's public key (TargetNode set) so members holding the node's private key
+// can open it.
 type PathRecipient struct {
-	Node     int      `json:"node"`
-	UserID   string   `json:"user_id"`
-	Envelope Envelope `json:"envelope"`
+	Node       int      `json:"node"`
+	UserID     string   `json:"user_id,omitempty"`
+	TargetNode int      `json:"target_node,omitempty"`
+	Envelope   Envelope `json:"envelope"`
 }
 
 // Welcome lets an added member join without the prior tree state.
@@ -175,6 +179,18 @@ func NewEpochCommitWithTree(epoch uint32, roster []Leaf, proposals []Proposal, c
 		secret := secrets[parent]
 		seen := map[string]bool{}
 		for _, resNode := range Resolution(sibling, size, present) {
+			// A present internal node is addressed directly when its public key is
+			// known; members beneath it persist the matching private key.
+			if resNode < size {
+				if pub, ok := treePublics[resNode]; ok {
+					env, err := sealNodeKey(secret, resNode, pub)
+					if err != nil {
+						return EpochCommit{}, nil, err
+					}
+					path.Recipients = append(path.Recipients, PathRecipient{Node: parent, TargetNode: resNode, Envelope: env})
+					continue
+				}
+			}
 			for _, uid := range resolutionUnder(resNode, size, next) {
 				if seen[uid] {
 					continue
@@ -234,36 +250,113 @@ func VerifyEpochCommit(c EpochCommit, previous []Leaf, signKeys map[string]ed255
 	return Verify(c.Commit, previous, signKeys)
 }
 
+// sealNodeKey seals a path secret to one internal node's public key.
+func sealNodeKey(secret []byte, node int, pub [32]byte) (Envelope, error) {
+	pk, err := ecdh.X25519().NewPublicKey(pub[:])
+	if err != nil {
+		return Envelope{}, err
+	}
+	eph, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return Envelope{}, err
+	}
+	shared, err := eph.ECDH(pk)
+	if err != nil {
+		return Envelope{}, err
+	}
+	label := fmt.Sprintf("node:%d", node)
+	k := hkdfBytes(shared, labelHPKE, label+string(eph.PublicKey().Bytes()), 32)
+	block, err := aesNewGCM(k)
+	if err != nil {
+		return Envelope{}, err
+	}
+	var env Envelope
+	copy(env.Ephemeral[:], eph.PublicKey().Bytes())
+	if _, err := rand.Read(env.Nonce[:]); err != nil {
+		return Envelope{}, err
+	}
+	env.Ciphertext = block.Seal(nil, env.Nonce[:], secret, []byte(label))
+	return env, nil
+}
+
+// openNodeKey opens a node-addressed envelope with a persisted node private key.
+func openNodeKey(env Envelope, node int, priv []byte) ([]byte, error) {
+	pub, err := ecdh.X25519().NewPublicKey(env.Ephemeral[:])
+	if err != nil {
+		return nil, err
+	}
+	key, err := ecdh.X25519().NewPrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	shared, err := key.ECDH(pub)
+	if err != nil {
+		return nil, err
+	}
+	label := fmt.Sprintf("node:%d", node)
+	k := hkdfBytes(shared, labelHPKE, label+string(env.Ephemeral[:]), 32)
+	block, err := aesNewGCM(k)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := block.Open(nil, env.Nonce[:], env.Ciphertext, []byte(label))
+	if err != nil {
+		return nil, ErrVerification
+	}
+	return secret, nil
+}
+
 // DerivePathRoot recovers the epoch root for an existing member from the path
 // envelopes and the index-bound chain.
 func DerivePathRoot(c EpochCommit, userID string, priv [32]byte) ([]byte, error) {
+	root, _, err := DerivePathRootWithKeys(c, userID, priv, nil)
+	return root, err
+}
+
+// DerivePathRootWithKeys additionally accepts the node private keys a member
+// persisted from earlier epochs, so a path secret addressed to a resolved internal
+// node can be opened. It returns the root and the member's updated node keys: the
+// secrets learned from the divergence point up, merged over the persisted ones.
+func DerivePathRootWithKeys(c EpochCommit, userID string, priv [32]byte, nodePrivs map[int][]byte) ([]byte, map[int][]byte, error) {
 	if c.Path == nil {
-		return nil, fmt.Errorf("mls: no path")
+		return nil, nil, fmt.Errorf("mls: no path")
+	}
+	updated := map[int][]byte{}
+	for node, key := range nodePrivs {
+		updated[node] = key
 	}
 	var start []byte
 	startNode := 0
 	for _, r := range c.Path.Recipients {
-		if r.UserID != userID {
+		if r.UserID == userID {
+			if secret, err := openRoot(r.Envelope, userID, priv); err == nil {
+				start, startNode = secret, r.Node
+				break
+			}
 			continue
 		}
-		secret, err := openRoot(r.Envelope, userID, priv)
-		if err != nil {
-			continue
+		if r.TargetNode > 0 {
+			if key, ok := nodePrivs[r.TargetNode]; ok {
+				if secret, err := openNodeKey(r.Envelope, r.TargetNode, key); err == nil {
+					start, startNode = secret, r.Node
+					break
+				}
+			}
 		}
-		start, startNode = secret, r.Node
-		break
 	}
 	if start == nil {
-		return nil, fmt.Errorf("mls: no path envelope for %s", userID)
+		return nil, nil, fmt.Errorf("mls: no path envelope for %s", userID)
 	}
 	node := startNode
 	cur := start
+	updated[node] = append([]byte(nil), cur...)
 	for node > 1 {
 		parent := node / 2
 		cur = pathNodeSecret(cur)
 		node = parent
+		updated[node] = append([]byte(nil), cur...)
 	}
-	return cur, nil
+	return cur, updated, nil
 }
 
 // DecryptWelcome opens an added member's Welcome and checks it binds the commit.

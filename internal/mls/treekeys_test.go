@@ -136,3 +136,98 @@ func TestTreePublicsPersistAcrossEpochs(t *testing.T) {
 		t.Fatal("removed member derived the epoch-3 root")
 	}
 }
+
+// TestNodeAddressedEnvelope proves a path secret can be addressed to a resolved
+// internal node and opened only by a member that persisted that node's private key
+// from an earlier epoch.
+func TestNodeAddressedEnvelope(t *testing.T) {
+	a := newMember(t, "na")
+	b := newMember(t, "nb")
+	c := newMember(t, "nc")
+	d := newMember(t, "nd")
+	e := newMember(t, "ne")
+	roster := []Leaf{a.leaf(), b.leaf(), c.leaf()}
+	signKeys := map[string]ed25519.PublicKey{
+		a.id: a.signK, b.id: b.signK, c.id: c.signK, d.id: d.signK, e.id: e.signK,
+	}
+
+	// Epoch 1 is committed by c, so node 3 (covering c's leaf) is established and
+	// published; c keeps the private keys on its path.
+	commit1, epoch1, err := NewEpochCommit(1, roster, nil, c.id, c.signP, c.priv)
+	if err != nil {
+		t.Fatalf("epoch1: %v", err)
+	}
+	cRoot, cKeys, err := DerivePathRootWithKeys(commit1, c.id, c.priv, nil)
+	if err != nil {
+		t.Fatalf("c epoch1: %v", err)
+	}
+	if !bytes.Equal(cRoot, epoch1.Root) {
+		t.Fatal("c epoch1 root mismatch")
+	}
+	if len(cKeys) < 3 {
+		t.Fatalf("c persisted %d node keys, want leaf+ancestors", len(cKeys))
+	}
+	if _, ok := cKeys[3]; !ok {
+		t.Fatal("c did not persist node 3")
+	}
+
+	// Epoch 2 adds d; a commits, and the sibling of node 2 is the present internal
+	// node 3, so that path secret must be node-addressed.
+	commit2, epoch2, err := NewEpochCommitWithTree(2, roster,
+		[]Proposal{{Type: "add", UserID: d.id, Public: d.pub}}, a.id, a.signP, a.priv,
+		epoch1.TreePublics)
+	if err != nil {
+		t.Fatalf("epoch2: %v", err)
+	}
+	if err := VerifyEpochCommit(commit2, roster, signKeys); err != nil {
+		t.Fatalf("epoch2 verify: %v", err)
+	}
+	nodeAddressed := 0
+	for _, r := range commit2.Path.Recipients {
+		if r.TargetNode == 3 && r.UserID == "" {
+			nodeAddressed++
+		}
+	}
+	if nodeAddressed == 0 {
+		t.Fatalf("no node-addressed envelope in %+v", commit2.Path.Recipients)
+	}
+
+	// Leaf-addressed members and the node-key holder all reach the same root.
+	aRoot, _, err := DerivePathRootWithKeys(commit2, a.id, a.priv, nil)
+	if err != nil {
+		t.Fatalf("a epoch2: %v", err)
+	}
+	if !bytes.Equal(aRoot, epoch2.Root) {
+		t.Fatal("a epoch2 root mismatch")
+	}
+	bRoot, _, err := DerivePathRootWithKeys(commit2, b.id, b.priv, nil)
+	if err != nil {
+		t.Fatalf("b epoch2: %v", err)
+	}
+	if !bytes.Equal(bRoot, epoch2.Root) {
+		t.Fatal("b epoch2 root mismatch")
+	}
+	cRoot2, cKeys2, err := DerivePathRootWithKeys(commit2, c.id, c.priv, cKeys)
+	if err != nil {
+		t.Fatalf("c epoch2 via node key: %v", err)
+	}
+	if !bytes.Equal(cRoot2, epoch2.Root) {
+		t.Fatal("c epoch2 root mismatch via node key")
+	}
+	if _, ok := cKeys2[1]; !ok {
+		t.Fatal("c did not learn the new root secret")
+	}
+
+	// Without the persisted node key the envelope cannot be opened: a non-member
+	// with a random key fails, and the newcomer has no node key from the Welcome.
+	if _, _, err := DerivePathRootWithKeys(commit2, e.id, e.priv, nil); err == nil {
+		t.Fatal("non-member opened the path")
+	}
+	wrongKeys := map[int][]byte{3: make([]byte, 32)}
+	if _, _, err := DerivePathRootWithKeys(commit2, e.id, e.priv, wrongKeys); err == nil {
+		t.Fatal("wrong node key opened the envelope")
+	}
+	if _, _, err := DerivePathRootWithKeys(commit2, d.id, d.priv, nil); err == nil {
+		t.Fatal("newcomer without node keys opened a node-addressed envelope")
+	}
+}

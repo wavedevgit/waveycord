@@ -116,6 +116,7 @@ route is not registered yet.
 | RFC-style `ExpandWithLabel` path KDF, resolution-driven envelopes, per-application key schedule | implemented + tested |
 | Signed Add/Remove proposal wire messages carried in the commit, signature and body validated on verify | implemented + tested |
 | TreeKEM resolution with blank/padding subtrees; per-node public keys persisted across epochs and covered by the commit signature | implemented + tested |
+| Node-addressed path envelopes: member node private keys persisted in epoch state, `DerivePathRootWithKeys` | implemented + tested (unit); leaf layout limitation below |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | implemented + tested (`-tags opus` for codec paths) |
 
