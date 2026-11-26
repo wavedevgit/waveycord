@@ -92,6 +92,7 @@ route is not registered yet.
 | Media crypto boundary: X25519 key exchange, AES-256-GCM envelope, replay protection, key rotation | implemented + tested (server-terminated for the WCDF path) |
 | Member group key agreement (op 34/35) with server-opaque `WCE2` media, local + cross-instance | implemented + tested |
 | Epoch rekey signal on voice join/leave (op 36, local + cross-instance) | implemented + tested |
+| Epoch rotation excluding departed members; stale-epoch rejection | implemented + tested |
 | Speaking events broadcast within a channel | implemented + tested |
 | Opus encode/decode, SFU fanout, DAVE E2EE, jitter buffer | TBD |
 

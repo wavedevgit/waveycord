@@ -79,7 +79,7 @@ type Hub struct {
 	dispatched    atomic.Int64
 	journal       *deltaJournal
 	clusterFn     func(name string, data json.RawMessage)
-	voiceChange   func(channelID, reason string)
+	voiceChange   func(channelID, userID, reason string)
 	store         *store.Store
 	voiceEndpoint string
 	passiveNanos  atomic.Int64
@@ -115,7 +115,7 @@ func (h *Hub) OnCluster(fn func(name string, data json.RawMessage)) {
 }
 
 // SetVoiceNotifier installs the membership-change callback used for E2EE rekey.
-func (h *Hub) SetVoiceNotifier(fn func(channelID, reason string)) {
+func (h *Hub) SetVoiceNotifier(fn func(channelID, userID, reason string)) {
 	if h == nil {
 		return
 	}
@@ -538,7 +538,7 @@ func (h *Hub) handleVoiceState(c *conn, raw json.RawMessage) bool {
 				GuildID: upd.GuildID, ChannelID: nil, UserID: c.userID, SessionID: c.sessionID,
 			})
 			if h.voiceChange != nil {
-				h.voiceChange(*previous, "member_left")
+				h.voiceChange(*previous, c.userID, "member_left")
 			}
 		}
 		return true
@@ -564,7 +564,7 @@ func (h *Hub) handleVoiceState(c *conn, raw json.RawMessage) bool {
 	}
 	h.DispatchGuild(upd.GuildID, "VOICE_STATE_UPDATE", saved)
 	if h.voiceChange != nil {
-		h.voiceChange(*upd.ChannelID, "member_joined")
+		h.voiceChange(*upd.ChannelID, c.userID, "member_joined")
 	}
 	h.DispatchUser(c.userID, "VOICE_SERVER_UPDATE", map[string]any{
 		"guild_id":   upd.GuildID,

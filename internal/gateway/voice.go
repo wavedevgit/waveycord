@@ -256,13 +256,25 @@ func (v *VoiceServer) DeliverE2EEKeyRelay(channelID, fromUserID, toUserID string
 }
 
 // MemberChanged signals a voice channel membership change so members rotate the
-// group key (join: include the newcomer; leave: exclude the departed member).
-func (v *VoiceServer) MemberChanged(channelID, reason string) {
+// group key (join: include the newcomer; leave: exclude the departed member). It
+// also moves the member's live voice connection in or out of the channel, so key
+// relays and media fanout stop for departed members.
+func (v *VoiceServer) MemberChanged(channelID, userID, reason string) {
 	if channelID == "" {
 		return
 	}
-	epoch := time.Now().UnixMilli()
 	v.mu.Lock()
+	for c := range v.conns {
+		c.mu.Lock()
+		if c.userID == userID {
+			if reason == "member_left" {
+				c.channelID = ""
+			} else {
+				c.channelID = channelID
+			}
+		}
+		c.mu.Unlock()
+	}
 	targets := make([]*voiceConn, 0, len(v.conns))
 	for c := range v.conns {
 		if c.channel() == channelID {
@@ -270,6 +282,7 @@ func (v *VoiceServer) MemberChanged(channelID, reason string) {
 		}
 	}
 	v.mu.Unlock()
+	epoch := time.Now().UnixMilli()
 	for _, c := range targets {
 		c.send(map[string]any{"op": 36, "d": map[string]any{
 			"channel_id": channelID, "epoch": epoch, "reason": reason,
