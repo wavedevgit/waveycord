@@ -437,3 +437,63 @@ CREATE TABLE IF NOT EXISTS voice_states (
     PRIMARY KEY (guild_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS voice_states_channel ON voice_states (channel_id);
+
+CREATE TABLE IF NOT EXISTS guild_templates (
+    code         TEXT PRIMARY KEY,
+    guild_id     TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    creator_id   TEXT NOT NULL REFERENCES users(id),
+    name         TEXT NOT NULL,
+    description  TEXT,
+    usage_count  INTEGER NOT NULL DEFAULT 0,
+    serialized   TEXT NOT NULL DEFAULT '{}',
+    created_at   BIGINT NOT NULL,
+    updated_at   BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_events (
+    id                   TEXT PRIMARY KEY,
+    guild_id             TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    channel_id           TEXT,
+    creator_id           TEXT,
+    name                 TEXT NOT NULL,
+    description          TEXT,
+    scheduled_start_time TEXT NOT NULL,
+    scheduled_end_time   TEXT,
+    privacy_level        INTEGER NOT NULL DEFAULT 2,
+    status               INTEGER NOT NULL DEFAULT 1,
+    entity_type          INTEGER NOT NULL,
+    entity_id            TEXT,
+    entity_metadata      TEXT NOT NULL DEFAULT '{}',
+    image                TEXT,
+    created_at           BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS scheduled_events_guild ON scheduled_events (guild_id);
+
+CREATE TABLE IF NOT EXISTS stage_instances (
+    id                       TEXT PRIMARY KEY,
+    guild_id                 TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    channel_id               TEXT NOT NULL UNIQUE REFERENCES channels(id) ON DELETE CASCADE,
+    topic                    TEXT NOT NULL,
+    privacy_level            INTEGER NOT NULL DEFAULT 2,
+    discoverable_disabled    SMALLINT NOT NULL DEFAULT 0,
+    guild_scheduled_event_id TEXT,
+    created_at               BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS integrations (
+    guild_id             TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    id                   TEXT NOT NULL,
+    name                 TEXT NOT NULL,
+    type                 INTEGER NOT NULL DEFAULT 3,
+    enabled              SMALLINT NOT NULL DEFAULT 1,
+    syncing              SMALLINT NOT NULL DEFAULT 0,
+    role_id              TEXT,
+    enable_emoticons     SMALLINT NOT NULL DEFAULT 0,
+    expire_behavior      INTEGER NOT NULL DEFAULT 0,
+    expire_grace_period  INTEGER NOT NULL DEFAULT 0,
+    account_name         TEXT,
+    account_id           TEXT,
+    application_name     TEXT,
+    created_at           BIGINT NOT NULL,
+    PRIMARY KEY (guild_id, id)
+);

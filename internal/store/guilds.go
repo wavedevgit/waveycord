@@ -58,6 +58,7 @@ func scanGuild(row rowScanner) (model.Guild, error) {
 // CreateGuildParams holds the fields the documented create route accepts.
 type CreateGuildParams struct {
 	Name            string
+	Description     *string
 	Icon            *string
 	Verification    *int
 	Notifications   *int
@@ -89,10 +90,10 @@ func (s *Store) CreateGuild(ownerID string, p CreateGuildParams) (model.Guild, e
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`INSERT INTO guilds
-		(id, name, icon, owner_id, afk_channel_id, afk_timeout, verification_level,
+		(id, name, icon, description, owner_id, afk_channel_id, afk_timeout, verification_level,
 		 default_message_notifications, explicit_content_filter, system_channel_id, created_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		gid, p.Name, p.Icon, ownerID, p.AFKChannelID, afkTimeout, verification,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		gid, p.Name, p.Icon, p.Description, ownerID, p.AFKChannelID, afkTimeout, verification,
 		notifications, filter, p.SystemChannelID, now()); err != nil {
 		return model.Guild{}, mapErr(err)
 	}

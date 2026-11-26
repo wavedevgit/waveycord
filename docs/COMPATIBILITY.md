@@ -64,7 +64,7 @@ route is not registered yet.
 | `GET /guilds/{guild.id}/vanity-url` | implemented (read) |
 | `GET /guilds/{guild.id}/webhooks` | implemented |
 | `GET /regions`, `GET /guilds/{guild.id}/regions` | implemented (static) |
-| Guild templates, scheduled events, auto-moderation, integrations, stage instances | TBD |
+| Guild templates, scheduled events, stage instances, integrations | implemented + tested (see sections below) |
 
 ## Channels
 
@@ -240,6 +240,54 @@ over the gateway bus, so a burst split across API instances still aggregates and
 trips the rule; the same applies to the SPAM window. Discord's production raid
 thresholds are unpublished, so the window and limit here are fixed and documented
 rather than tuned.
+
+## Guild templates
+
+| Route | Status |
+| --- | --- |
+| `GET /guilds/templates/{code}` (public) | implemented + tested |
+| `POST /guilds/templates/{code}` (create guild from template) | implemented + tested |
+| `GET/POST /guilds/{guild.id}/templates` | implemented + tested |
+| `PUT/PATCH/DELETE /guilds/{guild.id}/templates/{code}` | implemented + tested |
+
+Templates snapshot the guild name, description and channels at creation time;
+`PUT` re-snapshots, usage increments when a guild is created from a template, and
+creating from a template copies supported channel types.
+
+## Scheduled events
+
+| Route | Status |
+| --- | --- |
+| `GET/POST /guilds/{guild.id}/scheduled-events` | implemented + tested |
+| `GET/PATCH/DELETE /guilds/{guild.id}/scheduled-events/{event.id}` | implemented + tested |
+| `GET .../scheduled-events/{event.id}/users` | implemented (always empty) |
+
+Validated: ISO8601 start/end, entity types 1 (stage), 2 (voice) and 3 (external),
+channel type must match the entity, external events require a location and end
+time, privacy level only `GUILD_ONLY`. Status transitions 1-4 are accepted.
+Event interest registration is not implemented, so the users list is empty.
+
+## Stage instances
+
+| Route | Status |
+| --- | --- |
+| `POST /stage-instances` | implemented + tested |
+| `GET/PATCH/DELETE /stage-instances/{channel.id}` | implemented + tested |
+
+Requires a stage channel and `MANAGE_CHANNELS`; topic is 1-120 characters; one
+instance per channel; create/update/delete dispatch the stage events.
+
+## Integrations
+
+| Route | Status |
+| --- | --- |
+| `GET /guilds/{guild.id}/integrations` | implemented + tested |
+| `GET/PATCH/DELETE /guilds/{guild.id}/integrations/{integration.id}` | implemented + tested |
+
+A bot installed through the OAuth2 `bot` scope creates an integration row
+(`type: 3`, account = bot user). PATCH accepts emoticon/expiry settings; DELETE
+removes the row and kicks the bot from the guild. Twitch/YouTube integrations and
+integration sync are not implemented.
 
 ## Message search
 

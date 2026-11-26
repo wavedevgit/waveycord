@@ -1,0 +1,267 @@
+package api_test
+
+import (
+	"net/url"
+	"testing"
+	"time"
+)
+
+func TestGuildTemplates(t *testing.T) {
+	h := newHarness(t)
+	alice := h.register("templateowner")
+	bob := h.register("templateuser")
+	var guild struct{ ID string }
+	h.decode("POST", "/guilds", alice.Token, map[string]any{"name": "Template Source"}, &guild)
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "general"}, nil)
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "voice", "type": 2}, nil)
+
+	var created struct {
+		Code        string  `json:"code"`
+		Name        string  `json:"name"`
+		Description *string `json:"description"`
+		UsageCount  int     `json:"usage_count"`
+		CreatorID   string  `json:"creator_id"`
+	}
+	if status := h.decode("POST", "/guilds/"+guild.ID+"/templates", alice.Token, map[string]any{
+		"name": "Base Template", "description": "starter",
+	}, &created); status != 201 || created.Code == "" {
+		t.Fatalf("create template status %d %+v", status, created)
+	}
+	if created.CreatorID != alice.ID || created.Name != "Base Template" {
+		t.Fatalf("unexpected template %+v", created)
+	}
+
+	var listed []struct{ Code string }
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/templates", alice.Token, nil, &listed); status != 200 || len(listed) != 1 {
+		t.Fatalf("list templates status %d %+v", status, listed)
+	}
+
+	// Public template view.
+	var public struct {
+		Code          string         `json:"code"`
+		SourceGuildID string         `json:"source_guild_id"`
+		Serialized    map[string]any `json:"serialized_source_guild"`
+	}
+	if status := h.decode("GET", "/guilds/templates/"+created.Code, "", nil, &public); status != 200 ||
+		public.SourceGuildID != guild.ID {
+		t.Fatalf("public template status %d %+v", status, public)
+	}
+	channels, _ := public.Serialized["channels"].([]any)
+	if len(channels) != 2 {
+		t.Fatalf("template channels = %d", len(channels))
+	}
+
+	// Sync and rename.
+	if status := h.decode("PUT", "/guilds/"+guild.ID+"/templates/"+created.Code, alice.Token, nil, nil); status != 200 {
+		t.Fatalf("sync status %d", status)
+	}
+	var renamed struct{ Name string }
+	if status := h.decode("PATCH", "/guilds/"+guild.ID+"/templates/"+created.Code, alice.Token,
+		map[string]any{"name": "Renamed Template"}, &renamed); status != 200 || renamed.Name != "Renamed Template" {
+		t.Fatalf("rename status %d %+v", status, renamed)
+	}
+
+	// Another user creates a guild from the template.
+	var newGuild struct{ ID string }
+	if status := h.decode("POST", "/guilds/templates/"+created.Code, bob.Token,
+		map[string]any{"name": "From Template"}, &newGuild); status != 201 || newGuild.ID == "" {
+		t.Fatalf("use template status %d", status)
+	}
+	var newChannels []struct {
+		Name string `json:"name"`
+		Type int    `json:"type"`
+	}
+	h.decode("GET", "/guilds/"+newGuild.ID+"/channels", bob.Token, nil, &newChannels)
+	if len(newChannels) != 2 || newChannels[0].Name != "general" || newChannels[1].Type != 2 {
+		t.Fatalf("template channels not copied: %+v", newChannels)
+	}
+
+	if status := h.decode("DELETE", "/guilds/"+guild.ID+"/templates/"+created.Code, alice.Token, nil, nil); status != 204 {
+		t.Fatalf("delete template status %d", status)
+	}
+	if status := h.decode("GET", "/guilds/templates/"+created.Code, "", nil, nil); status != 404 {
+		t.Fatalf("deleted template status %d", status)
+	}
+}
+
+func TestScheduledEvents(t *testing.T) {
+	h := newHarness(t)
+	alice := h.register("eventowner")
+	var guild struct{ ID string }
+	h.decode("POST", "/guilds", alice.Token, map[string]any{"name": "Events"}, &guild)
+	var text, voice, stage struct{ ID string }
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "text"}, &text)
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "voice", "type": 2}, &voice)
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "stage", "type": 13}, &stage)
+
+	start := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	end := time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339)
+
+	var external struct {
+		ID             string         `json:"id"`
+		Status         int            `json:"status"`
+		EntityType     int            `json:"entity_type"`
+		EntityMetadata map[string]any `json:"entity_metadata"`
+	}
+	if status := h.decode("POST", "/guilds/"+guild.ID+"/scheduled-events", alice.Token, map[string]any{
+		"name": "Community meetup", "entity_type": 3,
+		"scheduled_start_time": start, "scheduled_end_time": end,
+		"entity_metadata": map[string]any{"location": "Town Hall"},
+	}, &external); status != 201 || external.Status != 1 || external.EntityType != 3 {
+		t.Fatalf("create external event %d %+v", status, external)
+	}
+	if external.EntityMetadata["location"] != "Town Hall" {
+		t.Fatalf("metadata = %+v", external.EntityMetadata)
+	}
+
+	// Validation failures.
+	bad := []map[string]any{
+		{"name": "no end", "entity_type": 3, "scheduled_start_time": start,
+			"entity_metadata": map[string]any{"location": "x"}},
+		{"name": "no location", "entity_type": 3, "scheduled_start_time": start,
+			"scheduled_end_time": end, "entity_metadata": map[string]any{}},
+		{"name": "bad channel", "entity_type": 2, "scheduled_start_time": start, "channel_id": text.ID},
+		{"name": "stage no channel", "entity_type": 1, "scheduled_start_time": start},
+		{"name": "bad time", "entity_type": 3, "scheduled_start_time": "tomorrow",
+			"scheduled_end_time": end, "entity_metadata": map[string]any{"location": "x"}},
+	}
+	for _, body := range bad {
+		if status, _ := h.request("POST", "/guilds/"+guild.ID+"/scheduled-events", alice.Token, body); status != 400 {
+			t.Fatalf("invalid event %v status %d", body["name"], status)
+		}
+	}
+
+	var voiceEvent struct {
+		ID       string  `json:"id"`
+		EntityID *string `json:"entity_id"`
+	}
+	if status := h.decode("POST", "/guilds/"+guild.ID+"/scheduled-events", alice.Token, map[string]any{
+		"name": "Voice hangout", "entity_type": 2, "channel_id": voice.ID,
+		"scheduled_start_time": start,
+	}, &voiceEvent); status != 201 || voiceEvent.EntityID == nil || *voiceEvent.EntityID != voice.ID {
+		t.Fatalf("voice event %d %+v", status, voiceEvent)
+	}
+
+	var listed []struct{ ID string }
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events", alice.Token, nil, &listed); status != 200 || len(listed) != 2 {
+		t.Fatalf("list events %d %+v", status, listed)
+	}
+	var fetched struct{ Name string }
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, nil, &fetched); status != 200 || fetched.Name != "Community meetup" {
+		t.Fatalf("get event %d %+v", status, fetched)
+	}
+	var updated struct {
+		Name   string `json:"name"`
+		Status int    `json:"status"`
+	}
+	if status := h.decode("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, map[string]any{
+		"name": "Meetup (completed)", "status": 3,
+	}, &updated); status != 200 || updated.Status != 3 {
+		t.Fatalf("patch event %d %+v", status, updated)
+	}
+	var users []any
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID+"/users", alice.Token, nil, &users); status != 200 || len(users) != 0 {
+		t.Fatalf("event users %d %+v", status, users)
+	}
+	if status := h.decode("DELETE", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, nil, nil); status != 204 {
+		t.Fatalf("delete event %d", status)
+	}
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/scheduled-events/"+external.ID, alice.Token, nil, nil); status != 404 {
+		t.Fatalf("deleted event %d", status)
+	}
+}
+
+func TestStageInstancesAndIntegrations(t *testing.T) {
+	h := newHarness(t)
+	alice := h.register("stageowner")
+	var guild struct{ ID string }
+	h.decode("POST", "/guilds", alice.Token, map[string]any{"name": "Stage Guild"}, &guild)
+	var text, stage struct{ ID string }
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "text"}, &text)
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "stage", "type": 13}, &stage)
+
+	var si struct {
+		ID      string `json:"id"`
+		Channel string `json:"channel_id"`
+		Topic   string `json:"topic"`
+		Privacy int    `json:"privacy_level"`
+	}
+	if status := h.decode("POST", "/stage-instances", alice.Token, map[string]any{
+		"channel_id": stage.ID, "topic": "Opening keynote",
+	}, &si); status != 201 || si.Channel != stage.ID || si.Topic != "Opening keynote" {
+		t.Fatalf("create stage %d %+v", status, si)
+	}
+	if status := h.decode("POST", "/stage-instances", alice.Token, map[string]any{
+		"channel_id": stage.ID, "topic": "Second",
+	}, nil); status != 400 {
+		t.Fatalf("duplicate stage status %d", status)
+	}
+	if status := h.decode("POST", "/stage-instances", alice.Token, map[string]any{
+		"channel_id": text.ID, "topic": "Wrong channel",
+	}, nil); status != 400 {
+		t.Fatalf("non-stage channel status %d", status)
+	}
+	var got struct{ Topic string }
+	if status := h.decode("GET", "/stage-instances/"+stage.ID, alice.Token, nil, &got); status != 200 || got.Topic != "Opening keynote" {
+		t.Fatalf("get stage %d %+v", status, got)
+	}
+	var patched struct{ Topic string }
+	if status := h.decode("PATCH", "/stage-instances/"+stage.ID, alice.Token,
+		map[string]any{"topic": "Updated topic"}, &patched); status != 200 || patched.Topic != "Updated topic" {
+		t.Fatalf("patch stage %d %+v", status, patched)
+	}
+	if status := h.decode("DELETE", "/stage-instances/"+stage.ID, alice.Token, nil, nil); status != 204 {
+		t.Fatalf("delete stage %d", status)
+	}
+	if status := h.decode("GET", "/stage-instances/"+stage.ID, alice.Token, nil, nil); status != 404 {
+		t.Fatalf("deleted stage %d", status)
+	}
+
+	// Bot install creates an integration row.
+	var app struct {
+		ID           string               `json:"id"`
+		Name         string               `json:"name"`
+		ClientSecret string               `json:"client_secret"`
+		Bot          *struct{ ID string } `json:"bot"`
+	}
+	h.decode("POST", "/applications", alice.Token, map[string]any{"name": "Integration Bot"}, &app)
+	redirect := "https://example.test/int"
+	h.decode("PATCH", "/applications/"+app.ID, alice.Token, map[string]any{"redirect_uris": []string{redirect}}, nil)
+	status, body := h.form("/oauth2/authorize", url.Values{
+		"client_id": {app.ID}, "response_type": {"code"}, "redirect_uri": {redirect},
+		"scope": {"bot"}, "guild_id": {guild.ID}, "authorize": {"true"},
+	}, alice.Token, "application/json")
+	if status != 200 {
+		t.Fatalf("bot install status %d body %s", status, body)
+	}
+
+	var integrations []struct {
+		ID      string         `json:"id"`
+		Name    string         `json:"name"`
+		Type    int            `json:"type"`
+		Account map[string]any `json:"account"`
+	}
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/integrations", alice.Token, nil, &integrations); status != 200 || len(integrations) != 1 {
+		t.Fatalf("list integrations %d %+v", status, integrations)
+	}
+	if integrations[0].ID != app.ID || integrations[0].Account["id"] != app.Bot.ID {
+		t.Fatalf("unexpected integration %+v", integrations[0])
+	}
+	var one struct{ ID string }
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/integrations/"+app.ID, alice.Token, nil, &one); status != 200 || one.ID != app.ID {
+		t.Fatalf("get integration %d %+v", status, one)
+	}
+	var updated struct {
+		EnableEmoticons bool `json:"enable_emoticons"`
+	}
+	if status := h.decode("PATCH", "/guilds/"+guild.ID+"/integrations/"+app.ID, alice.Token,
+		map[string]any{"enable_emoticons": true}, &updated); status != 200 {
+		t.Fatalf("patch integration %d", status)
+	}
+	if status := h.decode("DELETE", "/guilds/"+guild.ID+"/integrations/"+app.ID, alice.Token, nil, nil); status != 204 {
+		t.Fatalf("delete integration %d", status)
+	}
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/members/"+app.Bot.ID, alice.Token, nil, nil); status != 404 {
+		t.Fatalf("bot still a member after integration removal: %d", status)
+	}
+}
