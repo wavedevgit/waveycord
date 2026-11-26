@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -721,7 +720,7 @@ func DerivePathRootWithKeys(c EpochCommit, userID string, priv [32]byte, nodePri
 // sealGroupInfo encrypts the group state to the newcomer's leaf, with the commit hash
 // as associated data so the blob cannot be moved to another commit.
 func sealGroupInfo(g GroupInfo, leaf Leaf, commitHash string) (Envelope, error) {
-	raw, err := json.Marshal(g)
+	raw, err := EncodeGroupInfo(g)
 	if err != nil {
 		return Envelope{}, err
 	}
@@ -776,8 +775,9 @@ func openGroupInfo(env Envelope, userID string, priv [32]byte, commitHash string
 	if err != nil {
 		return g, ErrVerification
 	}
-	if err := json.Unmarshal(raw, &g); err != nil {
-		return g, ErrVerification
+	g, err = DecodeGroupInfo(raw)
+	if err != nil {
+		return GroupInfo{}, ErrVerification
 	}
 	return g, nil
 }
