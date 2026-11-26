@@ -45,6 +45,23 @@ func TestDurableSearchQueue(t *testing.T) {
 	st.SetSearchIndex(idx)
 	st.SetDurableSearchQueue(true)
 
+	// A failed outbox insert rolls back the authoritative message and pointer.
+	if _, err := st.DB.Exec(`CREATE TRIGGER reject_search_job BEFORE INSERT ON search_queue BEGIN SELECT RAISE(ABORT, 'outbox unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateMessage(store.CreateMessageParams{
+		ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "must rollback",
+	}); err == nil {
+		t.Fatal("message committed despite failed outbox")
+	}
+	var count int
+	if err := st.DB.QueryRow(`SELECT COUNT(*) FROM messages WHERE channel_id = ?`, channel.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rollback messages=%d err=%v", count, err)
+	}
+	if _, err := st.DB.Exec(`DROP TRIGGER reject_search_job`); err != nil {
+		t.Fatal(err)
+	}
+
 	var ids []string
 	for i := 0; i < 3; i++ {
 		msg, err := st.CreateMessage(store.CreateMessageParams{
@@ -72,6 +89,28 @@ func TestDurableSearchQueue(t *testing.T) {
 	}
 	if got := idx.count(guild.ID); got != 3 {
 		t.Fatalf("indexed %d, want 3", got)
+	}
+	if _, err := st.DB.Exec(`CREATE TRIGGER reject_search_job BEFORE INSERT ON search_queue BEGIN SELECT RAISE(ABORT, 'outbox unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	rejected := "must not persist"
+	if _, err := st.UpdateMessage(ids[0], &rejected, nil, nil, nil); err == nil {
+		t.Fatal("edit committed without outbox")
+	}
+	if _, err := st.DeleteMessage(ids[1]); err == nil {
+		t.Fatal("delete committed without outbox")
+	}
+	if err := st.DeleteMessages(channel.ID, []string{ids[2]}); err == nil {
+		t.Fatal("bulk delete committed without outbox")
+	}
+	for _, mid := range ids {
+		msg, err := st.Message(mid)
+		if err != nil || msg.Content != "queued message" {
+			t.Fatalf("mutation failed rollback: %+v %v", msg, err)
+		}
+	}
+	if _, err := st.DB.Exec(`DROP TRIGGER reject_search_job`); err != nil {
+		t.Fatal(err)
 	}
 
 	// Edits are queued too, and processing collapses to the latest content.
@@ -147,6 +186,13 @@ func TestDurableSearchQueue(t *testing.T) {
 	}
 
 	// The background runner drains on its own interval.
+	for i := 0; i < 4; i++ {
+		if _, err := st.CreateMessage(store.CreateMessageParams{
+			ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "coalesced wake",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	late, err := st.CreateMessage(store.CreateMessageParams{
 		ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "runner",
 	})
@@ -155,13 +201,19 @@ func TestDurableSearchQueue(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go st.RunSearchQueue(ctx, 10*time.Millisecond, 10)
+	wake := make(chan struct{}, 1)
+	wake <- struct{}{}
+	go st.RunSearchQueueWithWake(ctx, wake, time.Hour, 2)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		idx.mu.Lock()
 		_, ok := idx.docs[guild.ID][late.ID]
 		idx.mu.Unlock()
-		if ok {
+		pending, err := st.SearchQueueLen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok && pending == 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -321,39 +373,27 @@ func TestSearchQueueListenWakes(t *testing.T) {
 	}
 	go st.RunSearchQueueWithWake(ctx, wake, time.Hour, 50)
 
-	// The only drain trigger is a notification (the poll interval is an hour). The
-	// enqueue emits one, but a notification can be coalesced while the worker is
-	// between iterations, so the test also fires an explicit one and retries before
-	// declaring failure.
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			_, _ = st.DB.Exec(`SELECT pg_notify('waveycord_search', 'retry')`)
+	// One enqueue, no injected notifications or retries. Check acknowledgement
+	// rather than index visibility: Index returns before the worker deletes the job.
+	msg, err := st.CreateMessage(store.CreateMessageParams{
+		ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "notify me",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(6 * time.Second)
+	for time.Now().Before(deadline) {
+		idx.mu.Lock()
+		_, ok := idx.docs[guild.ID][msg.ID]
+		idx.mu.Unlock()
+		var pending int
+		if err := st.DB.QueryRow(`SELECT COUNT(*) FROM search_queue WHERE message_id = ?`, msg.ID).Scan(&pending); err != nil {
+			t.Fatalf("queue check: %v", err)
 		}
-		msg, err := st.CreateMessage(store.CreateMessageParams{
-			ChannelID: channel.ID, GuildID: guild.ID, AuthorID: user.ID, Content: "notify me",
-		})
-		if err != nil {
-			t.Fatal(err)
+		if ok && pending == 0 {
+			return
 		}
-		deadline := time.Now().Add(6 * time.Second)
-		for time.Now().Before(deadline) {
-			idx.mu.Lock()
-			_, ok := idx.docs[guild.ID][msg.ID]
-			idx.mu.Unlock()
-			if ok {
-				// The job for this message must be acknowledged; unrelated residual
-				// rows from other activity do not matter here.
-				var pending int
-				if err := st.DB.QueryRow(`SELECT COUNT(*) FROM search_queue WHERE message_id = ?`, msg.ID).Scan(&pending); err != nil {
-					t.Fatalf("queue check: %v", err)
-				}
-				if pending != 0 {
-					t.Fatalf("job for %s still queued", msg.ID)
-				}
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("notification never woke the queue worker")
 }

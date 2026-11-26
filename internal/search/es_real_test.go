@@ -49,7 +49,7 @@ func TestESRealCluster(t *testing.T) {
 		{MessageID: "r3", GuildID: "b1", ChannelID: "cb", AuthorID: "u9", Content: "tangerine secret", CreatedAt: 1},
 	}
 	for _, d := range docs {
-		if err := es.Index(t.Context(), d); err != nil {
+		if err := es.IndexDurable(t.Context(), d); err != nil {
 			t.Fatalf("index: %v", err)
 		}
 	}
@@ -86,7 +86,7 @@ func TestESRealCluster(t *testing.T) {
 		t.Fatalf("shard isolation ids = %+v", res.MessageIDs)
 	}
 
-	if err := es.Delete(t.Context(), "r2"); err != nil {
+	if err := es.DeleteDurable(t.Context(), "r2"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if err := es.Flush(t.Context()); err != nil {

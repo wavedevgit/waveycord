@@ -42,6 +42,12 @@ type Result struct {
 }
 
 // Index is the search service contract.
+// DurableIndex acknowledges writes only after the remote index accepts them.
+type DurableIndex interface {
+	IndexDurable(context.Context, Doc) error
+	DeleteDurable(context.Context, string) error
+}
+
 type Index interface {
 	Index(ctx context.Context, doc Doc) error
 	Delete(ctx context.Context, messageID string) error

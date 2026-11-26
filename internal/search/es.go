@@ -273,6 +273,63 @@ func (e *ES) Delete(ctx context.Context, messageID string) error {
 	}
 }
 
+func (e *ES) IndexDurable(ctx context.Context, d Doc) error {
+	if d.GuildID == "" {
+		return nil
+	}
+	cell := e.cellFor(d.GuildID)
+	index := e.IndexName(d.GuildID)
+	if err := e.ensureIndex(ctx, cell, index); err != nil {
+		return err
+	}
+	// Source field names are shared with the bulk path.
+	raw, err := json.Marshal(map[string]any{"message_id": d.MessageID, "guild_id": d.GuildID,
+		"channel_id": d.ChannelID, "author_id": d.AuthorID, "content": d.Content, "created_at": d.CreatedAt})
+	if err != nil {
+		return err
+	}
+	status, out, err := e.do(ctx, cell, http.MethodPut, "/"+url.PathEscape(index)+"/_doc/"+url.PathEscape(d.MessageID), raw, "application/json")
+	if err != nil {
+		return err
+	}
+	if status >= 300 {
+		return fmt.Errorf("search: durable index status %d: %s", status, truncate(out))
+	}
+	return nil
+}
+
+func (e *ES) DeleteDurable(ctx context.Context, messageID string) error {
+	raw, err := json.Marshal(map[string]any{"query": map[string]any{"term": map[string]any{"message_id": messageID}}})
+	if err != nil {
+		return err
+	}
+	for cell := range e.cells {
+		status, out, err := e.do(ctx, cell, http.MethodPost,
+			"/"+url.PathEscape(e.cfg.Prefix+"-guild-*")+"/_delete_by_query?conflicts=proceed&refresh=true", raw, "application/json")
+		if err != nil {
+			return err
+		}
+		if status == 404 {
+			continue
+		}
+		if status >= 300 {
+			return fmt.Errorf("search: durable delete status %d: %s", status, truncate(out))
+		}
+		var result struct {
+			Failures  []json.RawMessage `json:"failures"`
+			TimedOut  bool              `json:"timed_out"`
+			Conflicts int               `json:"version_conflicts"`
+		}
+		if err := json.Unmarshal(out, &result); err != nil {
+			return err
+		}
+		if result.TimedOut || result.Conflicts != 0 || len(result.Failures) != 0 {
+			return fmt.Errorf("search: durable delete incomplete")
+		}
+	}
+	return nil
+}
+
 func (e *ES) worker() {
 	defer e.wg.Done()
 	batch := make([]bulkOp, 0, e.cfg.BatchSize)

@@ -217,10 +217,19 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 			return model.Message{}, mapErr(err)
 		}
 	}
+	queued := s.Search != nil && s.DurableSearchQueue() && p.GuildID != ""
+	if queued {
+		if err := s.enqueueSearchTx(tx, SearchJob{Op: SearchOpIndex, MessageID: mid,
+			GuildID: p.GuildID, ChannelID: p.ChannelID, AuthorID: p.AuthorID, Content: p.Content, CreatedAt: ts}); err != nil {
+			return model.Message{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return model.Message{}, mapErr(err)
 	}
-	s.indexMessage(mid, p.GuildID, p.ChannelID, p.AuthorID, p.Content, ts)
+	if !queued {
+		s.indexMessage(mid, p.GuildID, p.ChannelID, p.AuthorID, p.Content, ts)
+	}
 	s.noteGuildWrite(p.GuildID)
 	return s.Message(mid)
 }
@@ -386,7 +395,7 @@ func (s *Store) UpdateMessage(idv string, content *string, embeds *[]model.Embed
 	if err != nil {
 		return msg, err
 	}
-	if s.Search != nil {
+	if s.Search != nil && !s.DurableSearchQueue() {
 		if raw, rerr := scanRawMessage(s.DB.QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, idv)); rerr == nil {
 			guildID := ""
 			if raw.GuildID.Valid {
@@ -420,12 +429,32 @@ func (s *Store) updateMessage(idv string, content *string, embeds *[]model.Embed
 		args = append(args, string(raw))
 	}
 	args = append(args, idv)
-	res, err := s.DB.Exec(`UPDATE messages SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...)
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return model.Message{}, mapErr(err)
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE messages SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...)
 	if err != nil {
 		return model.Message{}, mapErr(err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return model.Message{}, ErrNotFound
+	}
+	if s.Search != nil && s.DurableSearchQueue() {
+		raw, err := scanRawMessage(tx.QueryRow(`SELECT `+messageColumns+` FROM messages WHERE id = ?`, idv))
+		if err != nil {
+			return model.Message{}, mapErr(err)
+		}
+		if raw.GuildID.Valid {
+			if err := s.enqueueSearchTx(tx, SearchJob{Op: SearchOpIndex, MessageID: raw.ID,
+				GuildID: raw.GuildID.String, ChannelID: raw.ChannelID, AuthorID: raw.AuthorID, Content: raw.Content, CreatedAt: raw.Timestamp}); err != nil {
+				return model.Message{}, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return model.Message{}, mapErr(err)
 	}
 	return s.Message(idv)
 }
@@ -462,10 +491,16 @@ func (s *Store) DeleteMessage(idv string) (string, error) {
 			return "", mapErr(err)
 		}
 	}
+	queued := s.Search != nil && s.DurableSearchQueue()
+	if queued {
+		if err := s.enqueueSearchTx(tx, SearchJob{Op: SearchOpDelete, MessageID: idv}); err != nil {
+			return "", err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return "", mapErr(err)
 	}
-	if s.Search != nil && !s.queueDelete(idv) {
+	if s.Search != nil && !queued {
 		_ = s.Search.Delete(context.Background(), idv)
 	}
 	s.refreshLastMessage(channelID)
@@ -488,6 +523,23 @@ func (s *Store) DeleteMessages(channelID string, ids []string) error {
 		return mapErr(err)
 	}
 	defer tx.Rollback()
+	rows, err := tx.Query(`SELECT id FROM messages WHERE channel_id = ? AND id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return mapErr(err)
+	}
+	var deletedIDs []string
+	for rows.Next() {
+		var messageID string
+		if err := rows.Scan(&messageID); err != nil {
+			rows.Close()
+			return mapErr(err)
+		}
+		deletedIDs = append(deletedIDs, messageID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return mapErr(err)
+	}
 	for _, q := range []string{
 		`DELETE FROM message_reactions WHERE channel_id = ? AND message_id IN (` + placeholders + `)`,
 		`DELETE FROM pins WHERE channel_id = ? AND message_id IN (` + placeholders + `)`,
@@ -498,11 +550,19 @@ func (s *Store) DeleteMessages(channelID string, ids []string) error {
 			return mapErr(err)
 		}
 	}
+	queued := s.Search != nil && s.DurableSearchQueue()
+	if queued {
+		for _, idv := range deletedIDs {
+			if err := s.enqueueSearchTx(tx, SearchJob{Op: SearchOpDelete, MessageID: idv}); err != nil {
+				return err
+			}
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return mapErr(err)
 	}
-	if s.Search != nil {
-		for _, idv := range ids {
+	if s.Search != nil && !queued {
+		for _, idv := range deletedIDs {
 			_ = s.Search.Delete(context.Background(), idv)
 		}
 	}

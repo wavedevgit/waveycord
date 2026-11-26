@@ -46,8 +46,9 @@ type Store struct {
 	bfgPolicy search.BFGPolicy
 	bfgEvery  int
 	// Durable queue state.
-	queueMu      sync.Mutex
-	durableQueue bool
+	queueMu        sync.Mutex
+	queueProcessMu sync.Mutex
+	durableQueue   bool
 	// pgDSN is kept for the dedicated LISTEN connection; it is never logged.
 	pgDSN string
 }
