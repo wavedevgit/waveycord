@@ -26,6 +26,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | MLS path secrets + Welcome (removal and add) | `TestPathUpdateAndWelcome`, `TestVoiceMLSSignedRosterCommit` |
 | Cluster-wide Opus mixing across two instances | `TestClusterWideMixing` (`-tags opus`, cluster mix enabled) |
 | REST extras: templates, events, stage, integrations, stickers, widget, webhooks | `TestGuildTemplates`, `TestScheduledEvents`, `TestGuildStickers`, `TestGuildWidget`, ... |
+| Widget PNG, sticker packs, current-member route | `TestWidgetImageStickerPacksAndMember` |
 
 ## Not verifiable, therefore not claimed
 
@@ -38,6 +39,14 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Exact search relevance | Discord's analyzers, boosts and cell routing are private. |
 | Exact DAVE/MLS implementation | The voice E2EE work here is TreeKEM-*style*, not RFC 9420, and Discord's DAVE details are only partially public. |
 | Exact media pipeline | No Opus mixing/forwarding timing, jitter policy or SFU scheduling from Discord is published. |
+
+## Test stability note
+
+Cluster voice tests occasionally fail once in a full-suite run and pass on rerun or
+in isolation; observed failures are frame-order flakiness (rekey/roster frames
+arriving before READY or a commit), not product behaviour. Reads were made
+op-scoped and READY waits were fixed, which reduced but did not eliminate it. Treat a
+single cluster-test failure as suspect until reproduced alone.
 
 ## Known functional gaps (not just unverifiable)
 

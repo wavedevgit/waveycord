@@ -238,6 +238,39 @@ func (s *Server) handleWidgetJSON(c *Ctx) {
 	})
 }
 
+// handleWidgetImage renders the widget PNG.
+func (s *Server) handleWidgetImage(c *Ctx) {
+	g, err := s.Store.Guild(c.Param("guildID"))
+	if err != nil {
+		fail(c, ErrUnknownGuild)
+		return
+	}
+	raw, err := widgetPNG(g.Name)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.W.Header().Set("Content-Type", "image/png")
+	c.W.Header().Set("Cache-Control", "public, max-age=300")
+	c.W.WriteHeader(200)
+	_, _ = c.W.Write(raw)
+}
+
+// handleStickerPacks returns the (empty) sticker pack catalogue.
+func (s *Server) handleStickerPacks(c *Ctx) {
+	c.JSON([]any{})
+}
+
+// handleMyGuildMember returns the caller's member object for one guild.
+func (s *Server) handleMyGuildMember(c *Ctx) {
+	member, err := s.Store.Member(c.Param("guildID"), c.User.ID)
+	if err != nil {
+		fail(c, ErrUnknownMember)
+		return
+	}
+	c.JSON(member)
+}
+
 // --- bulk command permissions (deprecated endpoint) ---
 
 func (s *Server) validatePermissionEntries(guildID string, entries []store.CommandPermissionEntry) string {

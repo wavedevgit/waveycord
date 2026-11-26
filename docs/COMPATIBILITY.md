@@ -63,6 +63,9 @@ route is not registered yet.
 | `GET/POST /guilds/{guild.id}/stickers`, `GET/PATCH/DELETE .../{sticker.id}` | implemented + tested |
 | `GET /stickers/{sticker.id}` | implemented + tested |
 | `GET/PATCH /guilds/{guild.id}/widget`, `GET /guilds/{guild.id}/widget.json` | implemented + tested |
+| `GET /guilds/{guild.id}/widget.png` | implemented + tested (placeholder card) |
+| `GET /sticker-packs` | implemented + tested (empty catalogue) |
+| `GET /users/@me/guilds/{guild.id}/member` | implemented + tested |
 | `GET /guilds/{guild.id}/audit-logs` | implemented |
 | `GET /guilds/{guild.id}/vanity-url` | implemented (read) |
 | `GET /guilds/{guild.id}/webhooks` | implemented |
@@ -379,8 +382,11 @@ Guild stickers support create/list/get/patch/delete with name 2-30, tags 1-200,
 description ≤100 and a 20-sticker cap; global `GET /stickers/{id}` is registered.
 Guild widget settings validate the channel belongs to the guild; the public
 `widget.json` returns guild name, channels and an empty member list, and is refused
-with `403` when the widget is disabled. Sticker image data is accepted but not
-decoded; `.png` widget rendering is not implemented.
+with `403` when the widget is disabled. Sticker image data is accepted but not decoded;
+`widget.png` returns a real PNG (320x80, dark card with accent strip and decorative
+presence dots) but renders no text, because the server ships no font. The sticker
+pack catalogue is an empty list; `GET /users/@me/guilds/{id}/member` returns the
+caller's member object.
 
 ## Deliberately different from Discord
 
