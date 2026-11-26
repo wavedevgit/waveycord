@@ -42,7 +42,10 @@ type Config struct {
 	// origin comparison (useful for tests and non-browser clients).
 	WebAuthnRPID   string
 	WebAuthnOrigin string
-	Logger         *slog.Logger
+	// PortalCookieSecure forces the Secure attribute on the developer-portal
+	// cookies. When false the attribute is still set for TLS requests.
+	PortalCookieSecure bool
+	Logger             *slog.Logger
 }
 
 // DefaultConfig returns the documented defaults.

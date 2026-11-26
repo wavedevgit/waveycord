@@ -602,10 +602,17 @@ session. Tested end to end with a cookie-jar HTTP client: unauthenticated redire
 bad credentials, application creation/listing, command creation, permission write and
 read-back, one-time bot token display, foreign-application 404 and logout.
 
+CSRF and cookie hardening: every mutating portal form carries a double-submit CSRF
+token as a hidden field, compared in constant time against the cookie; a POST without a
+matching token is rejected with 403. Session and CSRF cookies are HttpOnly and
+SameSite=Lax, and marked Secure automatically on TLS requests or unconditionally when
+`Config.PortalCookieSecure` is set. Tested with a token-less POST returning 403, the
+full portal flow carrying tokens, and a cookie-attribute test for plain, TLS and forced
+configurations.
+
 Not 1:1: the portal is a minimal administrative UI, not Discord's developer portal —
-there are no OAuth2 redirect/client-secret pages, no team management, no
-interaction-endpoint editor, the session cookie is not marked `Secure` (development
-over plain HTTP), and there is no CSRF token on the forms.
+there are no OAuth2 redirect/client-secret pages, no team management and no
+interaction-endpoint editor.
 
 ## Polls
 

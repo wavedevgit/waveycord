@@ -1,6 +1,9 @@
 package api
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"html/template"
 	"net/http"
 	"strings"
@@ -13,7 +16,44 @@ import (
 // Authentication is a session cookie so a browser can use it; the REST API keeps
 // using Authorization headers.
 
-const portalCookie = "waveycord_portal"
+const (
+	portalCookie     = "waveycord_portal"
+	portalCSRFCookie = "waveycord_portal_csrf"
+)
+
+// csrfToken returns the double-submit token, creating it when absent.
+func (s *Server) csrfToken(w http.ResponseWriter, r *http.Request) string {
+	if c, err := r.Cookie(portalCSRFCookie); err == nil && len(c.Value) >= 16 {
+		return c.Value
+	}
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return ""
+	}
+	token := base64.RawURLEncoding.EncodeToString(raw)
+	s.setPortalCookie(w, r, portalCSRFCookie, token)
+	return token
+}
+
+// setPortalCookie applies the Secure attribute on TLS (or when forced by config).
+func (s *Server) setPortalCookie(w http.ResponseWriter, r *http.Request, name, value string) {
+	secure := s.cfg.PortalCookieSecure || r.TLS != nil
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/portal",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: secure})
+}
+
+// checkCSRF compares the form token with the cookie in constant time.
+func (s *Server) checkCSRF(r *http.Request) bool {
+	c, err := r.Cookie(portalCSRFCookie)
+	if err != nil || len(c.Value) < 16 {
+		return false
+	}
+	form := r.FormValue("csrf_token")
+	if form == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(form)) == 1
+}
 
 type portalPermRow struct {
 	Command string
@@ -24,6 +64,7 @@ type portalPermRow struct {
 
 type portalPage struct {
 	Title    string
+	CSRF     string
 	User     *model.User
 	Apps     []store.Application
 	App      *store.Application
@@ -46,7 +87,7 @@ code{background:#2b2d31;padding:.1rem .3rem}.err{color:#f23f43}.ok{color:#3ba55d
 {{define "foot"}}</body></html>{{end}}
 
 {{define "login"}}{{template "head" .}}
-<form method="post" action="/portal/login">
+<form method="post" action="/portal/login"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
 <p><label>Email or username<br><input name="login" autofocus></label></p>
 <p><label>Password<br><input name="password" type="password"></label></p>
 <p><button type="submit">Sign in</button></p>
@@ -60,7 +101,7 @@ code{background:#2b2d31;padding:.1rem .3rem}.err{color:#f23f43}.ok{color:#3ba55d
 </table>{{template "foot" .}}{{end}}
 
 {{define "newapp"}}{{template "head" .}}
-<form method="post" action="/portal/applications">
+<form method="post" action="/portal/applications"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
 <p><label>Name<br><input name="name" maxlength="64"></label></p>
 <p><label>Description<br><textarea name="description" rows="3"></textarea></label></p>
 <p><button type="submit">Create application</button></p>
@@ -68,14 +109,14 @@ code{background:#2b2d31;padding:.1rem .3rem}.err{color:#f23f43}.ok{color:#3ba55d
 
 {{define "app"}}{{template "head" .}}
 <p>ID <code>{{.App.ID}}</code> · bot <code>{{.App.Bot.ID}}</code></p>
-<form method="post" action="/portal/applications/{{.App.ID}}/token">
+<form method="post" action="/portal/applications/{{.App.ID}}/token"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
 <p><button type="submit">Reset bot token</button></p></form>
 <h2>Commands</h2>
 <table><tr><th>Name</th><th>Description</th><th>ID</th></tr>
 {{range .Commands}}<tr><td>{{.Name}}</td><td>{{.Description}}</td><td><code>{{.ID}}</code></td></tr>{{else}}
 <tr><td colspan="3">No commands.</td></tr>{{end}}</table>
 <h3>New command</h3>
-<form method="post" action="/portal/applications/{{.App.ID}}/commands">
+<form method="post" action="/portal/applications/{{.App.ID}}/commands"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
 <p><label>Name<br><input name="name" maxlength="32"></label></p>
 <p><label>Description<br><input name="description" maxlength="100"></label></p>
 <p><button type="submit">Create command</button></p>
@@ -89,7 +130,7 @@ code{background:#2b2d31;padding:.1rem .3rem}.err{color:#f23f43}.ok{color:#3ba55d
 {{range .PermRows}}<tr><td><code>{{.Command}}</code></td><td>{{.Target}}</td><td>{{.Type}}</td><td>{{.Allow}}</td></tr>{{end}}
 </table>{{end}}
 <h3>Set permission</h3>
-<form method="post" action="/portal/applications/{{.App.ID}}/permissions">
+<form method="post" action="/portal/applications/{{.App.ID}}/permissions"><input type="hidden" name="csrf_token" value="{{.CSRF}}">
 <p><label>Guild ID<br><input name="guild_id" value="{{.GuildID}}"></label></p>
 <p><label>Command ID<br><input name="command_id"></label></p>
 <p><label>Target ID<br><input name="target_id"></label></p>
@@ -121,21 +162,25 @@ func (s *Server) portalHandler() http.Handler {
 				s.portalError(w, err)
 				return
 			}
-			s.renderPortal(w, "dashboard", portalPage{Title: "Your applications", User: u, Apps: apps})
+			s.renderPortal(w, "dashboard", portalPage{Title: "Your applications", User: u, Apps: apps, CSRF: s.csrfToken(w, r)})
 		case path == "/login":
 			if r.Method == http.MethodPost {
+				if !s.checkCSRF(r) {
+					http.Error(w, "invalid csrf token", http.StatusForbidden)
+					return
+				}
 				if err := r.ParseForm(); err != nil {
 					s.portalError(w, ErrInvalidForm)
 					return
 				}
 				user, err := s.Store.UserByLogin(r.FormValue("login"))
 				if err != nil {
-					s.renderPortal(w, "login", portalPage{Title: "Sign in", Error: "Invalid credentials"})
+					s.renderPortal(w, "login", portalPage{Title: "Sign in", Error: "Invalid credentials", CSRF: s.csrfToken(w, r)})
 					return
 				}
 				hash, err := s.Store.PasswordHash(user.ID)
 				if err != nil || !VerifyPassword(r.FormValue("password"), hash) {
-					s.renderPortal(w, "login", portalPage{Title: "Sign in", Error: "Invalid credentials"})
+					s.renderPortal(w, "login", portalPage{Title: "Sign in", Error: "Invalid credentials", CSRF: s.csrfToken(w, r)})
 					return
 				}
 				token, err := NewToken()
@@ -147,18 +192,19 @@ func (s *Server) portalHandler() http.Handler {
 					s.portalError(w, err)
 					return
 				}
-				http.SetCookie(w, &http.Cookie{Name: portalCookie, Value: token, Path: "/portal", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+				s.setPortalCookie(w, r, portalCookie, token)
 				http.Redirect(w, r, "/portal", http.StatusFound)
 				return
 			}
-			s.renderPortal(w, "login", portalPage{Title: "Sign in"})
+			s.renderPortal(w, "login", portalPage{Title: "Sign in", CSRF: s.csrfToken(w, r)})
 		case path == "/logout":
 			if cookie, err := r.Cookie(portalCookie); err == nil {
 				if sess, _, err := s.Store.SessionByToken(TokenHash(cookie.Value)); err == nil {
 					_ = s.Store.DeleteSession(sess.UserID, sess.ID)
 				}
 			}
-			http.SetCookie(w, &http.Cookie{Name: portalCookie, Value: "", Path: "/portal", MaxAge: -1, HttpOnly: true})
+			secure := s.cfg.PortalCookieSecure || r.TLS != nil
+			http.SetCookie(w, &http.Cookie{Name: portalCookie, Value: "", Path: "/portal", MaxAge: -1, HttpOnly: true, Secure: secure})
 			http.Redirect(w, r, "/portal/login", http.StatusFound)
 		case path == "/applications/new":
 			u := s.portalUser(r)
@@ -166,7 +212,7 @@ func (s *Server) portalHandler() http.Handler {
 				http.Redirect(w, r, "/portal/login", http.StatusFound)
 				return
 			}
-			s.renderPortal(w, "newapp", portalPage{Title: "New application", User: u})
+			s.renderPortal(w, "newapp", portalPage{Title: "New application", User: u, CSRF: s.csrfToken(w, r)})
 		case path == "/applications":
 			u := s.portalUser(r)
 			if u == nil {
@@ -177,13 +223,17 @@ func (s *Server) portalHandler() http.Handler {
 				http.Redirect(w, r, "/portal/applications/new", http.StatusFound)
 				return
 			}
+			if !s.checkCSRF(r) {
+				http.Error(w, "invalid csrf token", http.StatusForbidden)
+				return
+			}
 			if err := r.ParseForm(); err != nil {
 				s.portalError(w, ErrInvalidForm)
 				return
 			}
 			name := strings.TrimSpace(r.FormValue("name"))
 			if name == "" || len([]rune(name)) > 64 {
-				s.renderPortal(w, "newapp", portalPage{Title: "New application", User: u, Error: "Name must be 1-64 characters"})
+				s.renderPortal(w, "newapp", portalPage{Title: "New application", User: u, Error: "Name must be 1-64 characters", CSRF: s.csrfToken(w, r)})
 				return
 			}
 			app, err := s.Store.CreateApplication(u.ID, name, strings.TrimSpace(r.FormValue("description")))
@@ -225,15 +275,23 @@ func (s *Server) portalApplication(w http.ResponseWriter, r *http.Request, rest 
 			s.portalError(w, err)
 			return
 		}
-		s.renderPortal(w, "app", portalPage{Title: app.Name, User: u, App: &app, Commands: commands})
+		s.renderPortal(w, "app", portalPage{Title: app.Name, User: u, App: &app, Commands: commands, CSRF: s.csrfToken(w, r)})
 	case action == "token" && r.Method == http.MethodPost:
+		if !s.checkCSRF(r) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 		token, err := s.Store.ResetBotToken(app.ID, u.ID)
 		if err != nil {
 			s.portalError(w, err)
 			return
 		}
-		s.renderPortal(w, "token", portalPage{Title: "Bot token", User: u, App: &app, Flash: token})
+		s.renderPortal(w, "token", portalPage{Title: "Bot token", User: u, App: &app, Flash: token, CSRF: s.csrfToken(w, r)})
 	case action == "commands" && r.Method == http.MethodPost:
+		if !s.checkCSRF(r) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			s.portalError(w, ErrInvalidForm)
 			return
@@ -263,8 +321,12 @@ func (s *Server) portalApplication(w http.ResponseWriter, r *http.Request, rest 
 				rows = append(rows, portalPermRow{Command: cp.ID, Target: entry.ID, Type: entry.Type, Allow: entry.Permission})
 			}
 		}
-		s.renderPortal(w, "app", portalPage{Title: app.Name, User: u, App: &app, GuildID: guildID, PermRows: rows})
+		s.renderPortal(w, "app", portalPage{Title: app.Name, User: u, App: &app, GuildID: guildID, PermRows: rows, CSRF: s.csrfToken(w, r)})
 	case action == "permissions" && r.Method == http.MethodPost:
+		if !s.checkCSRF(r) {
+			http.Error(w, "invalid csrf token", http.StatusForbidden)
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			s.portalError(w, ErrInvalidForm)
 			return
