@@ -25,7 +25,8 @@ route is not registered yet.
 | `GET /auth/sessions` | implemented |
 | `POST /auth/sessions/logout` | implemented |
 | MFA: TOTP enroll/disable, backup codes, login gate (`/auth/mfa/totp`) | implemented + tested |
-| WebAuthn / remote auth / SMS MFA | TBD |
+| WebAuthn (ES256) credential register/list/rename/delete and assertion login | implemented + tested |
+| Remote auth (QR) / SMS MFA / conditional and passwordless WebAuthn | TBD |
 
 ## Users
 
@@ -448,6 +449,34 @@ codes are stored verbatim so the GET can list them, where Discord does not retur
 them again; there is no rate limiting on code attempts, and no email/phone
 verification step. `mfa_enabled` is cleared on public user projections and exposed
 only to the account holder.
+
+## WebAuthn (security keys)
+
+Registration is a two-step flow on `POST /users/@me/mfa/webauthn/credentials`: an
+empty body returns `{ticket, challenge}`, and a second request with
+`{name, ticket, credential}` verifies the attested authenticator data and stores the
+credential. Verification checks the client-data type (`webauthn.create`), challenge,
+configured origin, the RP id hash, the attested-credential flag, that the raw id
+matches the attested credential id, and the ES256 COSE key (kty 2, alg -7, crv 1, on
+curve). It returns the credential and ten `backup_codes`, and marks MFA enabled.
+`GET` lists `{id, name, created_at, last_used}`, `PATCH` renames, `DELETE` removes;
+deleting the last credential clears MFA when no TOTP secret exists.
+
+Login advertises the factors: `POST /auth/login` returns `{mfa, totp, webauthn, sms,
+ticket}`. `POST /auth/mfa/webauthn/start` takes that ticket and returns a fresh
+`{ticket, challenge}`; `POST /auth/mfa/webauthn` takes `{ticket, credential}`,
+verifies the assertion (client-data type `webauthn.get`, challenge, origin, RP id
+hash, user-present flag, ES256 signature over authenticator data plus the
+client-data hash), consumes the challenge, records the counter and returns `{token}`.
+A challenge is single-use; a failed verification does not consume it.
+
+Not 1:1: only the ES256 algorithm is supported; the attestation statement is not
+cryptographically verified (`fmt` is read but `attStmt` is ignored), only two
+formats are accepted, and the assertion counter is stored without enforcing a
+strictly increasing value. Conditional UI (`/auth/conditional/*`) and passwordless
+(`/auth/passwordless/*`) are not implemented, nor is remote-auth/QR or SMS. The
+login challenge route is an extension: the client route table exposes only
+`/auth/mfa/:param`.
 
 ## Polls
 

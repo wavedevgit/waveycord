@@ -36,6 +36,25 @@ CREATE TABLE IF NOT EXISTS mfa_backup_codes (
     PRIMARY KEY (user_id, code)
 );
 
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    credential_id TEXT NOT NULL UNIQUE,
+    public_key    BLOB NOT NULL,
+    sign_count    INTEGER NOT NULL DEFAULT 0,
+    name          TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    last_used     INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+    ticket    TEXT PRIMARY KEY,
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    challenge TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    expires   INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS mfa_tickets (
     id      TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

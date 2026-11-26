@@ -205,9 +205,11 @@ func (s *Server) handleLogin(c *Ctx) {
 		c.JSONStatus(400, map[string]any{"code": 50035, "message": "Invalid Form Body"})
 		return
 	}
-	// With TOTP enabled the password only yields a ticket; a session token is
-	// issued after the second factor.
-	if _, enabled, err := s.Store.MFASecret(user.ID); err == nil && enabled {
+	// With a second factor the password only yields a ticket; a session token is
+	// issued after TOTP or a WebAuthn assertion.
+	secret, totpEnabled, _ := s.Store.MFASecret(user.ID)
+	hasWebAuthn := s.Store.HasWebAuthn(user.ID)
+	if totpEnabled || hasWebAuthn {
 		ticket, err := NewToken()
 		if err != nil {
 			fail(c, err)
@@ -217,7 +219,10 @@ func (s *Server) handleLogin(c *Ctx) {
 			fail(c, err)
 			return
 		}
-		c.JSON(map[string]any{"mfa": true, "totp": true, "sms": false, "ticket": ticket})
+		c.JSON(map[string]any{
+			"mfa": true, "totp": totpEnabled && secret != "",
+			"webauthn": hasWebAuthn, "sms": false, "ticket": ticket,
+		})
 		return
 	}
 	token, err := NewToken()

@@ -37,7 +37,12 @@ type Config struct {
 	UploadDir string
 	// CDNBase is the absolute base for attachment URLs.
 	CDNBase string
-	Logger  *slog.Logger
+	// WebAuthnRPID is the relying party id hashed into authenticator data;
+	// WebAuthnOrigin is the expected collected origin. Empty origin skips the
+	// origin comparison (useful for tests and non-browser clients).
+	WebAuthnRPID   string
+	WebAuthnOrigin string
+	Logger         *slog.Logger
 }
 
 // DefaultConfig returns the documented defaults.
@@ -50,6 +55,8 @@ func DefaultConfig() Config {
 		MaxUploadBytes: 25 << 20,
 		UploadDir:      "./uploads",
 		CDNBase:        "http://127.0.0.1:8080",
+		WebAuthnRPID:   "localhost",
+		WebAuthnOrigin: "http://localhost",
 		Logger:         slog.Default(),
 	}
 }
@@ -285,6 +292,7 @@ var (
 	ErrPollEnded          = NewError(400, 50035, "Poll has ended")
 	ErrPollAnswerNotFound = NewError(400, 50035, "Invalid Form Body")
 	ErrBotsCannotVote     = NewError(403, 50001, "Bots cannot vote on polls")
+	ErrUnknownCredential  = NewError(404, 10026, "Unknown WebAuthn Credential")
 )
 
 func fail(c *Ctx, err error) {

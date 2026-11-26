@@ -35,6 +35,7 @@ the PostgreSQL/OpenSearch rows additionally need `WAVEYCORD_TEST_DSN` and
 | Polls: create, vote, retract, multiselect, expire, voters, validation | `TestPollsCreateVoteExpireAndVoters` |
 | Components v2 validation (flag, nesting, counts, text, media, edit rules) | `TestComponentsV2Validation`, `TestV2ValidationStrings` |
 | MFA TOTP enrollment, login gate, backup codes, disable | `TestTOTPEnrollmentLoginAndBackupCodes` |
+| WebAuthn ES256 registration, assertion login, rename/delete, single-use challenge | `TestWebAuthnRegistrationAndLogin` (software authenticator) |
 
 ## Not verifiable, therefore not claimed
 
