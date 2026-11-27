@@ -52,4 +52,14 @@ func TestExternalEventLifecycle(t *testing.T) {
 	if events, err := st.AdvanceExternalEvents(at.Add(2 * time.Hour)); err != nil || len(events) != 0 {
 		t.Fatalf("terminal %+v %v", events, err)
 	}
+	users, err := st.EventUsers(event.ID, guild.ID, "", "", 100, true)
+	if err != nil || len(users) != 1 || users[0].UserID != user.ID {
+		t.Fatalf("creator subscription %+v %v", users, err)
+	}
+	if err := st.DeleteScheduledEvent(guild.ID, event.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := st.EventUserCount(event.ID); err != nil || n != 0 {
+		t.Fatalf("subscription cascade %d %v", n, err)
+	}
 }

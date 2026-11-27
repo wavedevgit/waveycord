@@ -91,15 +91,43 @@ now waits for its specific opcode (2 for READY, 4 for SESSION_DESCRIPTION, 38 fo
 commit) with a 20 s deadline. Two consecutive full PostgreSQL suites pass after the
 change. Treat a single cluster-test failure as suspect until reproduced alone.
 
-## Known functional gaps (not just unverifiable)
+## Escrow media verification
 
-- No RFC 9420 MLS path secrets/Welcome/ciphersuite negotiation; rotation needs a
-  member commit.
-- Group-E2EE frames bypass PLC and mixing (server cannot decode them); they do get
-  per-sender reorder/dedupe from the envelope counter, but frames relayed from other
-  instances are delivered in bus order.
-- Search is one ES cluster with bounded reindex, not multi-cell/PubSub/BFG.
-- Some documented REST surfaces remain unregistered.
+Scheduled-event subscription, pagination, count, member projection, idempotency
+and patch validation are covered by `TestScheduledEvents`. External scheduled
+start/end, repeated sweep suppression and terminal-state enforcement are covered
+by `TestExternalEventLifecycle`. Event permission checks use the shared effective
+channel permission resolver; these tests do not yet exhaust every role/overwrite
+combination.
 
-These are recorded in `docs/COMPATIBILITY.md` as gaps rather than described as
-parity.
+Explicit mixer escrow is a separate trust mode, not server-opaque E2EE. READY
+advertises a process-lifetime X25519 public key. Clients wrap a 32-byte media key
+using `WrapEscrowForMixer`, binding both the key id and voice token hash as AEAD
+associated data. Opcode 34 installs it; malformed wraps close the connection.
+Key ids must increase during a connection, including after revocation. Publishing
+without escrow revokes access. Matching-key media with an invalid tag, replayed
+counter, malformed RTP or mismatched inner/outer SSRC is dropped, never downgraded.
+Other key ids retain the opaque forwarding path.
+Escrow-mode media uses a 12-byte nonce consisting of the sender SSRC followed by
+its 64-bit counter, avoiding nonce reuse across senders sharing the key. Clients
+must use this escrow-mode framing; existing opaque framing is unchanged.
+
+| Evidence | Test |
+| --- | --- |
+| Wrap authentication, session/key-id binding, strict size | `TestEscrowWrapBinding` |
+| Media authentication, replay and SSRC binding | `TestEscrowMediaAuthentication` |
+| Plain RTP forwarding, opaque fallback, invalid-tag drop and revocation | `TestEscrowedGroupMediaForwarding` |
+| Decodable PLC for a missing sequence; reordering with increasing envelope counters | `TestEscrowVoiceJitterBufferAndPLC` (`-tags opus`) |
+| Mixed output containing both 440 Hz and 880 Hz inputs | `TestEscrowVoiceCrossFrameSizeMixing` (`-tags opus`) |
+| Two-instance decrypted PCM relay and mixed output containing both tones | `TestEscrowClusterWideMixing` (Postgres, `-tags opus`) |
+
+The custom MLS transcript, signature construction, suite identifiers and wire
+layout have internal tests, not RFC 9420 interoperability evidence. References to
+“RFC-shaped” structures describe resemblance, not standards compliance.
+Search supports static multiple cells, BFG maintenance and persisted migration
+checkpoints. Message mutations and their outbox jobs commit atomically; an injected
+outbox failure proves message rollback in `TestDurableSearchQueue`. Queued ES writes
+and deletes wait for remote acknowledgement (`TestESDurableAcknowledgement` covers
+success and HTTP failures; `TestESRealCluster` uses the synchronous path against
+OpenSearch). A crash between remote acceptance and database acknowledgement retries
+the idempotent job. This does not reproduce Discord's private indexing topology.

@@ -320,6 +320,17 @@ func (s *Store) CreateScheduledEvent(guildID, creatorID string, p CreateEventPar
 		return ScheduledEvent{}, mapErr(err)
 	}
 	defer tx.Rollback()
+	// Lock the guild before counting so concurrent creators share the same cap.
+	if _, err := tx.Exec(`UPDATE guilds SET name = name WHERE id = ?`, guildID); err != nil {
+		return ScheduledEvent{}, mapErr(err)
+	}
+	var active int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM scheduled_events WHERE guild_id = ? AND status IN (1,2)`, guildID).Scan(&active); err != nil {
+		return ScheduledEvent{}, mapErr(err)
+	}
+	if active >= 100 {
+		return ScheduledEvent{}, ErrConflict
+	}
 	_, err = tx.Exec(`INSERT INTO scheduled_events
 		(id, guild_id, channel_id, creator_id, name, description, scheduled_start_time,
 		 scheduled_end_time, privacy_level, status, entity_type, entity_id, entity_metadata, image, created_at)

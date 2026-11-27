@@ -105,6 +105,7 @@ route is not registered yet.
 | SFU-style RTP fanout to same-channel connections (local + cross-instance via bus) | implemented + tested |
 | Media crypto boundary: X25519 key exchange, AES-256-GCM envelope, replay protection, key rotation | implemented + tested (server-terminated for the WCDF path) |
 | Member group key agreement (op 34/35) with server-opaque `WCE2` media, local + cross-instance | implemented + tested |
+| Opt-in group-key escrow for Opus mixing, PLC and cross-instance mixed output | implemented + tested; server sees plaintext only for escrowed keys |
 | Reorder/dedupe/gap shedding for server-opaque group media by sender counter, local and cross-instance (no PLC possible) | implemented + tested |
 | Epoch rekey signal on voice join/leave (op 36, local + cross-instance) | implemented + tested |
 | Epoch rotation excluding departed members; stale-epoch rejection | implemented + tested |
@@ -355,12 +356,20 @@ creating from a template copies supported channel types.
 | --- | --- |
 | `GET/POST /guilds/{guild.id}/scheduled-events` | implemented + tested |
 | `GET/PATCH/DELETE /guilds/{guild.id}/scheduled-events/{event.id}` | implemented + tested |
-| `GET .../scheduled-events/{event.id}/users` | implemented (always empty) |
+| `GET .../scheduled-events/{event.id}/users` | persisted subscriptions, bounded pagination and optional members |
+| `PUT/DELETE .../scheduled-events/{event.id}/users/@me` | implemented + tested; idempotent add/remove and gateway dispatch |
 
 Validated: ISO8601 start/end, entity types 1 (stage), 2 (voice) and 3 (external),
 channel type must match the entity, external events require a location and end
-time, privacy level only `GUILD_ONLY`. Status transitions 1-4 are accepted.
-Event interest registration is not implemented, so the users list is empty.
+time, privacy level only `GUILD_ONLY`. Status transitions are scheduled → active,
+active → completed and scheduled → canceled; terminal events cannot restart.
+Event subscriptions persist with cascading event/user deletion; subscriber counts
+are loaded from the database rather than returned as a fixed zero. Creation
+subscribes the creator atomically with the event.
+Channel-scoped events enforce effective channel permissions, including
+`CREATE_EVENTS` and stage moderation permissions. External events start/end
+automatically during the background sweep; conditional updates prevent duplicate
+transitions across instances.
 
 ## Stage instances
 
@@ -415,11 +424,8 @@ returns empty, deletes hit only the owning cell, and reset clears every cell.
 
 Remaining differences from Discord's published design:
 
-- Cells are configured statically; there is no per-cell autoscaling, routing table
-  or BFG (big-freaking-guild) reindexing.
-- Inline bounded bulk worker, not a PubSub-backed guaranteed-delivery indexing
-  queue with destination-grouped batching.
-- No index-size automation or reindex-on-threshold workflow.
+- Cells are configured statically; placement uses a deterministic guild hash rather
+  than a dynamic routing service or per-cell autoscaling.
 - Reindex is now built in: `Store.ReindexSearch` scans message rows in id order,
   optionally resets the index (`search.Resetter`), and re-upserts documents.
   `WAVEYCORD_SEARCH_REINDEX=reset` runs it in the background at startup. Tested by
@@ -439,14 +445,19 @@ Remaining differences from Discord's published design:
   append a row to `search_queue` instead of calling the index inline. Jobs collapse
   to one per message, a worker drains them in id order and deletes a row only after
   the index accepted it, and a failed call leaves the row with an incremented attempt
-  count so indexing is at-least-once. Postgres also emits `pg_notify` on enqueue as a
-  wake-up hint, but the durable table is the guarantee and the worker polls; the
+  count for retries. Postgres also emits `pg_notify` on enqueue as a
+  wake-up hint; persisted jobs survive restarts and the worker polls. Message
+  create/edit/delete and bulk-delete jobs commit in the same transaction.
+  Queue workers use synchronous remote-index acknowledgements rather than the
+  in-memory bulk buffer; failed writes retain their jobs. Postgres workers
+  serialize through a transaction-scoped advisory lock and lock selected rows.
+  The
   delete path uses the same queue. Tested on SQLite and on an isolated Postgres schema
   for inline-bypass, drain/ack, edit collapse, injected failure and retry, delete jobs
   and the background runner. On Postgres a dedicated `LISTEN waveycord_search`
   connection (its own `pgx` connection, never a pooled writer) wakes the worker
-  immediately; the poll interval is the fallback and the durable row remains the
-  guarantee, so a missed notification costs one poll.
+  immediately; a wake drains successive full batches, so coalesced notifications
+  do not strand a backlog. Polling handles missed notifications.
 - Index-size automation: `BFGPolicy.MaxDocs` puts a guild into an automated rebuild
   cycle once it reaches that size, and `Growth` (default 0.25) is the fraction it must
   expand past the row count captured at its previous rebuild before rebuilding again.
@@ -507,8 +518,7 @@ without a token when MFA is enabled; `POST /auth/mfa/totp` takes
 or unused backup code, consumes the ticket and returns `{token}`. A wrong code does
 not consume the ticket.
 
-Not 1:1: WebAuthn, SMS and remote-auth (QR) factors are not implemented; recovery
-codes are stored verbatim so the GET can list them, where Discord does not return
+Not 1:1: recovery codes are stored verbatim so the GET can list them, where Discord does not return
 them again; there is no rate limiting on code attempts, and no email/phone
 verification step. `mfa_enabled` is cleared on public user projections and exposed
 only to the account holder.
@@ -548,7 +558,7 @@ Discoverable-credential and passwordless sign-in reuse the same assertion verifi
 Not 1:1: only the ES256 algorithm is supported; the attestation statement is not
 cryptographically verified (`fmt` is read but `attStmt` is ignored), only two
 formats are accepted, and the assertion counter is stored without enforcing a
-strictly increasing value. Remote-auth/QR and SMS are not implemented. The login
+strictly increasing value. The login
 challenge route is an extension: the client route table exposes only
 `/auth/mfa/:param`. The request bodies for the conditional/passwordless finish routes
 were not confirmed against a client build; only the start paths appear in the client
@@ -594,7 +604,7 @@ a claimed identifier rather than a cryptographic binding and the redeemed token 
 returned in plaintext to the redeemer instead of encrypted to the QR device's public
 key; the client route table also exposes `/users/@me/remote-auth/login`, which is
 implemented here, but the real transport delivers the token over the websocket
-instead of this HTTP response. SMS MFA is not implemented.
+instead of this HTTP response.
 
 ## Developer portal
 
@@ -696,7 +706,8 @@ caller's member object.
 - CDN is served by the same process (`/cdn/...`); Discord uses a separate host.
 - Attachments are stored on local disk (`WAVEYCORD_UPLOAD_DIR`); object storage
   is a deployment choice, not an API difference.
-- Voice gateway and media transport are not implemented.
+- Voice gateway and media transport use the custom protocol documented above;
+  this does not establish interoperability with Discord voice clients.
 - Emoji images are accepted but not decoded; the object shape is returned.
 
 ## Storage layout (Postgres)

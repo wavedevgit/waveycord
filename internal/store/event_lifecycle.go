@@ -30,6 +30,9 @@ func (s *Store) AdvanceExternalEvents(at time.Time) ([]ScheduledEvent, error) {
 		if err != nil {
 			return changed, err
 		}
+		if event.Status != 1 && event.Status != 2 {
+			continue
+		}
 		start, err := time.Parse(time.RFC3339, event.ScheduledStartTime)
 		if err != nil {
 			continue
