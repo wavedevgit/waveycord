@@ -327,6 +327,9 @@ const (
 	AuditWebhookUpdate          = 51
 	AuditWebhookDelete          = 52
 	AuditEmojiCreate            = 60
+	AuditSoundboardSoundCreate  = 130
+	AuditSoundboardSoundUpdate  = 131
+	AuditSoundboardSoundDelete  = 132
 	AuditEmojiUpdate            = 61
 	AuditEmojiDelete            = 62
 	AuditMessageDelete          = 72

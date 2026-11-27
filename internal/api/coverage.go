@@ -566,3 +566,152 @@ func queryInt(c *Ctx, name string, min, max, def int) int {
 	}
 	return v
 }
+
+// handleFollowChannel follows an announcement channel into a target channel.
+func (s *Server) handleFollowChannel(c *Ctx) {
+	source, err := s.requireChannel(c.User.ID, c.Param("channelID"), perm.ManageWebhooks)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if source.Type != store.ChannelAnnouncement {
+		fail(c, NewError(400, 50013, "Missing Permissions"))
+		return
+	}
+	var req struct {
+		WebhookChannelID string `json:"webhook_channel_id"`
+	}
+	if err := c.Bind(&req); err != nil {
+		fail(c, ErrInvalidForm)
+		return
+	}
+	if req.WebhookChannelID == "" {
+		c.FailForm("webhook_channel_id", "This field is required")
+		return
+	}
+	target, err := s.requireChannel(c.User.ID, req.WebhookChannelID, perm.ManageWebhooks)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if target.GuildID == nil || source.GuildID == nil {
+		fail(c, ErrGuildOnly)
+		return
+	}
+	name := "Follow channel"
+	if source.Name != nil {
+		name = "Follow " + *source.Name
+	}
+	if len([]rune(name)) > 80 {
+		name = string([]rune(name)[:80])
+	}
+	w, err := s.Store.CreateWebhook(*target.GuildID, target.ID, c.User.ID, name, nil)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	follow, err := s.Store.CreateChannelFollow(source.ID, target.ID, w.ID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if s.Hub != nil {
+		s.Hub.DispatchGuild(*target.GuildID, "WEBHOOKS_UPDATE", map[string]any{
+			"guild_id": *target.GuildID, "channel_id": target.ID,
+		})
+	}
+	c.JSON(follow)
+}
+
+// handleMyConnections lists linked third-party accounts. This server has no
+// account-linking flow, so the list is always empty.
+func (s *Server) handleMyConnections(c *Ctx) {
+	c.JSON([]map[string]any{})
+}
+
+// handleAddGuildMember adds a user to a guild with the user's OAuth2
+// guilds.join access token. Only the guild's bot may call it.
+func (s *Server) handleAddGuildMember(c *Ctx) {
+	app, err := s.Store.ApplicationForBot(c.User.ID)
+	if err != nil {
+		fail(c, NewError(403, 20001, "Bots cannot use this endpoint"))
+		return
+	}
+	guildID := c.Param("guildID")
+	if _, err := s.Store.Guild(guildID); err != nil {
+		fail(c, ErrUnknownGuild)
+		return
+	}
+	if _, err := s.Store.Member(guildID, c.User.ID); err != nil {
+		fail(c, NewError(403, 50001, "Missing Access"))
+		return
+	}
+	userID := c.Param("userID")
+	if _, err := s.Store.UserByID(userID); err != nil {
+		fail(c, ErrUnknownUser)
+		return
+	}
+	var req struct {
+		AccessToken string   `json:"access_token"`
+		Nick        *string  `json:"nick"`
+		Roles       []string `json:"roles"`
+		Mute        *bool    `json:"mute"`
+		Deaf        *bool    `json:"deaf"`
+	}
+	if err := c.Bind(&req); err != nil {
+		fail(c, ErrInvalidForm)
+		return
+	}
+	if req.AccessToken == "" {
+		c.FailForm("access_token", "This field is required")
+		return
+	}
+	token, user, err := s.Store.TokenByAccessHash(store.TokenHashOf(req.AccessToken))
+	if err != nil || token.AppID != app.ID || user.ID != userID {
+		c.FailForm("access_token", "Invalid OAuth2 access token")
+		return
+	}
+	granted := false
+	for _, scope := range token.Scopes {
+		if scope == "guilds.join" {
+			granted = true
+		}
+	}
+	if !granted {
+		c.FailForm("access_token", "Token is missing the guilds.join scope")
+		return
+	}
+	member, err := s.Store.AddMember(guildID, userID)
+	if err != nil && !errors.Is(err, store.ErrConflict) {
+		fail(c, err)
+		return
+	}
+	if req.Nick != nil {
+		if len([]rune(*req.Nick)) > 32 {
+			c.FailForm("nick", "Must be 32 characters or fewer")
+			return
+		}
+		member, err = s.Store.UpdateMember(guildID, userID, store.UpdateMemberParams{Nick: req.Nick})
+		if err != nil {
+			fail(c, err)
+			return
+		}
+	}
+	for _, roleID := range req.Roles {
+		if _, err := s.Store.Role(guildID, roleID); err != nil {
+			c.FailForm("roles", "Unknown role")
+			return
+		}
+		if err := s.Store.AddMemberRole(guildID, userID, roleID); err != nil {
+			fail(c, err)
+			return
+		}
+	}
+	if len(req.Roles) > 0 {
+		member, _ = s.Store.Member(guildID, userID)
+	}
+	if s.Hub != nil {
+		s.Hub.DispatchGuild(guildID, "GUILD_MEMBER_ADD", member)
+	}
+	c.JSONStatus(201, member)
+}

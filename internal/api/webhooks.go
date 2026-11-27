@@ -269,6 +269,7 @@ func (s *Server) handleExecuteWebhook(c *Ctx) {
 		ChannelID: ch.ID, GuildID: guildID, AuthorID: w.ID,
 		Content: req.Content, TTS: req.TTS, Embeds: req.Embeds,
 		Attachments: atts, Components: req.Components, Flags: req.Flags,
+		WebhookID: w.ID,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -284,6 +285,80 @@ func (s *Server) handleExecuteWebhook(c *Ctx) {
 	if c.R.URL.Query().Get("wait") == "true" {
 		c.JSON(msg)
 		return
+	}
+	c.NoContent()
+}
+
+// webhookMessageFor resolves a message that belongs to the token's webhook.
+func (s *Server) webhookMessageFor(c *Ctx) (store.Webhook, model.Message, bool) {
+	w, err := s.Store.WebhookByToken(c.Param("webhookID"), c.Param("token"))
+	if err != nil {
+		fail(c, ErrUnknownWebhook)
+		return store.Webhook{}, model.Message{}, false
+	}
+	msg, err := s.Store.Message(c.Param("messageID"))
+	if err != nil || (msg.WebhookID == nil || *msg.WebhookID != w.ID) {
+		fail(c, NewError(404, 10008, "Unknown Message"))
+		return store.Webhook{}, model.Message{}, false
+	}
+	return w, msg, true
+}
+
+// handleGetWebhookMessage returns a message the webhook posted.
+func (s *Server) handleGetWebhookMessage(c *Ctx) {
+	_, msg, ok := s.webhookMessageFor(c)
+	if !ok {
+		return
+	}
+	c.JSON(msg)
+}
+
+// handleUpdateWebhookMessage edits a message the webhook posted.
+func (s *Server) handleUpdateWebhookMessage(c *Ctx) {
+	_, msg, ok := s.webhookMessageFor(c)
+	if !ok {
+		return
+	}
+	var req struct {
+		Content    *string        `json:"content"`
+		Embeds     *[]model.Embed `json:"embeds"`
+		Components *[]any         `json:"components"`
+		Flags      *int           `json:"flags"`
+	}
+	if err := c.Bind(&req); err != nil {
+		fail(c, ErrInvalidForm)
+		return
+	}
+	if req.Content != nil && len([]rune(*req.Content)) > 2000 {
+		c.FailForm("content", "Must be 2000 or fewer in length")
+		return
+	}
+	updated, err := s.Store.UpdateMessage(msg.ID, req.Content, req.Embeds, req.Flags, req.Components)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if s.Hub != nil && updated.GuildID != nil {
+		s.Hub.DispatchGuild(*updated.GuildID, "MESSAGE_UPDATE", updated)
+	}
+	c.JSON(updated)
+}
+
+// handleDeleteWebhookMessage deletes a message the webhook posted.
+func (s *Server) handleDeleteWebhookMessage(c *Ctx) {
+	_, msg, ok := s.webhookMessageFor(c)
+	if !ok {
+		return
+	}
+	guildID, err := s.Store.DeleteMessage(msg.ID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if s.Hub != nil && guildID != "" {
+		s.Hub.DispatchGuild(guildID, "MESSAGE_DELETE", map[string]any{
+			"id": msg.ID, "channel_id": msg.ChannelID, "guild_id": guildID,
+		})
 	}
 	c.NoContent()
 }

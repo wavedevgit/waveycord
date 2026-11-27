@@ -128,6 +128,11 @@ must use this escrow-mode framing; existing opaque framing is unchanged.
 The custom MLS transcript, signature construction, suite identifiers and wire
 layout have internal tests, not RFC 9420 interoperability evidence. References to
 “RFC-shaped” structures describe resemblance, not standards compliance.
+Soundboard, monetization, application-identity, invite target-user, announcement-follow,
+guild-member join and webhook-message routes are covered by `TestSoundboardRoutes`,
+`TestMonetizationRoutes`, `TestApplicationIdentityProfiles`, `TestInviteTargetUsers`,
+`TestChannelFollowersAndConnections`, `TestAddGuildMemberWithOAuthToken`, `TestWebhookMessageRoutes`,
+`TestApplicationEmojis` and `TestGetGuildEmoji`.
 Integration parity is covered by `TestTwitchYouTubeIntegrations`: documented
 string `type`, 204 create/patch/sync/delete, the 50-row list cap, the
 `has_commands` filter, channel-scoped rows, grace-period validation, sync

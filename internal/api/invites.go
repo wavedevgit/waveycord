@@ -78,6 +78,19 @@ func (s *Server) handleAcceptInvite(c *Ctx) {
 			}
 		}
 	}
+	if targets, err := s.Store.InviteTargetUsers(code); err == nil && len(targets) > 0 {
+		allowed := false
+		for _, target := range targets {
+			if target == c.User.ID {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			fail(c, NewError(403, 50013, "Missing Permissions"))
+			return
+		}
+	}
 	if _, err := s.Store.AddMember(inv.Guild.ID, c.User.ID); err != nil && !errors.Is(err, store.ErrConflict) {
 		fail(c, err)
 		return

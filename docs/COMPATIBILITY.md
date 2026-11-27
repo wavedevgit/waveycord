@@ -337,6 +337,59 @@ default channel limits and mode (0/1); welcome screens bound the description to
 enabled. Both are stored and returned, and are now included in READY guild payloads
 as `onboarding` and `welcome_screen` (tested).
 
+## Soundboard
+
+| Route | Status |
+| --- | --- |
+| `GET /soundboard-default-sounds` | implemented + tested (documented example sound) |
+| `GET /guilds/{guild.id}/soundboard-sounds` | implemented + tested (`items` wrapper) |
+| `GET /guilds/{guild.id}/soundboard-sounds/{sound.id}` | implemented + tested |
+| `POST /guilds/{guild.id}/soundboard-sounds` | implemented + tested (2-32 name, base64 audio, 512 KiB cap, 0-1 volume) |
+| `PATCH/DELETE /guilds/{guild.id}/soundboard-sounds/{sound.id}` | implemented + tested (creator needs `CREATE_GUILD_EXPRESSIONS`; others need `MANAGE_GUILD_EXPRESSIONS`) |
+
+## Monetization
+
+| Route | Status |
+| --- | --- |
+| `GET /applications/{application.id}/skus` | implemented + tested |
+| `GET/POST /applications/{application.id}/entitlements` | implemented + tested (filters, 1-100 limit, owner_type 1/2) |
+| `GET/DELETE /applications/{application.id}/entitlements/{entitlement.id}` | implemented + tested (soft delete, excluded by default) |
+| `POST /applications/{application.id}/entitlements/{entitlement.id}/consume` | implemented + tested |
+| `GET /skus/{sku.id}/subscriptions` | implemented + tested (user-scoped, 1-100 limit) |
+| `GET /skus/{sku.id}/subscriptions/{subscription.id}` | implemented + tested |
+
+SKUs are inserted by the server operator: Discord exposes no public SKU-creation route. Entitlement and
+subscription rows follow the documented object shapes; payment processing is out of scope.
+
+## Application identities
+
+| Route | Status |
+| --- | --- |
+| `GET /users/{user.id}/application-identities/{application.id}` | implemented + tested |
+| `GET /applications/{application.id}/application-identities/{provider_type}/{provider_issued_user_id}` | implemented + tested (`provider_id` filter) |
+| `GET/PATCH /applications/{application.id}/users/{user.id}/identities/{provider_issued_user_id}/profile` | implemented + tested (10 KB data cap, 30 dynamic fields, first write 201, later 204) |
+| `POST /users/{user.id}/application-identities/{application.id}/{provider_type}/{provider_issued_user_id}/delete` | implemented + tested |
+
+Every route requires the application's bot token and a live OAuth2 grant carrying
+`application_identities.write` for the target user. A profile-only first write creates a `NONE`
+provider identity, as documented.
+
+## Invites, follows and member joins
+
+| Route | Status |
+| --- | --- |
+| `GET/PUT /invites/{code}/target-users` | implemented + tested (CSV or JSON, 1000 cap) |
+| `PUT/DELETE /invites/{code}/target-users/{user.id}` | implemented + tested |
+| `POST /invites/{code}/target-users/bulk-add` / `bulk-delete` | implemented + tested |
+| `GET /invites/{code}/target-users/job-status` | implemented + tested (imports are synchronous) |
+| `POST /channels/{channel.id}/followers` | implemented + tested (announcement source, target `MANAGE_WEBHOOKS`, webhook created) |
+| `PUT /guilds/{guild.id}/members/{user.id}` | implemented + tested (`guilds.join` OAuth2 token, bot-authenticated) |
+| `GET /users/@me/connections` | implemented + tested (empty list; no account-linking flow) |
+
+Target-user lists restrict acceptance: a non-listed user gets `403` on `POST /invites/{code}`.
+Webhook message routes (`GET/PATCH/DELETE /webhooks/{id}/{token}/messages/{id}`) are implemented
+and tested, and webhook execution now records `webhook_id` on the stored message.
+
 ## Guild templates
 
 | Route | Status |

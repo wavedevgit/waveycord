@@ -89,6 +89,9 @@ func openSQLite(path string, opts Options) (*sqlx.DB, error) {
 	for _, stmt := range guildIncidentColumns {
 		_, _ = handle.Exec(stmt)
 	}
+	for _, stmt := range emojiColumns {
+		_, _ = handle.Exec(stmt)
+	}
 	return &sqlx.DB{DB: handle, Dialect: sqlx.SQLite}, nil
 }
 
@@ -138,6 +141,9 @@ func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
 			_, _ = conn.ExecContext(ctx, stmt)
 		}
 		for _, stmt := range guildIncidentColumnsPostgres {
+			_, _ = conn.ExecContext(ctx, stmt)
+		}
+		for _, stmt := range emojiColumnsPostgres {
 			_, _ = conn.ExecContext(ctx, stmt)
 		}
 		from := time.Now().AddDate(0, -1, 0)
@@ -247,4 +253,13 @@ var guildIncidentColumnsPostgres = []string{
 	`ALTER TABLE guilds ADD COLUMN IF NOT EXISTS dms_disabled_until BIGINT`,
 	`ALTER TABLE guilds ADD COLUMN IF NOT EXISTS dms_disabled SMALLINT NOT NULL DEFAULT 0`,
 	`ALTER TABLE guilds ADD COLUMN IF NOT EXISTS safety_alerts_channel_id TEXT`,
+}
+
+// emojiColumns backfills application-owned emoji support.
+var emojiColumns = []string{
+	`ALTER TABLE emojis ADD COLUMN application_id TEXT`,
+}
+
+var emojiColumnsPostgres = []string{
+	`ALTER TABLE emojis ADD COLUMN IF NOT EXISTS application_id TEXT`,
 }

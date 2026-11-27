@@ -154,3 +154,22 @@ func deref(v *string) string {
 	}
 	return *v
 }
+
+// handleGetGuildEmoji returns one emoji from a guild.
+func (s *Server) handleGetGuildEmoji(c *Ctx) {
+	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), 0)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	emoji, err := s.Store.Emoji(g.ID, c.Param("emojiID"))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			fail(c, ErrUnknownEmoji)
+			return
+		}
+		fail(c, err)
+		return
+	}
+	c.JSON(emoji)
+}

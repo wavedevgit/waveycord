@@ -312,6 +312,36 @@ CREATE TABLE IF NOT EXISTS invites (
     created_at     INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS application_identities (
+    id                       TEXT PRIMARY KEY,
+    application_id           TEXT NOT NULL,
+    user_id                  TEXT NOT NULL,
+    provider_type            TEXT NOT NULL DEFAULT '',
+    provider_id              TEXT NOT NULL DEFAULT '',
+    provider_issued_user_id  TEXT NOT NULL,
+    username                 TEXT,
+    metadata                 TEXT,
+    data                     TEXT,
+    created_at               BIGINT NOT NULL,
+    updated_at               BIGINT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS application_identities_key
+    ON application_identities (application_id, provider_type, provider_issued_user_id, provider_id);
+CREATE INDEX IF NOT EXISTS application_identities_user ON application_identities (user_id, application_id);
+
+CREATE TABLE IF NOT EXISTS channel_follows (
+    source_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    target_channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    webhook_id        TEXT NOT NULL,
+    PRIMARY KEY (source_channel_id, target_channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS invite_target_users (
+    invite_code TEXT NOT NULL REFERENCES invites(code) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    PRIMARY KEY (invite_code, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS bans (
     guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
     user_id    TEXT NOT NULL,
@@ -341,6 +371,7 @@ CREATE TABLE IF NOT EXISTS read_states (
 CREATE TABLE IF NOT EXISTS emojis (
     id             TEXT PRIMARY KEY,
     guild_id       TEXT REFERENCES guilds(id) ON DELETE CASCADE,
+    application_id TEXT,
     name           TEXT,
     creator_id     TEXT,
     roles          TEXT NOT NULL DEFAULT '[]',
@@ -668,6 +699,60 @@ CREATE TABLE IF NOT EXISTS welcome_screens (
     description      TEXT,
     welcome_channels TEXT NOT NULL DEFAULT '[]',
     enabled          SMALLINT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS skus (
+    id             TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL,
+    type           INTEGER NOT NULL,
+    name           TEXT NOT NULL,
+    slug           TEXT NOT NULL,
+    flags          BIGINT NOT NULL DEFAULT 0,
+    created_at     BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS skus_app ON skus (application_id);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id                   TEXT PRIMARY KEY,
+    user_id              TEXT NOT NULL,
+    sku_ids              TEXT NOT NULL DEFAULT '[]',
+    entitlement_ids      TEXT NOT NULL DEFAULT '[]',
+    renewal_sku_ids      TEXT,
+    current_period_start BIGINT,
+    current_period_end   BIGINT,
+    status               INTEGER NOT NULL DEFAULT 0,
+    canceled_at          BIGINT,
+    created_at           BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS subscriptions_user ON subscriptions (user_id);
+
+CREATE TABLE IF NOT EXISTS entitlements (
+    id              TEXT PRIMARY KEY,
+    application_id  TEXT NOT NULL,
+    sku_id          TEXT NOT NULL,
+    user_id         TEXT,
+    guild_id        TEXT,
+    type            INTEGER NOT NULL,
+    deleted         SMALLINT NOT NULL DEFAULT 0,
+    consumed        SMALLINT NOT NULL DEFAULT 0,
+    starts_at       BIGINT,
+    ends_at         BIGINT,
+    subscription_id TEXT,
+    created_at      BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS entitlements_app ON entitlements (application_id);
+CREATE INDEX IF NOT EXISTS entitlements_sku ON entitlements (sku_id);
+
+CREATE TABLE IF NOT EXISTS soundboard_sounds (
+    sound_id   TEXT PRIMARY KEY,
+    guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    volume     REAL NOT NULL DEFAULT 1,
+    emoji_id   TEXT,
+    emoji_name TEXT,
+    available  SMALLINT NOT NULL DEFAULT 1,
+    creator_id TEXT,
+    created_at BIGINT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS stickers (

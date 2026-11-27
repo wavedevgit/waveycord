@@ -154,6 +154,7 @@ type CreateMessageParams struct {
 	ReferencedMessageID *string
 	Flags               int
 	Pinned              bool
+	WebhookID           string
 }
 
 // CreateMessage persists a message and advances the channel's last_message_id.
@@ -190,6 +191,10 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 	if p.GuildID != "" {
 		guild = p.GuildID
 	}
+	var webhook any
+	if p.WebhookID != "" {
+		webhook = p.WebhookID
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return model.Message{}, mapErr(err)
@@ -198,11 +203,11 @@ func (s *Store) CreateMessage(p CreateMessageParams) (model.Message, error) {
 	if _, err := tx.Exec(`INSERT INTO messages
 		(id, channel_id, guild_id, author_id, content, timestamp, tts, mention_everyone,
 		 mentions, mention_roles, pinned, type, flags, referenced_message_id, components,
-		 attachments, embeds, sticker_items, nonce, bucket)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 attachments, embeds, sticker_items, nonce, bucket, webhook_id)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		mid, p.ChannelID, guild, p.AuthorID, p.Content, ts, p.TTS, mentionEveryone,
 		jsonStrings(mentionIDs), jsonStrings(mentionRoles), p.Pinned, p.Type, p.Flags,
-		p.ReferencedMessageID, string(comps), string(atts), string(embeds), "[]", p.Nonce, bucket); err != nil {
+		p.ReferencedMessageID, string(comps), string(atts), string(embeds), "[]", p.Nonce, bucket, webhook); err != nil {
 		return model.Message{}, mapErr(err)
 	}
 	if _, err := tx.Exec(`INSERT INTO message_index (id, channel_id, bucket, created_at)
