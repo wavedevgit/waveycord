@@ -636,6 +636,7 @@ CREATE TABLE IF NOT EXISTS scheduled_events (
     entity_id            TEXT,
     entity_metadata      TEXT NOT NULL DEFAULT '{}',
     image                TEXT,
+    recurrence_rule      TEXT,
     created_at           BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS scheduled_events_guild ON scheduled_events (guild_id);
@@ -670,6 +671,12 @@ CREATE TABLE IF NOT EXISTS integrations (
     account_name         TEXT,
     account_id           TEXT,
     application_name     TEXT,
+    subscriber_count     INTEGER NOT NULL DEFAULT 0,
+    revoked              SMALLINT NOT NULL DEFAULT 0,
+    synced_at            BIGINT,
+    scopes               TEXT NOT NULL DEFAULT '[]',
+    user_id              TEXT,
+    channel_id           TEXT,
     created_at           BIGINT NOT NULL,
     PRIMARY KEY (guild_id, id)
 );

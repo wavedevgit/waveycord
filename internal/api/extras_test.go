@@ -290,30 +290,97 @@ func TestStageInstancesAndIntegrations(t *testing.T) {
 	var integrations []struct {
 		ID      string         `json:"id"`
 		Name    string         `json:"name"`
-		Type    int            `json:"type"`
+		Type    string         `json:"type"`
 		Account map[string]any `json:"account"`
+		Scopes  []string       `json:"scopes"`
 	}
 	if status := h.decode("GET", "/guilds/"+guild.ID+"/integrations", alice.Token, nil, &integrations); status != 200 || len(integrations) != 1 {
 		t.Fatalf("list integrations %d %+v", status, integrations)
 	}
-	if integrations[0].ID != app.ID || integrations[0].Account["id"] != app.Bot.ID {
+	if integrations[0].ID != app.ID || integrations[0].Type != "discord" || integrations[0].Account["id"] != app.Bot.ID {
 		t.Fatalf("unexpected integration %+v", integrations[0])
+	}
+	if integrations[0].Scopes == nil {
+		t.Fatalf("bot integration scopes missing: %+v", integrations[0])
 	}
 	var one struct{ ID string }
 	if status := h.decode("GET", "/guilds/"+guild.ID+"/integrations/"+app.ID, alice.Token, nil, &one); status != 200 || one.ID != app.ID {
 		t.Fatalf("get integration %d %+v", status, one)
 	}
-	var updated struct {
-		EnableEmoticons bool `json:"enable_emoticons"`
-	}
-	if status := h.decode("PATCH", "/guilds/"+guild.ID+"/integrations/"+app.ID, alice.Token,
-		map[string]any{"enable_emoticons": true}, &updated); status != 200 {
-		t.Fatalf("patch integration %d", status)
+	// Subscriber settings belong to Twitch/YouTube integrations only.
+	if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/integrations/"+app.ID, alice.Token,
+		map[string]any{"enable_emoticons": true}); status != 400 {
+		t.Fatalf("patch bot integration %d", status)
 	}
 	if status := h.decode("DELETE", "/guilds/"+guild.ID+"/integrations/"+app.ID, alice.Token, nil, nil); status != 204 {
 		t.Fatalf("delete integration %d", status)
 	}
 	if status := h.decode("GET", "/guilds/"+guild.ID+"/members/"+app.Bot.ID, alice.Token, nil, nil); status != 404 {
 		t.Fatalf("bot still a member after integration removal: %d", status)
+	}
+}
+
+func TestScheduledEventRecurrenceRule(t *testing.T) {
+	h := newHarness(t)
+	alice := h.register("recurringowner")
+	var guild struct{ ID string }
+	h.decode("POST", "/guilds", alice.Token, map[string]any{"name": "Recurring"}, &guild)
+	start := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	ruleStart := time.Now().UTC().Format(time.RFC3339)
+
+	var created struct {
+		ID             string `json:"id"`
+		RecurrenceRule *struct {
+			Frequency int   `json:"frequency"`
+			Interval  int   `json:"interval"`
+			ByWeekday []int `json:"by_weekday"`
+		} `json:"recurrence_rule"`
+	}
+	if status := h.decode("POST", "/guilds/"+guild.ID+"/scheduled-events", alice.Token, map[string]any{
+		"name": "Weekly standup", "entity_type": 3,
+		"scheduled_start_time": start,
+		"scheduled_end_time":   time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+		"entity_metadata":      map[string]any{"location": "Voice lounge"},
+		"recurrence_rule": map[string]any{
+			"start": ruleStart, "frequency": 2, "interval": 1, "by_weekday": []int{2},
+		},
+	}, &created); status != 201 || created.RecurrenceRule == nil || created.RecurrenceRule.Frequency != 2 {
+		t.Fatalf("create recurring event %d %+v", status, created)
+	}
+	if len(created.RecurrenceRule.ByWeekday) != 1 || created.RecurrenceRule.ByWeekday[0] != 2 {
+		t.Fatalf("recurrence rule not persisted: %+v", created.RecurrenceRule)
+	}
+
+	invalid := []map[string]any{
+		{"start": ruleStart, "frequency": 2, "interval": 2, "by_weekday": []int{1, 2}}, // weekly needs one day
+		{"start": ruleStart, "frequency": 2, "interval": 2, "by_weekday": []int{2}, "end": ruleStart},
+		{"start": ruleStart, "frequency": 3, "interval": 1, "by_weekday": []int{0, 2}}, // not an allowed set
+		{"start": ruleStart, "frequency": 1, "interval": 1, "by_weekday": []int{2}},    // monthly needs by_n_weekday
+		{"start": ruleStart, "frequency": 0, "interval": 1, "by_month": []int{2}, "by_month_day": []int{30}},
+		{"start": ruleStart, "frequency": 2, "interval": 1, "by_weekday": []int{2}, "by_n_weekday": []map[string]any{{"n": 1, "day": 2}}},
+		{"start": ruleStart, "frequency": 2, "interval": 1, "by_weekday": []int{2}, "count": 3},
+		{"start": ruleStart, "frequency": 2, "interval": 3, "by_weekday": []int{2}},
+	}
+	for i, body := range invalid {
+		payload := map[string]any{
+			"name": "Bad rule", "entity_type": 3,
+			"scheduled_start_time": start,
+			"scheduled_end_time":   time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339),
+			"entity_metadata":      map[string]any{"location": "Here"},
+			"recurrence_rule":      body,
+		}
+		if status, _ := h.request("POST", "/guilds/"+guild.ID+"/scheduled-events", alice.Token, payload); status != 400 {
+			t.Fatalf("invalid rule %d status %d", i, status)
+		}
+	}
+
+	// Monthly fourth Wednesday is accepted and replaces the stored rule.
+	if status := h.decode("PATCH", "/guilds/"+guild.ID+"/scheduled-events/"+created.ID, alice.Token, map[string]any{
+		"recurrence_rule": map[string]any{
+			"start": ruleStart, "frequency": 1, "interval": 1,
+			"by_n_weekday": []map[string]any{{"n": 4, "day": 2}},
+		},
+	}, nil); status != 200 {
+		t.Fatalf("patch recurrence %d", status)
 	}
 }

@@ -82,6 +82,10 @@ func openSQLite(path string, opts Options) (*sqlx.DB, error) {
 	// EXISTS, so the duplicate-column error means the column already exists.
 	_, _ = handle.Exec(`ALTER TABLE users ADD COLUMN mfa_secret TEXT`)
 	_, _ = handle.Exec(`ALTER TABLE polls ADD COLUMN final_counts TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = handle.Exec(`ALTER TABLE scheduled_events ADD COLUMN recurrence_rule TEXT`)
+	for _, stmt := range integrationColumns {
+		_, _ = handle.Exec(stmt)
+	}
 	return &sqlx.DB{DB: handle, Dialect: sqlx.SQLite}, nil
 }
 
@@ -126,6 +130,10 @@ func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
 		// Existing deployments predate mfa_secret.
 		_, _ = conn.ExecContext(ctx, `ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT`)
 		_, _ = conn.ExecContext(ctx, `ALTER TABLE polls ADD COLUMN IF NOT EXISTS final_counts TEXT NOT NULL DEFAULT '[]'`)
+		_, _ = conn.ExecContext(ctx, `ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS recurrence_rule TEXT`)
+		for _, stmt := range integrationColumnsPostgres {
+			_, _ = conn.ExecContext(ctx, stmt)
+		}
 		from := time.Now().AddDate(0, -1, 0)
 		to := time.Now().AddDate(0, 2, 0)
 		if migrating && legacyMin > 0 {
@@ -198,3 +206,24 @@ func preperrwrap(err error) error { return fmt.Errorf("db: prepare partitioned m
 
 // NowMillis is the single clock used for row timestamps.
 func NowMillis() int64 { return time.Now().UnixMilli() }
+
+// integrationColumns backfills SQLite deployments that predate subscriber sync
+// and channel-scoped integrations. SQLite has no ADD COLUMN IF NOT EXISTS, so a
+// duplicate-column error is the expected no-op.
+var integrationColumns = []string{
+	`ALTER TABLE integrations ADD COLUMN subscriber_count INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE integrations ADD COLUMN revoked SMALLINT NOT NULL DEFAULT 0`,
+	`ALTER TABLE integrations ADD COLUMN synced_at BIGINT`,
+	`ALTER TABLE integrations ADD COLUMN scopes TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE integrations ADD COLUMN user_id TEXT`,
+	`ALTER TABLE integrations ADD COLUMN channel_id TEXT`,
+}
+
+var integrationColumnsPostgres = []string{
+	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS subscriber_count INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS revoked SMALLINT NOT NULL DEFAULT 0`,
+	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS synced_at BIGINT`,
+	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '[]'`,
+	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS user_id TEXT`,
+	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS channel_id TEXT`,
+}

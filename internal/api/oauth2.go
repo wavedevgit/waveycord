@@ -222,7 +222,7 @@ func (s *Server) handleAuthorizePost(c *Ctx) {
 			return
 		}
 		member, _ := s.Store.Member(*req.GuildID, app.Bot.ID)
-		_ = s.Store.UpsertBotIntegration(*req.GuildID, app.ID, app.Name, app.Bot.ID)
+		_ = s.Store.UpsertBotIntegration(*req.GuildID, app.ID, app.Name, app.Bot.ID, scopes)
 		if s.Hub != nil {
 			s.Hub.DispatchGuild(*req.GuildID, "GUILD_MEMBER_ADD", member)
 		}

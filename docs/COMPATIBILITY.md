@@ -371,6 +371,17 @@ Channel-scoped events enforce effective channel permissions, including
 automatically during the background sweep; conditional updates prevent duplicate
 transitions across instances.
 
+`recurrence_rule` is stored and returned on create/update. Validation follows the
+documented subset: frequency 0-3, interval 1 or 2 (2 only for weekly), the six
+allowed daily `by_weekday` sets, a single weekly `by_weekday`, a single monthly
+`by_n_weekday`, and a single yearly `by_month` + `by_month_day` pair.
+`by_weekday`, `by_n_weekday` and `by_month` are mutually exclusive; `end`,
+`count` and `by_year_day` are rejected because the API marks them server-owned.
+`store.NextOccurrence` computes the next matching instant for each supported
+frequency. Whether Discord spawns follow-up event rows for a recurring series is
+not observable from the public API, so this server stores and validates the rule
+without materialising occurrences.
+
 ## Stage instances
 
 | Route | Status |
@@ -385,13 +396,26 @@ instance per channel; create/update/delete dispatch the stage events.
 
 | Route | Status |
 | --- | --- |
-| `GET /guilds/{guild.id}/integrations` | implemented + tested |
+| `GET /guilds/{guild.id}/integrations` | implemented + tested (`has_commands`, `include_role_connections_metadata`, 50-row cap) |
+| `POST /guilds/{guild.id}/integrations` | implemented + tested (`type`, `id`, optional `channel_id`) |
 | `GET/PATCH/DELETE /guilds/{guild.id}/integrations/{integration.id}` | implemented + tested |
+| `POST /guilds/{guild.id}/integrations/{integration.id}/sync` | implemented + tested |
+| `POST /guilds/{guild.id}/migrate-command-scope` | implemented + tested |
+| `GET /users/@me/guilds/integration-application-ids` | implemented + tested |
+| `GET /channels/{channel.id}/integrations` | implemented + tested |
+| `DELETE /channels/{channel.id}/integrations/{integration.id}` | implemented + tested |
 
-A bot installed through the OAuth2 `bot` scope creates an integration row
-(`type: 3`, account = bot user). PATCH accepts emoticon/expiry settings; DELETE
-removes the row and kicks the bot from the guild. Twitch/YouTube integrations and
-integration sync are not implemented.
+`type` is serialized as the documented string (`twitch`, `youtube`, `discord`,
+`guild_subscription`). Twitch/YouTube rows carry `syncing`, `role_id`,
+`enable_emoticons`, `expire_behavior`, `expire_grace_period`, `synced_at`,
+`subscriber_count` and `revoked`; Discord application rows carry `application`
+and the granted `scopes`. `expire_grace_period` accepts only 1, 3, 7, 14 or 30.
+Sync recomputes `subscriber_count` from members holding the integration role and
+stamps `synced_at`; it does not call the provider, because no provider
+credentials exist in this server. A bot installed through the OAuth2 `bot` scope
+creates a `discord` integration row; DELETE removes associated webhooks and kicks
+the bot from the guild. `has_commands` keeps Discord integrations that have
+guild or global commands registered.
 
 ## Message search
 

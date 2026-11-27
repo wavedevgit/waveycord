@@ -179,15 +179,16 @@ func (s *Server) handleCreateScheduledEvent(c *Ctx) {
 		return
 	}
 	var req struct {
-		Name           string         `json:"name"`
-		Description    *string        `json:"description"`
-		ChannelID      *string        `json:"channel_id"`
-		Start          string         `json:"scheduled_start_time"`
-		End            *string        `json:"scheduled_end_time"`
-		PrivacyLevel   *int           `json:"privacy_level"`
-		EntityType     int            `json:"entity_type"`
-		EntityMetadata map[string]any `json:"entity_metadata"`
-		Image          *string        `json:"image"`
+		Name           string                `json:"name"`
+		Description    *string               `json:"description"`
+		ChannelID      *string               `json:"channel_id"`
+		Start          string                `json:"scheduled_start_time"`
+		End            *string               `json:"scheduled_end_time"`
+		PrivacyLevel   *int                  `json:"privacy_level"`
+		EntityType     int                   `json:"entity_type"`
+		EntityMetadata map[string]any        `json:"entity_metadata"`
+		Image          *string               `json:"image"`
+		RecurrenceRule *store.RecurrenceRule `json:"recurrence_rule"`
 	}
 	if err := c.Bind(&req); err != nil {
 		fail(c, ErrInvalidForm)
@@ -257,6 +258,10 @@ func (s *Server) handleCreateScheduledEvent(c *Ctx) {
 		}
 		privacy = *req.PrivacyLevel
 	}
+	if field, msg := validateRecurrenceRule(req.RecurrenceRule); field != "" {
+		c.FailForm(field, msg)
+		return
+	}
 	if err := s.eventPermission(c.User.ID, store.ScheduledEvent{GuildID: g.ID, ChannelID: req.ChannelID, EntityType: req.EntityType}, "create"); err != nil {
 		fail(c, err)
 		return
@@ -269,6 +274,7 @@ func (s *Server) handleCreateScheduledEvent(c *Ctx) {
 		Name: name, Description: req.Description, ChannelID: req.ChannelID,
 		Start: req.Start, End: req.End, PrivacyLevel: privacy,
 		EntityType: req.EntityType, EntityMetadata: req.EntityMetadata, Image: req.Image,
+		RecurrenceRule: req.RecurrenceRule,
 	})
 	if err != nil {
 		fail(c, err)
@@ -311,14 +317,15 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 		return
 	}
 	var req struct {
-		Name           *string        `json:"name"`
-		Description    *string        `json:"description"`
-		ChannelID      *string        `json:"channel_id"`
-		Start          *string        `json:"scheduled_start_time"`
-		End            *string        `json:"scheduled_end_time"`
-		Status         *int           `json:"status"`
-		PrivacyLevel   *int           `json:"privacy_level"`
-		EntityMetadata map[string]any `json:"entity_metadata"`
+		Name           *string               `json:"name"`
+		Description    *string               `json:"description"`
+		ChannelID      *string               `json:"channel_id"`
+		Start          *string               `json:"scheduled_start_time"`
+		End            *string               `json:"scheduled_end_time"`
+		Status         *int                  `json:"status"`
+		PrivacyLevel   *int                  `json:"privacy_level"`
+		EntityMetadata map[string]any        `json:"entity_metadata"`
+		RecurrenceRule *store.RecurrenceRule `json:"recurrence_rule"`
 	}
 	if err := s.eventPermission(c.User.ID, event, "update"); err != nil {
 		fail(c, err)
@@ -366,6 +373,10 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 		c.FailForm("description", "Must be at most 1000 characters")
 		return
 	}
+	if field, msg := validateRecurrenceRule(req.RecurrenceRule); field != "" {
+		c.FailForm(field, msg)
+		return
+	}
 	if req.ChannelID != nil {
 		ch, err := s.Store.Channel(*req.ChannelID)
 		want := store.ChannelVoice
@@ -410,6 +421,7 @@ func (s *Server) handleUpdateScheduledEvent(c *Ctx) {
 		Name: req.Name, Description: req.Description, ChannelID: req.ChannelID,
 		Start: req.Start, End: req.End, Status: req.Status,
 		PrivacyLevel: req.PrivacyLevel, EntityMetadata: req.EntityMetadata,
+		RecurrenceRule: req.RecurrenceRule,
 	})
 	if err != nil {
 		fail(c, err)
@@ -638,134 +650,6 @@ func (s *Server) handleDeleteStageInstance(c *Ctx) {
 	}
 	if ch.GuildID != nil && s.Hub != nil {
 		s.Hub.DispatchGuild(*ch.GuildID, "STAGE_INSTANCE_DELETE", si)
-	}
-	c.NoContent()
-}
-
-// --- integrations ---
-
-func (s *Server) handleListIntegrations(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageGuild)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	list, err := s.Store.Integrations(g.ID)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	c.JSON(list)
-}
-
-func (s *Server) handleCreateIntegration(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageGuild)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	var req struct {
-		Type        int     `json:"type"`
-		Name        *string `json:"name"`
-		AccountID   string  `json:"account_id"`
-		AccountName *string `json:"account_name"`
-	}
-	if err := c.Bind(&req); err != nil {
-		fail(c, ErrInvalidForm)
-		return
-	}
-	if req.Type != 1 && req.Type != 2 {
-		c.FailForm("type", "Only Twitch (1) and YouTube (2) integrations can be created")
-		return
-	}
-	if strings.TrimSpace(req.AccountID) == "" {
-		c.FailForm("account_id", "This field is required")
-		return
-	}
-	name := "Twitch"
-	if req.Type == 2 {
-		name = "YouTube"
-	}
-	if req.Name != nil {
-		name = sanitizeName(*req.Name)
-		if len([]rune(name)) < 1 || len([]rune(name)) > 100 {
-			c.FailForm("name", "Must be between 1 and 100 characters")
-			return
-		}
-	}
-	accountName := req.AccountID
-	if req.AccountName != nil && *req.AccountName != "" {
-		accountName = *req.AccountName
-	}
-	in, err := s.Store.CreateIntegration(g.ID, req.Type, name, accountName, req.AccountID)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	c.JSONStatus(201, in)
-}
-
-func (s *Server) handleGetIntegration(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageGuild)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	in, err := s.Store.Integration(g.ID, c.Param("integrationID"))
-	if err != nil {
-		fail(c, NewError(404, 10000, "Unknown Integration"))
-		return
-	}
-	c.JSON(in)
-}
-
-func (s *Server) handleUpdateIntegration(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageGuild)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	var req struct {
-		EnableEmoticons   *bool `json:"enable_emoticons"`
-		ExpireBehavior    *int  `json:"expire_behavior"`
-		ExpireGracePeriod *int  `json:"expire_grace_period"`
-	}
-	if err := c.Bind(&req); err != nil {
-		fail(c, ErrInvalidForm)
-		return
-	}
-	if req.ExpireBehavior != nil && (*req.ExpireBehavior < 0 || *req.ExpireBehavior > 1) {
-		c.FailForm("expire_behavior", "Must be 0 or 1")
-		return
-	}
-	if req.ExpireGracePeriod != nil && (*req.ExpireGracePeriod < 0 || *req.ExpireGracePeriod > 180) {
-		c.FailForm("expire_grace_period", "Must be between 0 and 180")
-		return
-	}
-	in, err := s.Store.UpdateIntegration(g.ID, c.Param("integrationID"), req.EnableEmoticons, req.ExpireBehavior, req.ExpireGracePeriod)
-	if err != nil {
-		fail(c, NewError(404, 10000, "Unknown Integration"))
-		return
-	}
-	c.JSON(in)
-}
-
-func (s *Server) handleDeleteIntegration(c *Ctx) {
-	g, err := s.requireGuild(c.User.ID, c.Param("guildID"), perm.ManageGuild)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	botID, err := s.Store.DeleteIntegration(g.ID, c.Param("integrationID"))
-	if err != nil {
-		fail(c, NewError(404, 10000, "Unknown Integration"))
-		return
-	}
-	if botID != "" {
-		_ = s.Store.RemoveMember(g.ID, botID)
-		if s.Hub != nil {
-			s.Hub.DispatchGuild(g.ID, "GUILD_MEMBER_REMOVE", map[string]any{"guild_id": g.ID, "user": map[string]any{"id": botID}})
-		}
 	}
 	c.NoContent()
 }

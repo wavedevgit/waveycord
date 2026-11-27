@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -664,4 +665,28 @@ func TestGatewayIdentifyAndDispatch(t *testing.T) {
 	if md["content"] != "live" || md["channel_id"] != channel.ID {
 		t.Fatalf("unexpected dispatch %+v", md)
 	}
+}
+
+// botApplication installs a bot application into guildID and registers one
+// guild command, returning the application id.
+func (h *harness) botApplication(a account, guildID, name string) string {
+	h.t.Helper()
+	var app struct {
+		ID string `json:"id"`
+	}
+	h.decode("POST", "/applications", a.Token, map[string]any{"name": name}, &app)
+	redirect := "https://example.test/" + app.ID
+	h.decode("PATCH", "/applications/"+app.ID, a.Token, map[string]any{"redirect_uris": []string{redirect}}, nil)
+	status, body := h.form("/oauth2/authorize", url.Values{
+		"client_id": {app.ID}, "response_type": {"code"}, "redirect_uri": {redirect},
+		"scope": {"bot"}, "guild_id": {guildID}, "authorize": {"true"},
+	}, a.Token, "application/json")
+	if status != 200 {
+		h.t.Fatalf("bot install status %d body %s", status, body)
+	}
+	if status := h.decode("PUT", "/applications/"+app.ID+"/guilds/"+guildID+"/commands", a.Token,
+		[]map[string]any{{"name": "ping", "description": "ping"}}, nil); status != 200 {
+		h.t.Fatalf("register command status %d", status)
+	}
+	return app.ID
 }

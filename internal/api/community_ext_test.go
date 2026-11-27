@@ -144,55 +144,131 @@ func TestTwitchYouTubeIntegrations(t *testing.T) {
 	bob := h.register("intoutsider")
 	var guild struct{ ID string }
 	h.decode("POST", "/guilds", alice.Token, map[string]any{"name": "Integrations"}, &guild)
+	var channel struct{ ID string }
+	h.decode("POST", "/guilds/"+guild.ID+"/channels", alice.Token, map[string]any{"name": "streams"}, &channel)
 
-	var twitch struct {
-		ID      string         `json:"id"`
-		Type    int            `json:"type"`
-		Name    string         `json:"name"`
-		Account map[string]any `json:"account"`
+	// Create returns 204 and the integration id is the provider account id.
+	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations", alice.Token, map[string]any{
+		"type": "twitch", "id": "streamer",
+	}); status != 204 {
+		t.Fatalf("create twitch integration %d", status)
 	}
-	if status := h.decode("POST", "/guilds/"+guild.ID+"/integrations", alice.Token, map[string]any{
-		"type": 1, "account_id": "streamer", "account_name": "Streamer",
-	}, &twitch); status != 201 || twitch.Type != 1 || twitch.Account["id"] != "streamer" {
-		t.Fatalf("create twitch integration %d %+v", status, twitch)
+	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations", alice.Token, map[string]any{
+		"type": "youtube", "id": "ytchannel",
+	}); status != 204 {
+		t.Fatalf("create youtube integration %d", status)
 	}
-	var youtube struct {
-		ID   string
-		Type int
+
+	var list []struct {
+		ID              string `json:"id"`
+		Type            string `json:"type"`
+		Account         map[string]any
+		Syncing         *bool   `json:"syncing"`
+		SubscriberCount *int    `json:"subscriber_count"`
+		SyncedAt        *string `json:"synced_at"`
 	}
-	if status := h.decode("POST", "/guilds/"+guild.ID+"/integrations", alice.Token, map[string]any{
-		"type": 2, "account_id": "ytchannel",
-	}, &youtube); status != 201 || youtube.Type != 2 {
-		t.Fatalf("create youtube integration %d %+v", status, youtube)
-	}
-	var list []struct{ ID string }
 	if status := h.decode("GET", "/guilds/"+guild.ID+"/integrations", alice.Token, nil, &list); status != 200 || len(list) != 2 {
 		t.Fatalf("list integrations %d %+v", status, list)
 	}
+	if list[0].Type != "twitch" || list[0].Account["id"] != "streamer" || list[0].Syncing == nil {
+		t.Fatalf("twitch object %+v", list[0])
+	}
+	if list[1].Type != "youtube" || list[1].SubscriberCount == nil || list[1].SyncedAt == nil {
+		t.Fatalf("youtube object %+v", list[1])
+	}
 
-	// Validation and permissions.
+	// Validation: unknown type, missing id, bad grace period, foreign guild.
 	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations", alice.Token, map[string]any{
-		"type": 4, "account_id": "x",
+		"type": "discord", "id": "x",
 	}); status != 400 {
 		t.Fatalf("invalid type status %d", status)
 	}
 	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations", alice.Token, map[string]any{
-		"type": 1,
+		"type": "twitch",
 	}); status != 400 {
-		t.Fatalf("missing account status %d", status)
+		t.Fatalf("missing id status %d", status)
+	}
+	if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/integrations/streamer", alice.Token, map[string]any{
+		"expire_grace_period": 5,
+	}); status != 400 {
+		t.Fatalf("bad grace status %d", status)
+	}
+	if status, _ := h.request("PATCH", "/guilds/"+guild.ID+"/integrations/streamer", alice.Token, map[string]any{
+		"expire_grace_period": 14, "expire_behavior": 1, "enable_emoticons": true,
+	}); status != 204 {
+		t.Fatalf("patch integration status %d", status)
 	}
 	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations", bob.Token, map[string]any{
-		"type": 1, "account_id": "y",
+		"type": "twitch", "id": "y",
 	}); status != 403 {
 		t.Fatalf("foreign create status %d", status)
 	}
+	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations/streamer/sync", alice.Token, nil); status != 204 {
+		t.Fatalf("sync status %d", status)
+	}
+	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations/ytchannel/sync", bob.Token, nil); status != 403 {
+		t.Fatalf("foreign sync status %d", status)
+	}
 
-	if status := h.decode("DELETE", "/guilds/"+guild.ID+"/integrations/"+twitch.ID, alice.Token, nil, nil); status != 204 {
+	// Channel-scoped integrations.
+	if status, _ := h.request("POST", "/guilds/"+guild.ID+"/integrations", alice.Token, map[string]any{
+		"type": "twitch", "id": "chanstream", "channel_id": channel.ID,
+	}); status != 204 {
+		t.Fatalf("channel integration create %d", status)
+	}
+	var channelScoped []struct{ ID string }
+	if status := h.decode("GET", "/channels/"+channel.ID+"/integrations", alice.Token, nil, &channelScoped); status != 200 || len(channelScoped) != 1 || channelScoped[0].ID != "chanstream" {
+		t.Fatalf("channel integrations %d %+v", status, channelScoped)
+	}
+	var guildScoped []struct{ ID string }
+	h.decode("GET", "/guilds/"+guild.ID+"/integrations", alice.Token, nil, &guildScoped)
+	for _, in := range guildScoped {
+		if in.ID == "chanstream" {
+			t.Fatalf("channel integration leaked into guild list")
+		}
+	}
+	if status, _ := h.request("DELETE", "/channels/"+channel.ID+"/integrations/chanstream", bob.Token, nil); status != 403 {
+		t.Fatalf("foreign channel integration delete %d", status)
+	}
+	if status, _ := h.request("DELETE", "/channels/"+channel.ID+"/integrations/chanstream", alice.Token, nil); status != 204 {
+		t.Fatalf("channel integration delete %d", status)
+	}
+
+	if status := h.decode("DELETE", "/guilds/"+guild.ID+"/integrations/streamer", alice.Token, nil, nil); status != 204 {
 		t.Fatalf("delete integration %d", status)
 	}
 	var after []struct{ ID string }
 	h.decode("GET", "/guilds/"+guild.ID+"/integrations", alice.Token, nil, &after)
 	if len(after) != 1 {
 		t.Fatalf("integrations after delete = %d", len(after))
+	}
+
+	// Bot integration drives the command-scope migration report.
+	appID := h.botApplication(alice, guild.ID, "Integrations Bot")
+	var migrated struct {
+		IDs []string `json:"integration_ids_with_app_commands"`
+	}
+	if status := h.decode("POST", "/guilds/"+guild.ID+"/migrate-command-scope", alice.Token, nil, &migrated); status != 200 {
+		t.Fatalf("migrate status %d", status)
+	}
+	found := false
+	for _, id := range migrated.IDs {
+		if id == appID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("migrate ids %+v missing %s", migrated.IDs, appID)
+	}
+	var mapping map[string][]string
+	if status := h.decode("GET", "/users/@me/guilds/integration-application-ids", alice.Token, nil, &mapping); status != 200 || len(mapping[guild.ID]) != 1 {
+		t.Fatalf("integration application ids %d %+v", status, mapping)
+	}
+	var onlyApps []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	if status := h.decode("GET", "/guilds/"+guild.ID+"/integrations?has_commands=true", alice.Token, nil, &onlyApps); status != 200 || len(onlyApps) != 1 || onlyApps[0].ID != appID {
+		t.Fatalf("has_commands filter %d %+v", status, onlyApps)
 	}
 }

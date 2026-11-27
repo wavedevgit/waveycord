@@ -94,7 +94,11 @@ change. Treat a single cluster-test failure as suspect until reproduced alone.
 ## Escrow media verification
 
 Scheduled-event subscription, pagination, count, member projection, idempotency
-and patch validation are covered by `TestScheduledEvents`. External scheduled
+and patch validation are covered by `TestScheduledEvents`. Recurrence validation
+and persistence are covered by `TestScheduledEventRecurrenceRule`; the next
+occurrence maths for daily, every-other-week, monthly nth-weekday and yearly
+rules is covered by `TestRecurrenceNextOccurrence`, including an impossible date
+that fails closed. External scheduled
 start/end, repeated sweep suppression and terminal-state enforcement are covered
 by `TestExternalEventLifecycle`. Event permission checks use the shared effective
 channel permission resolver; these tests do not yet exhaust every role/overwrite
@@ -124,6 +128,13 @@ must use this escrow-mode framing; existing opaque framing is unchanged.
 The custom MLS transcript, signature construction, suite identifiers and wire
 layout have internal tests, not RFC 9420 interoperability evidence. References to
 “RFC-shaped” structures describe resemblance, not standards compliance.
+Integration parity is covered by `TestTwitchYouTubeIntegrations`: documented
+string `type`, 204 create/patch/sync/delete, the 50-row list cap, the
+`has_commands` filter, channel-scoped rows, grace-period validation, sync
+permission checks, the command-scope migration report and the per-user
+application-id mapping. `TestStageInstancesAndIntegrations` covers bot install
+rows, granted `scopes`, and rejection of subscriber settings on Discord
+integrations.
 Search supports static multiple cells, BFG maintenance and persisted migration
 checkpoints. Message mutations and their outbox jobs commit atomically; an injected
 outbox failure proves message rollback in `TestDurableSearchQueue`. Queued ES writes
