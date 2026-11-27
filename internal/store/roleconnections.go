@@ -111,3 +111,15 @@ func (s *Store) RoleConnection(userID, appID string) (RoleConnection, error) {
 }
 
 var _ = model.User{}
+
+// DeleteRoleConnection removes the user's role connection for an application.
+func (s *Store) DeleteRoleConnection(userID, appID string) error {
+	res, err := s.DB.Exec(`DELETE FROM role_connections WHERE user_id = ? AND application_id = ?`, userID, appID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

@@ -193,6 +193,9 @@ type Guild struct {
 	Stickers                    []any    `json:"stickers,omitempty"`
 	PremiumProgressBarEnabled   bool     `json:"premium_progress_bar_enabled"`
 	SafetyAlertsChannelID       *string  `json:"safety_alerts_channel_id"`
+	InvitesDisabledUntil        *string  `json:"invites_disabled_until,omitempty"`
+	DMSDisabledUntil            *string  `json:"dms_disabled_until,omitempty"`
+	DMSDisabled                 bool     `json:"dms_disabled,omitempty"`
 }
 
 // Attachment is the attachment object.

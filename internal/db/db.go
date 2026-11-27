@@ -86,6 +86,9 @@ func openSQLite(path string, opts Options) (*sqlx.DB, error) {
 	for _, stmt := range integrationColumns {
 		_, _ = handle.Exec(stmt)
 	}
+	for _, stmt := range guildIncidentColumns {
+		_, _ = handle.Exec(stmt)
+	}
 	return &sqlx.DB{DB: handle, Dialect: sqlx.SQLite}, nil
 }
 
@@ -132,6 +135,9 @@ func openPostgres(dsn string, opts Options) (*sqlx.DB, error) {
 		_, _ = conn.ExecContext(ctx, `ALTER TABLE polls ADD COLUMN IF NOT EXISTS final_counts TEXT NOT NULL DEFAULT '[]'`)
 		_, _ = conn.ExecContext(ctx, `ALTER TABLE scheduled_events ADD COLUMN IF NOT EXISTS recurrence_rule TEXT`)
 		for _, stmt := range integrationColumnsPostgres {
+			_, _ = conn.ExecContext(ctx, stmt)
+		}
+		for _, stmt := range guildIncidentColumnsPostgres {
 			_, _ = conn.ExecContext(ctx, stmt)
 		}
 		from := time.Now().AddDate(0, -1, 0)
@@ -226,4 +232,19 @@ var integrationColumnsPostgres = []string{
 	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS scopes TEXT NOT NULL DEFAULT '[]'`,
 	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS user_id TEXT`,
 	`ALTER TABLE integrations ADD COLUMN IF NOT EXISTS channel_id TEXT`,
+}
+
+// guildIncidentColumns backfills the guild incident-action settings.
+var guildIncidentColumns = []string{
+	`ALTER TABLE guilds ADD COLUMN invites_disabled_until BIGINT`,
+	`ALTER TABLE guilds ADD COLUMN dms_disabled_until BIGINT`,
+	`ALTER TABLE guilds ADD COLUMN dms_disabled SMALLINT NOT NULL DEFAULT 0`,
+	`ALTER TABLE guilds ADD COLUMN safety_alerts_channel_id TEXT`,
+}
+
+var guildIncidentColumnsPostgres = []string{
+	`ALTER TABLE guilds ADD COLUMN IF NOT EXISTS invites_disabled_until BIGINT`,
+	`ALTER TABLE guilds ADD COLUMN IF NOT EXISTS dms_disabled_until BIGINT`,
+	`ALTER TABLE guilds ADD COLUMN IF NOT EXISTS dms_disabled SMALLINT NOT NULL DEFAULT 0`,
+	`ALTER TABLE guilds ADD COLUMN IF NOT EXISTS safety_alerts_channel_id TEXT`,
 }

@@ -150,6 +150,10 @@ CREATE TABLE IF NOT EXISTS guilds (
     premium_tier                   INTEGER NOT NULL DEFAULT 0,
     premium_subscription_count     INTEGER NOT NULL DEFAULT 0,
     nsfw_level                     INTEGER NOT NULL DEFAULT 0,
+    invites_disabled_until         BIGINT,
+    dms_disabled_until             BIGINT,
+    dms_disabled                   SMALLINT NOT NULL DEFAULT 0,
+    safety_alerts_channel_id       TEXT,
     created_at                     INTEGER NOT NULL
 );
 

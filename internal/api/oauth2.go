@@ -377,7 +377,21 @@ func (s *Server) handleUpdateApplication(c *Ctx) {
 			return
 		}
 	}
-	app, err := s.Store.UpdateApplication(c.Param("applicationID"), c.User.ID, req.Name, req.Description, req.RedirectURIs, req.VerifyKey, req.InteractionsEndpointURL)
+	appID := c.Param("applicationID")
+	ownerID := c.User.ID
+	if appID == "@me" {
+		// PATCH /applications/@me targets the bot's own application; the generic
+		// route matches the literal "@me" first. The bot is not the owner, so the
+		// ownership check runs against the application's owner.
+		own, err := s.Store.ApplicationForBot(c.User.ID)
+		if err != nil {
+			c.JSONStatus(404, map[string]any{"code": 10002, "message": "Unknown Application"})
+			return
+		}
+		appID = own.ID
+		ownerID = own.OwnerID
+	}
+	app, err := s.Store.UpdateApplication(appID, ownerID, req.Name, req.Description, req.RedirectURIs, req.VerifyKey, req.InteractionsEndpointURL)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			c.JSONStatus(404, map[string]any{"code": 10002, "message": "Unknown Application"})

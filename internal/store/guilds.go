@@ -14,7 +14,8 @@ const guildColumns = `id, name, icon, splash, discovery_splash, banner, owner_id
 	afk_channel_id, afk_timeout, widget_enabled, widget_channel_id, verification_level,
 	default_message_notifications, explicit_content_filter, mfa_level, system_channel_id,
 	system_channel_flags, rules_channel_id, features, preferred_locale, description,
-	vanity_url_code, premium_tier, premium_subscription_count, nsfw_level`
+	vanity_url_code, premium_tier, premium_subscription_count, nsfw_level,
+	invites_disabled_until, dms_disabled_until, dms_disabled, safety_alerts_channel_id`
 
 func scanGuild(row rowScanner) (model.Guild, error) {
 	var (
@@ -31,12 +32,16 @@ func scanGuild(row rowScanner) (model.Guild, error) {
 		features string
 		desc     sql.NullString
 		vanity   sql.NullString
+		invites  sql.NullInt64
+		dmsUntil sql.NullInt64
+		dmsOff   bool
+		safety   sql.NullString
 	)
 	err := row.Scan(&g.ID, &g.Name, &icon, &splash, &disc, &banner, &g.OwnerID, new(string),
 		&afk, &g.AfkTimeout, &widget, &widgetCh, &g.VerificationLevel, &g.DefaultMessageNotifications,
 		&g.ExplicitContentFilter, &g.MfaLevel, &system, &g.SystemChannelFlags, &rules,
 		&features, &g.PreferredLocale, &desc, &vanity, &g.PremiumTier,
-		&g.PremiumSubscriptionCount, &g.NSFWLevel)
+		&g.PremiumSubscriptionCount, &g.NSFWLevel, &invites, &dmsUntil, &dmsOff, &safety)
 	if err != nil {
 		return g, err
 	}
@@ -54,6 +59,10 @@ func scanGuild(row rowScanner) (model.Guild, error) {
 	g.VanityURLCode = ns(vanity)
 	g.Features = []string{}
 	_ = json.Unmarshal([]byte(features), &g.Features)
+	g.InvitesDisabledUntil = isoPtr(invites)
+	g.DMSDisabledUntil = isoPtr(dmsUntil)
+	g.DMSDisabled = dmsOff
+	g.SafetyAlertsChannelID = ns(safety)
 	return g, nil
 }
 
@@ -754,4 +763,106 @@ func (s *Store) UnbanUser(guildID, userID string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetRolePositions applies a batch of role position changes atomically.
+func (s *Store) SetRolePositions(guildID string, positions map[string]int) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return mapErr(err)
+	}
+	defer tx.Rollback()
+	for id, pos := range positions {
+		res, err := tx.Exec(`UPDATE roles SET position = ? WHERE guild_id = ? AND id = ?`, pos, guildID, id)
+		if err != nil {
+			return mapErr(err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+	}
+	return mapErr(tx.Commit())
+}
+
+// SetIncidentActions stores the guild's invite and DM lockdown settings.
+func (s *Store) SetIncidentActions(guildID string, invitesUntil, dmsUntil *int64, dmsDisabled *bool) error {
+	set := []string{}
+	args := []any{}
+	if invitesUntil != nil {
+		set = append(set, "invites_disabled_until = ?")
+		args = append(args, *invitesUntil)
+	}
+	if dmsUntil != nil {
+		set = append(set, "dms_disabled_until = ?")
+		args = append(args, *dmsUntil)
+	}
+	if dmsDisabled != nil {
+		set = append(set, "dms_disabled = ?")
+		args = append(args, *dmsDisabled)
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	args = append(args, guildID)
+	res, err := s.DB.Exec(`UPDATE guilds SET `+strings.Join(set, ", ")+` WHERE id = ?`, args...)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// PruneMembers removes members who joined more than days ago, excluding the
+// owner and holders of the requested roles, and returns the removed count.
+func (s *Store) PruneMembers(guildID string, days int, includeRoles []string) (int, error) {
+	g, err := s.Guild(guildID)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := s.DB.Query(`SELECT user_id, role_ids, joined_at FROM guild_members WHERE guild_id = ?`, guildID)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	type candidate struct{ userID string }
+	var victims []candidate
+	cutoff := now() - int64(days)*24*60*60*1000
+	for rows.Next() {
+		var userID, rawRoles string
+		var joined int64
+		if err := rows.Scan(&userID, &rawRoles, &joined); err != nil {
+			rows.Close()
+			return 0, mapErr(err)
+		}
+		if userID == g.OwnerID || joined > cutoff {
+			continue
+		}
+		var roles []string
+		_ = json.Unmarshal([]byte(rawRoles), &roles)
+		skip := false
+		for _, have := range roles {
+			for _, keep := range includeRoles {
+				if have == keep {
+					skip = true
+				}
+			}
+		}
+		if skip {
+			continue
+		}
+		victims = append(victims, candidate{userID: userID})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, mapErr(err)
+	}
+	removed := 0
+	for _, v := range victims {
+		if err := s.RemoveMember(guildID, v.userID); err != nil {
+			return removed, err
+		}
+		removed++
+	}
+	return removed, nil
 }
